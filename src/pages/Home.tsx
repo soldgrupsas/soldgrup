@@ -44,9 +44,8 @@ const Home = () => {
       title: "Equipos",
       description: "Gestión de equipos industriales",
       icon: Settings,
-      path: "#",
+      path: "/equipment",
       color: "from-accent/20 to-accent/5",
-      disabled: true,
     },
     {
       title: "Informes de Mantenimiento",

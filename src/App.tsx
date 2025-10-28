@@ -11,6 +11,8 @@ import EditProposal from "./pages/EditProposal";
 import PublicProposal from "./pages/PublicProposal";
 import Auth from "./pages/Auth";
 import UserManagement from "./pages/UserManagement";
+import EquipmentList from "./pages/EquipmentList";
+import CreateEquipment from "./pages/CreateEquipment";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +32,9 @@ const App = () => (
           <Route path="/edit/:id" element={<EditProposal />} />
           <Route path="/view/:slug" element={<PublicProposal />} />
           <Route path="/users" element={<UserManagement />} />
+          <Route path="/equipment" element={<EquipmentList />} />
+          <Route path="/equipment/create" element={<CreateEquipment />} />
+          <Route path="/equipment/edit/:id" element={<CreateEquipment />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

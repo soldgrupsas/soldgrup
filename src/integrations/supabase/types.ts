@@ -46,6 +46,30 @@ export type Database = {
           },
         ]
       }
+      equipment: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       equipment_details: {
         Row: {
           created_at: string | null
@@ -74,6 +98,73 @@ export type Database = {
             columns: ["proposal_id"]
             isOneToOne: false
             referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      equipment_images: {
+        Row: {
+          created_at: string
+          equipment_id: string
+          id: string
+          image_order: number
+          image_url: string
+        }
+        Insert: {
+          created_at?: string
+          equipment_id: string
+          id?: string
+          image_order: number
+          image_url: string
+        }
+        Update: {
+          created_at?: string
+          equipment_id?: string
+          id?: string
+          image_order?: number
+          image_url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "equipment_images_equipment_id_fkey"
+            columns: ["equipment_id"]
+            isOneToOne: false
+            referencedRelation: "equipment"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      equipment_tables: {
+        Row: {
+          created_at: string
+          equipment_id: string
+          id: string
+          table_data: Json
+          table_order: number
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          equipment_id: string
+          id?: string
+          table_data?: Json
+          table_order: number
+          title: string
+        }
+        Update: {
+          created_at?: string
+          equipment_id?: string
+          id?: string
+          table_data?: Json
+          table_order?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "equipment_tables_equipment_id_fkey"
+            columns: ["equipment_id"]
+            isOneToOne: false
+            referencedRelation: "equipment"
             referencedColumns: ["id"]
           },
         ]
