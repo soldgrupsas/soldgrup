@@ -1,0 +1,150 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Plus, Eye, Edit, Trash2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+
+interface Proposal {
+  id: string;
+  client_name: string;
+  project_name: string;
+  status: string;
+  click_count: number;
+  created_at: string;
+  public_url_slug: string | null;
+}
+
+const Dashboard = () => {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchProposals();
+  }, []);
+
+  const fetchProposals = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("proposals")
+        .select("id, client_name, project_name, status, click_count, created_at, public_url_slug")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setProposals(data || []);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteProposal = async (id: string) => {
+    if (!confirm("¿Estás seguro de eliminar esta propuesta?")) return;
+
+    try {
+      const { error } = await supabase.from("proposals").delete().eq("id", id);
+      if (error) throw error;
+      
+      toast({
+        title: "Propuesta eliminada",
+        description: "La propuesta ha sido eliminada exitosamente",
+      });
+      
+      fetchProposals();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-xl">Cargando...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-4xl font-bold">Propuestas Comerciales</h1>
+          <Button onClick={() => navigate("/create")} size="lg">
+            <Plus className="mr-2" />
+            Nueva Propuesta
+          </Button>
+        </div>
+
+        <div className="grid gap-4">
+          {proposals.map((proposal) => (
+            <Card key={proposal.id} className="p-6 hover:shadow-elegant transition-all">
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold mb-2">{proposal.project_name}</h3>
+                  <p className="text-muted-foreground mb-2">Cliente: {proposal.client_name}</p>
+                  <div className="flex gap-4 text-sm text-muted-foreground">
+                    <span>Estado: <span className="font-medium">{proposal.status}</span></span>
+                    <span>Clics: <span className="font-medium">{proposal.click_count}</span></span>
+                    <span>Creado: {new Date(proposal.created_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  {proposal.public_url_slug && (
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => navigate(`/view/${proposal.public_url_slug}`)}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => navigate(`/edit/${proposal.id}`)}
+                  >
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    onClick={() => deleteProposal(proposal.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+
+          {proposals.length === 0 && (
+            <Card className="p-12 text-center">
+              <p className="text-xl text-muted-foreground mb-4">
+                No hay propuestas creadas todavía
+              </p>
+              <Button onClick={() => navigate("/create")}>
+                <Plus className="mr-2" />
+                Crear primera propuesta
+              </Button>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
