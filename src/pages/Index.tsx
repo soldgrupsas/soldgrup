@@ -13,8 +13,8 @@ const Index = () => {
         <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
           Crea, gestiona y comparte propuestas profesionales para proyectos de electrificación industrial
         </p>
-        <Button onClick={() => navigate("/dashboard")} size="lg" className="mt-6">
-          Ir al Dashboard
+        <Button onClick={() => navigate("/auth")} size="lg" className="mt-6">
+          Iniciar Sesión
         </Button>
       </div>
     </div>

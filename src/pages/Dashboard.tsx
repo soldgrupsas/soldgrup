@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Eye, Edit, Trash2 } from "lucide-react";
+import { Plus, Eye, Edit, Trash2, Users, LogOut } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Proposal {
   id: string;
@@ -19,12 +20,21 @@ interface Proposal {
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user, isAdmin, signOut, loading: authLoading } = useAuth();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchProposals();
-  }, []);
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    if (user) {
+      fetchProposals();
+    }
+  }, [user]);
 
   const fetchProposals = async () => {
     try {
@@ -68,7 +78,12 @@ const Dashboard = () => {
     }
   };
 
-  if (loading) {
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/auth");
+  };
+
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-xl">Cargando...</div>
@@ -76,15 +91,31 @@ const Dashboard = () => {
     );
   }
 
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold">Propuestas Comerciales</h1>
-          <Button onClick={() => navigate("/create")} size="lg">
-            <Plus className="mr-2" />
-            Nueva Propuesta
-          </Button>
+          <div className="flex gap-2">
+            {isAdmin && (
+              <Button onClick={() => navigate("/users")} variant="outline" size="lg">
+                <Users className="mr-2" />
+                Gestionar Usuarios
+              </Button>
+            )}
+            <Button onClick={() => navigate("/create")} size="lg">
+              <Plus className="mr-2" />
+              Nueva Propuesta
+            </Button>
+            <Button onClick={handleSignOut} variant="outline" size="lg">
+              <LogOut className="mr-2" />
+              Cerrar Sesión
+            </Button>
+          </div>
         </div>
 
         <div className="grid gap-4">
