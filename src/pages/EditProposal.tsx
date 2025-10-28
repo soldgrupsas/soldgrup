@@ -14,10 +14,12 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Globe } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const proposalSchema = z.object({
   client_name: z.string().min(1, "El nombre del cliente es requerido"),
@@ -26,6 +28,11 @@ const proposalSchema = z.object({
   client_email: z.string().email("Email inválido").optional().or(z.literal("")),
   client_phone: z.string().optional(),
   project_location: z.string().optional(),
+  status: z.enum(["draft", "published"]),
+  payment_terms: z.string().optional(),
+  delivery_time: z.string().optional(),
+  terms_conditions: z.string().optional(),
+  notes: z.string().optional(),
 });
 
 type ProposalFormData = z.infer<typeof proposalSchema>;
@@ -46,6 +53,11 @@ const EditProposal = () => {
       client_email: "",
       client_phone: "",
       project_location: "",
+      status: "draft",
+      payment_terms: "",
+      delivery_time: "",
+      terms_conditions: "",
+      notes: "",
     },
   });
 
@@ -79,6 +91,11 @@ const EditProposal = () => {
           client_email: data.client_email || "",
           client_phone: data.client_phone || "",
           project_location: data.project_location || "",
+          status: (data.status === "published" ? "published" : "draft") as "draft" | "published",
+          payment_terms: data.payment_terms || "",
+          delivery_time: data.delivery_time || "",
+          terms_conditions: data.terms_conditions || "",
+          notes: data.notes || "",
         });
       }
     } catch (error: any) {
@@ -95,17 +112,39 @@ const EditProposal = () => {
 
   const onSubmit = async (data: ProposalFormData) => {
     try {
+      // Si se está publicando y no hay slug, generar uno
+      let updateData: any = {
+        client_name: data.client_name,
+        project_name: data.project_name,
+        client_contact: data.client_contact || null,
+        client_email: data.client_email || null,
+        client_phone: data.client_phone || null,
+        project_location: data.project_location || null,
+        status: data.status,
+        payment_terms: data.payment_terms || null,
+        delivery_time: data.delivery_time || null,
+        terms_conditions: data.terms_conditions || null,
+        notes: data.notes || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Si se está publicando y no tiene slug, generar uno
+      if (data.status === "published") {
+        const { data: currentProposal } = await supabase
+          .from("proposals")
+          .select("public_url_slug")
+          .eq("id", id)
+          .single();
+
+        if (!currentProposal?.public_url_slug) {
+          const { data: slugData } = await supabase.rpc("generate_proposal_slug");
+          updateData.public_url_slug = slugData;
+        }
+      }
+
       const { error } = await supabase
         .from("proposals")
-        .update({
-          client_name: data.client_name,
-          project_name: data.project_name,
-          client_contact: data.client_contact || null,
-          client_email: data.client_email || null,
-          client_phone: data.client_phone || null,
-          project_location: data.project_location || null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updateData)
         .eq("id", id);
 
       if (error) {
@@ -115,7 +154,9 @@ const EditProposal = () => {
 
       toast({
         title: "Propuesta actualizada",
-        description: "La propuesta ha sido actualizada exitosamente",
+        description: data.status === "published" 
+          ? "La propuesta ha sido publicada y está disponible públicamente"
+          : "La propuesta ha sido actualizada exitosamente",
       });
 
       navigate("/dashboard");
@@ -156,6 +197,36 @@ const EditProposal = () => {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            <FormField
+              control={form.control}
+              name="status"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Estado de la Propuesta</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecciona el estado" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="draft">Borrador</SelectItem>
+                      <SelectItem value="published">
+                        <div className="flex items-center gap-2">
+                          <Globe className="h-4 w-4" />
+                          Publicada (Visible públicamente)
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    Las propuestas publicadas generan una URL pública que puedes compartir con tus clientes
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name="client_name"
@@ -234,6 +305,62 @@ const EditProposal = () => {
                   <FormLabel>Ubicación del Proyecto</FormLabel>
                   <FormControl>
                     <Textarea {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="payment_terms"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Términos de Pago</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} rows={4} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="delivery_time"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tiempo de Entrega</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} rows={3} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="terms_conditions"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Términos y Condiciones</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} rows={6} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notas Adicionales</FormLabel>
+                  <FormControl>
+                    <Textarea {...field} rows={4} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Eye, Edit, Trash2, Users, LogOut } from "lucide-react";
+import { Plus, Eye, Edit, Trash2, Users, LogOut, Share2, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
 
 interface Proposal {
@@ -83,6 +84,15 @@ const Dashboard = () => {
     navigate("/auth");
   };
 
+  const copyPublicUrl = (slug: string) => {
+    const url = `${window.location.origin}/view/${slug}`;
+    navigator.clipboard.writeText(url);
+    toast({
+      title: "URL copiada",
+      description: "La URL pública ha sido copiada al portapapeles",
+    });
+  };
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -121,42 +131,66 @@ const Dashboard = () => {
         <div className="grid gap-4">
           {proposals.map((proposal) => (
             <Card key={proposal.id} className="p-6 hover:shadow-elegant transition-all">
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <h3 className="text-xl font-bold mb-2">{proposal.project_name}</h3>
-                  <p className="text-muted-foreground mb-2">Cliente: {proposal.client_name}</p>
-                  <div className="flex gap-4 text-sm text-muted-foreground">
-                    <span>Estado: <span className="font-medium">{proposal.status}</span></span>
-                    <span>Clics: <span className="font-medium">{proposal.click_count}</span></span>
-                    <span>Creado: {new Date(proposal.created_at).toLocaleDateString()}</span>
+              <div className="space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold mb-2">{proposal.project_name}</h3>
+                    <p className="text-muted-foreground mb-2">Cliente: {proposal.client_name}</p>
+                    <div className="flex gap-4 text-sm text-muted-foreground">
+                      <span>Estado: <span className="font-medium">{proposal.status}</span></span>
+                      <span>Clics: <span className="font-medium">{proposal.click_count}</span></span>
+                      <span>Creado: {new Date(proposal.created_at).toLocaleDateString()}</span>
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex gap-2">
-                  {proposal.public_url_slug && (
+                  <div className="flex gap-2">
+                    {proposal.public_url_slug && (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => navigate(`/view/${proposal.public_url_slug}`)}
+                        title="Ver propuesta pública"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="icon"
-                      onClick={() => navigate(`/view/${proposal.public_url_slug}`)}
+                      onClick={() => navigate(`/edit/${proposal.id}`)}
+                      title="Editar propuesta"
                     >
-                      <Eye className="h-4 w-4" />
+                      <Edit className="h-4 w-4" />
                     </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => navigate(`/edit/${proposal.id}`)}
-                  >
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="icon"
-                    onClick={() => deleteProposal(proposal.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      onClick={() => deleteProposal(proposal.id)}
+                      title="Eliminar propuesta"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
+
+                {proposal.public_url_slug && (
+                  <div className="flex gap-2 items-center bg-muted/50 p-3 rounded-lg">
+                    <Share2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <Input
+                      value={`${window.location.origin}/view/${proposal.public_url_slug}`}
+                      readOnly
+                      className="bg-background"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyPublicUrl(proposal.public_url_slug!)}
+                      title="Copiar URL"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </Card>
           ))}

@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import CreateProposal from "./pages/CreateProposal";
 import EditProposal from "./pages/EditProposal";
+import PublicProposal from "./pages/PublicProposal";
 import Auth from "./pages/Auth";
 import UserManagement from "./pages/UserManagement";
 import NotFound from "./pages/NotFound";
@@ -25,6 +26,7 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/create" element={<CreateProposal />} />
           <Route path="/edit/:id" element={<EditProposal />} />
+          <Route path="/view/:slug" element={<PublicProposal />} />
           <Route path="/users" element={<UserManagement />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
