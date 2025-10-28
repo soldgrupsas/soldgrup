@@ -52,7 +52,15 @@ const CreateProposal = () => {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        // Provide more specific error messages for RLS policy violations
+        if (error.code === '42501' || error.message.includes('row-level security')) {
+          throw new Error(
+            'No tienes permisos para crear propuestas. Por favor, contacta al administrador para que te asigne un rol de usuario.'
+          );
+        }
+        throw error;
+      }
 
       toast({
         title: "Propuesta creada",
