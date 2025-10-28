@@ -14,13 +14,327 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      electrification_systems: {
+        Row: {
+          created_at: string | null
+          id: string
+          proposal_id: string
+          system_details: Json | null
+          system_type: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          proposal_id: string
+          system_details?: Json | null
+          system_type: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          proposal_id?: string
+          system_details?: Json | null
+          system_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "electrification_systems_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      equipment_details: {
+        Row: {
+          created_at: string | null
+          equipment_name: string
+          equipment_specs: Json | null
+          id: string
+          proposal_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          equipment_name: string
+          equipment_specs?: Json | null
+          id?: string
+          proposal_id: string
+        }
+        Update: {
+          created_at?: string | null
+          equipment_name?: string
+          equipment_specs?: Json | null
+          id?: string
+          proposal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "equipment_details_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposal_clicks: {
+        Row: {
+          clicked_at: string | null
+          id: string
+          ip_address: string | null
+          proposal_id: string
+          user_agent: string | null
+        }
+        Insert: {
+          clicked_at?: string | null
+          id?: string
+          ip_address?: string | null
+          proposal_id: string
+          user_agent?: string | null
+        }
+        Update: {
+          clicked_at?: string | null
+          id?: string
+          ip_address?: string | null
+          proposal_id?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_clicks_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposal_images: {
+        Row: {
+          created_at: string | null
+          id: string
+          image_caption: string | null
+          image_order: number
+          image_url: string
+          proposal_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          image_caption?: string | null
+          image_order: number
+          image_url: string
+          proposal_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          image_caption?: string | null
+          image_order?: number
+          image_url?: string
+          proposal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_images_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposal_items: {
+        Row: {
+          created_at: string | null
+          description: string
+          id: string
+          item_number: number
+          proposal_id: string
+          quantity: number
+          total_price: number
+          unit: string
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string | null
+          description: string
+          id?: string
+          item_number: number
+          proposal_id: string
+          quantity: number
+          total_price: number
+          unit: string
+          unit_price: number
+        }
+        Update: {
+          created_at?: string | null
+          description?: string
+          id?: string
+          item_number?: number
+          proposal_id?: string
+          quantity?: number
+          total_price?: number
+          unit?: string
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_items_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposal_observations: {
+        Row: {
+          created_at: string | null
+          id: string
+          observation_order: number
+          observation_text: string
+          proposal_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          observation_order: number
+          observation_text: string
+          proposal_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          observation_order?: number
+          observation_text?: string
+          proposal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_observations_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposals: {
+        Row: {
+          click_count: number | null
+          client_contact: string | null
+          client_email: string | null
+          client_name: string
+          client_phone: string | null
+          created_at: string | null
+          delivery_time: string | null
+          engineer_name: string | null
+          engineer_title: string | null
+          id: string
+          notes: string | null
+          payment_terms: string | null
+          project_location: string | null
+          project_name: string
+          proposal_date: string | null
+          public_url_slug: string | null
+          status: string | null
+          terms_conditions: string | null
+          total_amount: number | null
+          updated_at: string | null
+          validity_days: number | null
+        }
+        Insert: {
+          click_count?: number | null
+          client_contact?: string | null
+          client_email?: string | null
+          client_name: string
+          client_phone?: string | null
+          created_at?: string | null
+          delivery_time?: string | null
+          engineer_name?: string | null
+          engineer_title?: string | null
+          id?: string
+          notes?: string | null
+          payment_terms?: string | null
+          project_location?: string | null
+          project_name: string
+          proposal_date?: string | null
+          public_url_slug?: string | null
+          status?: string | null
+          terms_conditions?: string | null
+          total_amount?: number | null
+          updated_at?: string | null
+          validity_days?: number | null
+        }
+        Update: {
+          click_count?: number | null
+          client_contact?: string | null
+          client_email?: string | null
+          client_name?: string
+          client_phone?: string | null
+          created_at?: string | null
+          delivery_time?: string | null
+          engineer_name?: string | null
+          engineer_title?: string | null
+          id?: string
+          notes?: string | null
+          payment_terms?: string | null
+          project_location?: string | null
+          project_name?: string
+          proposal_date?: string | null
+          public_url_slug?: string | null
+          status?: string | null
+          terms_conditions?: string | null
+          total_amount?: number | null
+          updated_at?: string | null
+          validity_days?: number | null
+        }
+        Relationships: []
+      }
+      technical_specifications: {
+        Row: {
+          created_at: string | null
+          id: string
+          proposal_id: string
+          specification_type: string
+          specification_value: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          proposal_id: string
+          specification_type: string
+          specification_value: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          proposal_id?: string
+          specification_type?: string
+          specification_value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "technical_specifications_proposal_id_fkey"
+            columns: ["proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      generate_proposal_slug: { Args: never; Returns: string }
+      increment_proposal_clicks: {
+        Args: { proposal_slug: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
