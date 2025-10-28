@@ -67,7 +67,7 @@ const CreateProposal = () => {
         description: "La propuesta ha sido creada exitosamente",
       });
 
-      navigate(`/edit/${data.id}`);
+      navigate("/dashboard");
     } catch (error: any) {
       toast({
         title: "Error",
