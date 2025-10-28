@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Card } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -18,8 +19,16 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Globe } from "lucide-react";
+import { ArrowLeft, Globe, Plus, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+interface EquipmentWithDetails {
+  id: string;
+  name: string;
+  description: string;
+  images: { image_url: string; image_order: number }[];
+  tables: { title: string; table_data: any; table_order: number }[];
+}
 
 const proposalSchema = z.object({
   client_name: z.string().min(1, "El nombre del cliente es requerido"),
@@ -43,6 +52,9 @@ const EditProposal = () => {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
+  const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
+  const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
 
   const form = useForm<ProposalFormData>({
     resolver: zodResolver(proposalSchema),
@@ -70,8 +82,63 @@ const EditProposal = () => {
   useEffect(() => {
     if (user && id) {
       fetchProposal();
+      fetchAvailableEquipment();
     }
   }, [user, id]);
+
+  const fetchAvailableEquipment = async () => {
+    try {
+      const { data: equipment, error: equipmentError } = await supabase
+        .from("equipment")
+        .select("*")
+        .order("name");
+
+      if (equipmentError) throw equipmentError;
+
+      const equipmentWithDetails = await Promise.all(
+        (equipment || []).map(async (eq) => {
+          const [imagesResult, tablesResult] = await Promise.all([
+            supabase
+              .from("equipment_images")
+              .select("image_url, image_order")
+              .eq("equipment_id", eq.id)
+              .order("image_order"),
+            supabase
+              .from("equipment_tables")
+              .select("title, table_data, table_order")
+              .eq("equipment_id", eq.id)
+              .order("table_order"),
+          ]);
+
+          return {
+            id: eq.id,
+            name: eq.name,
+            description: eq.description || "",
+            images: imagesResult.data || [],
+            tables: tablesResult.data || [],
+          };
+        })
+      );
+
+      setAvailableEquipment(equipmentWithDetails);
+    } catch (error) {
+      console.error("Error fetching equipment:", error);
+    }
+  };
+
+  const handleAddEquipment = () => {
+    if (!equipmentToAdd) return;
+    
+    const equipment = availableEquipment.find((eq) => eq.id === equipmentToAdd);
+    if (equipment) {
+      setSelectedEquipment([...selectedEquipment, equipment]);
+      setEquipmentToAdd("");
+    }
+  };
+
+  const handleRemoveEquipment = (index: number) => {
+    setSelectedEquipment(selectedEquipment.filter((_, i) => i !== index));
+  };
 
   const fetchProposal = async () => {
     try {
@@ -97,6 +164,25 @@ const EditProposal = () => {
           terms_conditions: data.terms_conditions || "",
           notes: data.notes || "",
         });
+
+        // Load existing equipment
+        const { data: existingEquipment, error: eqError } = await supabase
+          .from("equipment_details")
+          .select("*")
+          .eq("proposal_id", id);
+
+        if (eqError) throw eqError;
+
+        if (existingEquipment && existingEquipment.length > 0) {
+          const loadedEquipment = existingEquipment.map((eq: any) => ({
+            id: eq.id,
+            name: eq.equipment_name,
+            description: eq.equipment_specs.description || "",
+            images: eq.equipment_specs.images || [],
+            tables: eq.equipment_specs.tables || [],
+          }));
+          setSelectedEquipment(loadedEquipment);
+        }
       }
     } catch (error: any) {
       toast({
@@ -150,6 +236,30 @@ const EditProposal = () => {
       if (error) {
         console.error("Error updating proposal:", error);
         throw error;
+      }
+
+      // Delete existing equipment and insert new ones
+      await supabase
+        .from("equipment_details")
+        .delete()
+        .eq("proposal_id", id);
+
+      if (selectedEquipment.length > 0) {
+        const equipmentDetails = selectedEquipment.map((eq) => ({
+          proposal_id: id,
+          equipment_name: eq.name,
+          equipment_specs: {
+            description: eq.description,
+            images: eq.images,
+            tables: eq.tables,
+          },
+        }));
+
+        const { error: equipmentError } = await supabase
+          .from("equipment_details")
+          .insert(equipmentDetails);
+
+        if (equipmentError) throw equipmentError;
       }
 
       toast({
@@ -366,6 +476,102 @@ const EditProposal = () => {
                 </FormItem>
               )}
             />
+
+            {/* Equipment Section */}
+            <div className="space-y-4 pt-6 border-t">
+              <div className="flex items-center justify-between">
+                <FormLabel>Equipos</FormLabel>
+                <div className="flex gap-2">
+                  <Select value={equipmentToAdd} onValueChange={setEquipmentToAdd}>
+                    <SelectTrigger className="w-[300px]">
+                      <SelectValue placeholder="Seleccionar equipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableEquipment.map((eq) => (
+                        <SelectItem key={eq.id} value={eq.id}>
+                          {eq.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    onClick={handleAddEquipment}
+                    disabled={!equipmentToAdd}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Agregar Equipo
+                  </Button>
+                </div>
+              </div>
+
+              {selectedEquipment.map((equipment, index) => (
+                <Card key={index} className="p-6 relative">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon"
+                    className="absolute top-4 right-4"
+                    onClick={() => handleRemoveEquipment(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+
+                  <h3 className="text-xl font-bold mb-2">{equipment.name}</h3>
+                  
+                  {equipment.description && (
+                    <p className="text-muted-foreground mb-4">
+                      {equipment.description}
+                    </p>
+                  )}
+
+                  {equipment.images.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="font-semibold mb-2">Imágenes</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {equipment.images.map((img, imgIndex) => (
+                          <img
+                            key={imgIndex}
+                            src={img.image_url}
+                            alt={`${equipment.name} - ${imgIndex + 1}`}
+                            className="w-full h-48 object-cover rounded-lg"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {equipment.tables.length > 0 && (
+                    <div className="space-y-4">
+                      <h4 className="font-semibold">Tablas</h4>
+                      {equipment.tables.map((table, tableIndex) => (
+                        <div key={tableIndex} className="border rounded-lg p-4">
+                          <h5 className="font-medium mb-2">{table.title}</h5>
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse">
+                              <tbody>
+                                {table.table_data.map((row: any[], rowIndex: number) => (
+                                  <tr key={rowIndex}>
+                                    {row.map((cell: any, cellIndex: number) => (
+                                      <td
+                                        key={cellIndex}
+                                        className="border border-border p-2"
+                                      >
+                                        {cell}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
 
             <div className="flex gap-4">
               <Button type="submit" size="lg">

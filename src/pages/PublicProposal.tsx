@@ -25,10 +25,21 @@ interface ProposalData {
   notes: string | null;
 }
 
+interface EquipmentDetail {
+  id: string;
+  equipment_name: string;
+  equipment_specs: {
+    description: string;
+    images: { image_url: string; image_order: number }[];
+    tables: { title: string; table_data: any; table_order: number }[];
+  };
+}
+
 const PublicProposal = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
   const [proposal, setProposal] = useState<ProposalData | null>(null);
+  const [equipment, setEquipment] = useState<EquipmentDetail[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -71,6 +82,15 @@ const PublicProposal = () => {
       }
 
       setProposal(data);
+
+      // Fetch equipment details
+      const { data: equipmentData, error: equipmentError } = await supabase
+        .from("equipment_details")
+        .select("*")
+        .eq("proposal_id", data.id);
+
+      if (equipmentError) throw equipmentError;
+      setEquipment((equipmentData as any) || []);
     } catch (error: any) {
       console.error("Error fetching proposal:", error);
       navigate("/404");
@@ -214,6 +234,69 @@ const PublicProposal = () => {
               <h3 className="text-xl font-bold mb-4">Notas Adicionales</h3>
               <p className="text-muted-foreground whitespace-pre-wrap">{proposal.notes}</p>
             </Card>
+          )}
+
+          {/* Equipment Section */}
+          {equipment.length > 0 && (
+            <div className="mt-8 space-y-6">
+              <h2 className="text-3xl font-bold mb-6">Equipos</h2>
+              {equipment.map((eq) => (
+                <Card key={eq.id} className="p-8 shadow-elegant">
+                  <h3 className="text-2xl font-bold mb-4">{eq.equipment_name}</h3>
+                  
+                  {eq.equipment_specs.description && (
+                    <p className="text-muted-foreground mb-6 whitespace-pre-wrap">
+                      {eq.equipment_specs.description}
+                    </p>
+                  )}
+
+                  {eq.equipment_specs.images && eq.equipment_specs.images.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="text-lg font-semibold mb-4">Imágenes</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {eq.equipment_specs.images.map((img, imgIndex) => (
+                          <img
+                            key={imgIndex}
+                            src={img.image_url}
+                            alt={`${eq.equipment_name} - ${imgIndex + 1}`}
+                            className="w-full h-64 object-cover rounded-lg shadow-md"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {eq.equipment_specs.tables && eq.equipment_specs.tables.length > 0 && (
+                    <div className="space-y-6">
+                      <h4 className="text-lg font-semibold">Especificaciones Técnicas</h4>
+                      {eq.equipment_specs.tables.map((table, tableIndex) => (
+                        <div key={tableIndex} className="border rounded-lg p-6 bg-muted/30">
+                          <h5 className="font-semibold text-lg mb-4">{table.title}</h5>
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse">
+                              <tbody>
+                                {table.table_data.map((row: any[], rowIndex: number) => (
+                                  <tr key={rowIndex}>
+                                    {row.map((cell: any, cellIndex: number) => (
+                                      <td
+                                        key={cellIndex}
+                                        className="border border-border p-3 bg-background"
+                                      >
+                                        {cell}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
           )}
         </div>
 
