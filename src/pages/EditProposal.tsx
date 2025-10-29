@@ -3,10 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import {
   Form,
@@ -17,10 +17,17 @@ import {
   FormMessage,
   FormDescription,
 } from "@/components/ui/form";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Globe, Plus, X } from "lucide-react";
+import { ArrowLeft, Globe, Plus, X, CalendarIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { ProposalItemsTable } from "@/components/ProposalItemsTable";
+import { TechnicalSpecsTable } from "@/components/TechnicalSpecsTable";
+import Model3DUploader from "@/components/Model3DUploader";
 
 interface EquipmentWithDetails {
   id: string;
@@ -31,18 +38,15 @@ interface EquipmentWithDetails {
 }
 
 const proposalSchema = z.object({
-  client_name: z.string().min(1, "El nombre del cliente es requerido"),
-  project_name: z.string().min(1, "El nombre del proyecto es requerido"),
-  client_contact: z.string().optional(),
-  client_email: z.string().email("Email inválido").optional().or(z.literal("")),
-  client_phone: z.string().optional(),
-  project_location: z.string().optional(),
+  offer_id: z.string().min(1, "El ID de la oferta es requerido"),
+  presentation_date: z.date(),
+  client: z.string().min(1, "El nombre del cliente es requerido"),
+  contact_person: z.string().optional(),
+  reference: z.string().optional(),
+  soldgrup_contact: z.string().optional(),
+  observations: z.string().optional(),
+  offer_details: z.string().optional(),
   status: z.enum(["draft", "published"]),
-  payment_terms: z.string().optional(),
-  delivery_time: z.string().optional(),
-  terms_conditions: z.string().optional(),
-  notes: z.string().optional(),
-  validity_days: z.number().min(1, "La validez debe ser al menos 1 día").default(30),
 });
 
 type ProposalFormData = z.infer<typeof proposalSchema>;
@@ -56,22 +60,25 @@ const EditProposal = () => {
   const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreview, setImagePreview] = useState<string[]>([]);
+  const [model3D, setModel3D] = useState<File | null>(null);
+  const [model3DPreview, setModel3DPreview] = useState<string | File | null>(null);
+  const [proposalItems, setProposalItems] = useState<any[]>([]);
+  const [technicalSpecs, setTechnicalSpecs] = useState<string[][]>([]);
 
   const form = useForm<ProposalFormData>({
     resolver: zodResolver(proposalSchema),
     defaultValues: {
-      client_name: "",
-      project_name: "",
-      client_contact: "",
-      client_email: "",
-      client_phone: "",
-      project_location: "",
+      offer_id: "",
+      presentation_date: new Date(),
+      client: "",
+      contact_person: "",
+      reference: "",
+      soldgrup_contact: "",
+      observations: "",
+      offer_details: "",
       status: "draft",
-      payment_terms: "",
-      delivery_time: "",
-      terms_conditions: "",
-      notes: "",
-      validity_days: 30,
     },
   });
 
@@ -142,6 +149,37 @@ const EditProposal = () => {
     setSelectedEquipment(selectedEquipment.filter((_, i) => i !== index));
   };
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const newImages = Array.from(files);
+      setSelectedImages([...selectedImages, ...newImages]);
+      
+      newImages.forEach((file) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImagePreview((prev) => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setSelectedImages(selectedImages.filter((_, i) => i !== index));
+    setImagePreview(imagePreview.filter((_, i) => i !== index));
+  };
+
+  const handle3DModelSelect = (file: File) => {
+    setModel3D(file);
+    setModel3DPreview(file);
+  };
+
+  const handleRemove3DModel = () => {
+    setModel3D(null);
+    setModel3DPreview(null);
+  };
+
   const fetchProposal = async () => {
     try {
       const { data, error } = await supabase
@@ -154,19 +192,26 @@ const EditProposal = () => {
 
       if (data) {
         form.reset({
-          client_name: data.client_name || "",
-          project_name: data.project_name || "",
-          client_contact: data.client_contact || "",
-          client_email: data.client_email || "",
-          client_phone: data.client_phone || "",
-          project_location: data.project_location || "",
+          offer_id: data.offer_id || "",
+          presentation_date: data.presentation_date ? new Date(data.presentation_date) : new Date(),
+          client: data.client || "",
+          contact_person: data.contact_person || "",
+          reference: data.reference || "",
+          soldgrup_contact: data.soldgrup_contact || "",
+          observations: data.observations || "",
+          offer_details: data.offer_details || "",
           status: (data.status === "published" ? "published" : "draft") as "draft" | "published",
-          payment_terms: data.payment_terms || "",
-          delivery_time: data.delivery_time || "",
-          terms_conditions: data.terms_conditions || "",
-          notes: data.notes || "",
-          validity_days: data.validity_days || 30,
         });
+
+        // Load technical specs
+        if (data.technical_specs_table && Array.isArray(data.technical_specs_table)) {
+          setTechnicalSpecs(data.technical_specs_table as string[][]);
+        }
+
+        // Load 3D model URL
+        if (data.model_3d_url) {
+          setModel3DPreview(data.model_3d_url);
+        }
 
         // Load existing equipment
         const { data: existingEquipment, error: eqError } = await supabase
@@ -186,6 +231,30 @@ const EditProposal = () => {
           }));
           setSelectedEquipment(loadedEquipment);
         }
+
+        // Load proposal items
+        const { data: items, error: itemsError } = await supabase
+          .from("proposal_items")
+          .select("*")
+          .eq("proposal_id", id)
+          .order("item_number");
+
+        if (itemsError) throw itemsError;
+        if (items) {
+          setProposalItems(items);
+        }
+
+        // Load existing images
+        const { data: images, error: imagesError } = await supabase
+          .from("proposal_images")
+          .select("*")
+          .eq("proposal_id", id)
+          .order("image_order");
+
+        if (imagesError) throw imagesError;
+        if (images) {
+          setImagePreview(images.map((img: any) => img.image_url));
+        }
       }
     } catch (error: any) {
       toast({
@@ -201,20 +270,17 @@ const EditProposal = () => {
 
   const onSubmit = async (data: ProposalFormData) => {
     try {
-      // Si se está publicando y no hay slug, generar uno
       let updateData: any = {
-        client_name: data.client_name,
-        project_name: data.project_name,
-        client_contact: data.client_contact || null,
-        client_email: data.client_email || null,
-        client_phone: data.client_phone || null,
-        project_location: data.project_location || null,
+        offer_id: data.offer_id,
+        presentation_date: format(data.presentation_date, "yyyy-MM-dd"),
+        client: data.client,
+        contact_person: data.contact_person || null,
+        reference: data.reference || null,
+        soldgrup_contact: data.soldgrup_contact || null,
+        observations: data.observations || null,
+        offer_details: data.offer_details || null,
         status: data.status,
-        payment_terms: data.payment_terms || null,
-        delivery_time: data.delivery_time || null,
-        terms_conditions: data.terms_conditions || null,
-        notes: data.notes || null,
-        validity_days: data.validity_days,
+        technical_specs_table: technicalSpecs,
         updated_at: new Date().toISOString(),
       };
 
@@ -230,6 +296,23 @@ const EditProposal = () => {
           const { data: slugData } = await supabase.rpc("generate_proposal_slug");
           updateData.public_url_slug = slugData;
         }
+      }
+
+      // Upload 3D model if new one is selected
+      if (model3D) {
+        const fileExt = model3D.name.split(".").pop();
+        const fileName = `${id}-${Date.now()}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from("3d-models")
+          .upload(fileName, model3D);
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from("3d-models")
+          .getPublicUrl(fileName);
+
+        updateData.model_3d_url = urlData.publicUrl;
       }
 
       const { error } = await supabase
@@ -266,6 +349,60 @@ const EditProposal = () => {
         if (equipmentError) throw equipmentError;
       }
 
+      // Update proposal items
+      await supabase
+        .from("proposal_items")
+        .delete()
+        .eq("proposal_id", id);
+
+      if (proposalItems.length > 0) {
+        const { error: itemsError } = await supabase
+          .from("proposal_items")
+          .insert(
+            proposalItems.map((item) => ({
+              proposal_id: id,
+              item_number: item.item_number,
+              description: item.description,
+              quantity: item.quantity,
+              unit: item.unit,
+              unit_price: item.unit_price,
+              total_price: item.total_price,
+            }))
+          );
+
+        if (itemsError) throw itemsError;
+      }
+
+      // Upload new images if any
+      if (selectedImages.length > 0) {
+        await supabase
+          .from("proposal_images")
+          .delete()
+          .eq("proposal_id", id);
+
+        for (let i = 0; i < selectedImages.length; i++) {
+          const file = selectedImages[i];
+          const fileExt = file.name.split(".").pop();
+          const fileName = `${id}-${i}-${Date.now()}.${fileExt}`;
+          
+          const { error: uploadError } = await supabase.storage
+            .from("proposal-images")
+            .upload(fileName, file);
+
+          if (uploadError) throw uploadError;
+
+          const { data: urlData } = supabase.storage
+            .from("proposal-images")
+            .getPublicUrl(fileName);
+
+          await supabase.from("proposal_images").insert({
+            proposal_id: id,
+            image_url: urlData.publicUrl,
+            image_order: i,
+          });
+        }
+      }
+
       toast({
         title: "Propuesta actualizada",
         description: data.status === "published" 
@@ -297,7 +434,7 @@ const EditProposal = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-2xl">
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
         <Button
           variant="ghost"
           onClick={() => navigate("/dashboard")}
@@ -311,204 +448,259 @@ const EditProposal = () => {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <FormField
-              control={form.control}
-              name="status"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Estado de la Propuesta</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+            <Card className="p-6">
+              <FormField
+                control={form.control}
+                name="status"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Estado de la Propuesta</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecciona el estado" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="draft">Borrador</SelectItem>
+                        <SelectItem value="published">
+                          <div className="flex items-center gap-2">
+                            <Globe className="h-4 w-4" />
+                            Publicada (Visible públicamente)
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      Las propuestas publicadas generan una URL pública que puedes compartir con tus clientes
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid md:grid-cols-2 gap-6 mt-6">
+                <FormField
+                  control={form.control}
+                  name="offer_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ID de la Oferta *</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="DEE - 001" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="presentation_date"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col">
+                      <FormLabel>Fecha de Presentación *</FormLabel>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-full pl-3 text-left font-normal",
+                                !field.value && "text-muted-foreground"
+                              )}
+                            >
+                              {field.value ? (
+                                format(field.value, "PPP")
+                              ) : (
+                                <span>Selecciona una fecha</span>
+                              )}
+                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={field.value}
+                            onSelect={field.onChange}
+                            disabled={(date) =>
+                              date > new Date() || date < new Date("1900-01-01")
+                            }
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6 mt-6">
+                <FormField
+                  control={form.control}
+                  name="client"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Cliente *</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Nombre del cliente" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="contact_person"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Persona de Contacto</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Nombre del contacto" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="reference"
+                render={({ field }) => (
+                  <FormItem className="mt-6">
+                    <FormLabel>Referencia</FormLabel>
                     <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecciona el estado" />
-                      </SelectTrigger>
+                      <RichTextEditor
+                        value={field.value || ""}
+                        onChange={field.onChange}
+                        placeholder="Información de referencia del proyecto..."
+                      />
                     </FormControl>
-                    <SelectContent>
-                      <SelectItem value="draft">Borrador</SelectItem>
-                      <SelectItem value="published">
-                        <div className="flex items-center gap-2">
-                          <Globe className="h-4 w-4" />
-                          Publicada (Visible públicamente)
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>
-                    Las propuestas publicadas generan una URL pública que puedes compartir con tus clientes
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="client_name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre del Cliente *</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="soldgrup_contact"
+                render={({ field }) => (
+                  <FormItem className="mt-6">
+                    <FormLabel>Contacto Soldgrup</FormLabel>
+                    <FormControl>
+                      <RichTextEditor
+                        value={field.value || ""}
+                        onChange={field.onChange}
+                        placeholder="Información de contacto de Soldgrup..."
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="project_name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre del Proyecto *</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="observations"
+                render={({ field }) => (
+                  <FormItem className="mt-6">
+                    <FormLabel>Observaciones</FormLabel>
+                    <FormControl>
+                      <RichTextEditor
+                        value={field.value || ""}
+                        onChange={field.onChange}
+                        placeholder="Observaciones adicionales..."
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="client_contact"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Persona de Contacto</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="offer_details"
+                render={({ field }) => (
+                  <FormItem className="mt-6">
+                    <FormLabel>Detalles de la Oferta</FormLabel>
+                    <FormControl>
+                      <RichTextEditor
+                        value={field.value || ""}
+                        onChange={field.onChange}
+                        placeholder="Términos, condiciones, tiempos de entrega, etc..."
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </Card>
 
-            <FormField
-              control={form.control}
-              name="client_email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email del Cliente</FormLabel>
-                  <FormControl>
-                    <Input type="email" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {/* Proposal Items Table */}
+            <Card className="p-6">
+              <h3 className="text-xl font-semibold mb-4">Items de la Propuesta</h3>
+              <ProposalItemsTable items={proposalItems} onChange={setProposalItems} />
+            </Card>
 
-            <FormField
-              control={form.control}
-              name="client_phone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Teléfono del Cliente</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {/* Technical Specifications */}
+            <Card className="p-6">
+              <h3 className="text-xl font-semibold mb-4">Especificaciones Técnicas</h3>
+              <TechnicalSpecsTable data={technicalSpecs} onChange={setTechnicalSpecs} />
+            </Card>
 
-            <FormField
-              control={form.control}
-              name="project_location"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Ubicación del Proyecto</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+            {/* Images */}
+            <Card className="p-6">
+              <h3 className="text-xl font-semibold mb-4">Imágenes</h3>
+              <Input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleImageSelect}
+                className="mb-4"
+              />
+              {imagePreview.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {imagePreview.map((preview, index) => (
+                    <div key={index} className="relative">
+                      <img
+                        src={preview}
+                        alt={`Preview ${index + 1}`}
+                        className="w-full h-48 object-cover rounded-lg"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2"
+                        onClick={() => handleRemoveImage(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               )}
-            />
+            </Card>
 
-            <FormField
-              control={form.control}
-              name="payment_terms"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Términos de Pago</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} rows={4} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="delivery_time"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Tiempo de Entrega</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} rows={3} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="validity_days"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Validez de la Propuesta (días)</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="number" 
-                      min="1" 
-                      step="1" 
-                      placeholder="30"
-                      {...field}
-                      onChange={(e) => field.onChange(parseInt(e.target.value) || 30)}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Número de días que la propuesta será válida desde su fecha de emisión
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="terms_conditions"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Términos y Condiciones</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} rows={6} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Notas Adicionales</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} rows={4} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {/* 3D Model */}
+            {/* 3D Model */}
+            <Card className="p-6">
+              <h3 className="text-xl font-semibold mb-4">Modelo 3D</h3>
+              <Model3DUploader 
+                onFileSelect={handle3DModelSelect}
+                preview={model3DPreview || undefined}
+                onRemove={handleRemove3DModel}
+              />
+            </Card>
 
             {/* Equipment Section */}
-            <div className="space-y-4 pt-6 border-t">
-              <div className="flex items-center justify-between">
-                <FormLabel>Equipos</FormLabel>
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-semibold">Equipos</h3>
                 <div className="flex gap-2">
                   <Select value={equipmentToAdd} onValueChange={setEquipmentToAdd}>
                     <SelectTrigger className="w-[300px]">
@@ -528,13 +720,13 @@ const EditProposal = () => {
                     disabled={!equipmentToAdd}
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    Agregar Equipo
+                    Agregar
                   </Button>
                 </div>
               </div>
 
               {selectedEquipment.map((equipment, index) => (
-                <Card key={index} className="p-6 relative">
+                <Card key={index} className="p-6 relative mb-4">
                   <Button
                     type="button"
                     variant="destructive"
@@ -599,7 +791,7 @@ const EditProposal = () => {
                   )}
                 </Card>
               ))}
-            </div>
+            </Card>
 
             <div className="flex gap-4">
               <Button type="submit" size="lg">
