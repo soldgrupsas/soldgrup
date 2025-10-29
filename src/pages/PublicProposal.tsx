@@ -39,6 +39,7 @@ const PublicProposal = () => {
   const [proposalItems, setProposalItems] = useState<any[]>([]);
   const [proposalImages, setProposalImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [model3DStatus, setModel3DStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
 
   useEffect(() => {
     if (slug) {
@@ -113,6 +114,24 @@ const PublicProposal = () => {
 
       if (imagesError) throw imagesError;
       setProposalImages(imagesData || []);
+
+      // Validate 3D model URL if exists
+      if (data.model_3d_url) {
+        console.log('🔍 Validando URL del modelo 3D:', data.model_3d_url);
+        try {
+          const response = await fetch(data.model_3d_url, { method: 'HEAD' });
+          if (response.ok) {
+            console.log('✅ Modelo 3D accesible');
+            setModel3DStatus('available');
+          } else {
+            console.error('❌ Modelo 3D no accesible. Status:', response.status);
+            setModel3DStatus('unavailable');
+          }
+        } catch (error) {
+          console.error('❌ Error al validar modelo 3D:', error);
+          setModel3DStatus('unavailable');
+        }
+      }
     } catch (error: any) {
       console.error("Error fetching proposal:", error);
       navigate("/404");
@@ -285,16 +304,32 @@ const PublicProposal = () => {
           {proposal.model_3d_url && (
             <Card className="p-8 shadow-elegant">
               <h2 className="text-2xl font-bold mb-4">Visualización 3D del Proyecto</h2>
-              <p className="text-muted-foreground mb-4">
-                Interactúa con el modelo: Click + arrastrar para rotar, scroll para hacer zoom
-              </p>
-              <Model3DViewer
-                modelUrl={proposal.model_3d_url}
-                height="600px"
-                enableZoom={true}
-                enablePan={true}
-                autoRotate={false}
-              />
+              {model3DStatus === 'checking' && (
+                <p className="text-muted-foreground mb-4">
+                  Verificando disponibilidad del modelo...
+                </p>
+              )}
+              {model3DStatus === 'unavailable' && (
+                <div className="bg-muted/50 p-6 rounded-lg mb-4">
+                  <p className="text-sm text-muted-foreground">
+                    ⚠️ El modelo 3D no está disponible actualmente. Esto puede deberse a problemas de configuración CORS.
+                  </p>
+                </div>
+              )}
+              {model3DStatus === 'available' && (
+                <>
+                  <p className="text-muted-foreground mb-4">
+                    Interactúa con el modelo: Click + arrastrar para rotar, scroll para hacer zoom
+                  </p>
+                  <Model3DViewer
+                    modelUrl={proposal.model_3d_url}
+                    height="600px"
+                    enableZoom={true}
+                    enablePan={true}
+                    autoRotate={false}
+                  />
+                </>
+              )}
             </Card>
           )}
 
