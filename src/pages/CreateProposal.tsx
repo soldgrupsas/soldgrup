@@ -191,8 +191,6 @@ const CreateProposal = () => {
         reference: formData.reference,
         soldgrup_contact: formData.soldgrup_contact,
         observations: formData.observations,
-        client_name: formData.client || "",
-        project_name: formData.reference || "",
         technical_specs_table: technicalSpecs,
         offer_details: formData.offer_details,
       };

@@ -10,9 +10,8 @@ import { useAuth } from "@/hooks/useAuth";
 
 interface Proposal {
   id: string;
-  client_name: string;
-  project_name: string;
-  status: string;
+  offer_id: string;
+  client: string;
   click_count: number;
   created_at: string;
   public_url_slug: string | null;
@@ -41,7 +40,7 @@ const Dashboard = () => {
     try {
       const { data, error } = await supabase
         .from("proposals")
-        .select("id, client_name, project_name, status, click_count, created_at, public_url_slug")
+        .select("id, offer_id, client, click_count, created_at, public_url_slug")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -143,10 +142,9 @@ const Dashboard = () => {
               <div className="space-y-4">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <h3 className="text-xl font-bold mb-2">{proposal.project_name}</h3>
-                    <p className="text-muted-foreground mb-2">Cliente: {proposal.client_name}</p>
+                    <h3 className="text-xl font-bold mb-2">{proposal.offer_id}</h3>
+                    <p className="text-muted-foreground mb-2">Cliente: {proposal.client}</p>
                     <div className="flex gap-4 text-sm text-muted-foreground">
-                      <span>Estado: <span className="font-medium">{proposal.status}</span></span>
                       <span>Clics: <span className="font-medium">{proposal.click_count}</span></span>
                       <span>Creado: {new Date(proposal.created_at).toLocaleDateString()}</span>
                     </div>
