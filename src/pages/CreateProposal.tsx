@@ -130,6 +130,7 @@ const CreateProposal = () => {
     contact_person: "",
     reference: "",
     soldgrup_contact: "",
+    observations: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -144,6 +145,7 @@ const CreateProposal = () => {
         contact_person: formData.contact_person,
         reference: formData.reference,
         soldgrup_contact: formData.soldgrup_contact,
+        observations: formData.observations,
         client_name: formData.client || "",
         project_name: formData.reference || "",
       };
@@ -354,6 +356,15 @@ const CreateProposal = () => {
               items={proposalItems}
               onChange={setProposalItems}
             />
+
+            <div className="space-y-2">
+              <Label htmlFor="observations">Observaciones</Label>
+              <RichTextEditor
+                value={formData.observations}
+                onChange={(value) => handleRichTextChange("observations", value)}
+                placeholder="Ingrese las observaciones de la propuesta..."
+              />
+            </div>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
