@@ -38,6 +38,8 @@ const CreateProposal = () => {
   const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [proposalItems, setProposalItems] = useState<ProposalItem[]>([
     {
       item_number: 1,
@@ -123,6 +125,26 @@ const CreateProposal = () => {
   const handleRemoveEquipment = (index: number) => {
     setSelectedEquipment(selectedEquipment.filter((_, i) => i !== index));
   };
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setSelectedImages([...selectedImages, ...files]);
+
+    // Create previews
+    const newPreviews = files.map((file) => URL.createObjectURL(file));
+    setImagePreviews([...imagePreviews, ...newPreviews]);
+  };
+
+  const handleRemoveImage = (index: number) => {
+    // Revoke the object URL to free memory
+    URL.revokeObjectURL(imagePreviews[index]);
+    
+    setSelectedImages(selectedImages.filter((_, i) => i !== index));
+    setImagePreviews(imagePreviews.filter((_, i) => i !== index));
+  };
+
   const [formData, setFormData] = useState({
     offer_id: "",
     presentation_date: new Date(),
@@ -202,6 +224,44 @@ const CreateProposal = () => {
           .insert(itemsToInsert);
 
         if (itemsError) throw itemsError;
+      }
+
+      // Upload images to Storage and save references
+      if (selectedImages.length > 0) {
+        const imageRecords = [];
+
+        for (let i = 0; i < selectedImages.length; i++) {
+          const file = selectedImages[i];
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${data.id}/${Date.now()}-${i}.${fileExt}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('proposal-images')
+            .upload(fileName, file);
+
+          if (uploadError) {
+            console.error('Error uploading image:', uploadError);
+            continue;
+          }
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('proposal-images')
+            .getPublicUrl(fileName);
+
+          imageRecords.push({
+            proposal_id: data.id,
+            image_url: publicUrl,
+            image_order: i + 1,
+          });
+        }
+
+        if (imageRecords.length > 0) {
+          const { error: imagesError } = await supabase
+            .from("proposal_images")
+            .insert(imageRecords);
+
+          if (imagesError) throw imagesError;
+        }
       }
 
       toast({
@@ -364,6 +424,40 @@ const CreateProposal = () => {
                 onChange={(value) => handleRichTextChange("observations", value)}
                 placeholder="Ingrese las observaciones de la propuesta..."
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="images">Imágenes</Label>
+              <Input
+                id="images"
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleImageSelect}
+                className="cursor-pointer"
+              />
+              {imagePreviews.length > 0 && (
+                <div className="grid grid-cols-3 gap-4 mt-4">
+                  {imagePreviews.map((preview, index) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={preview}
+                        alt={`Preview ${index + 1}`}
+                        className="w-full h-32 object-cover rounded-lg border border-border"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleRemoveImage(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="space-y-4">
