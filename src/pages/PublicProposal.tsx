@@ -37,6 +37,7 @@ const PublicProposal = () => {
   const [proposal, setProposal] = useState<ProposalData | null>(null);
   const [equipment, setEquipment] = useState<EquipmentDetail[]>([]);
   const [proposalItems, setProposalItems] = useState<any[]>([]);
+  const [proposalImages, setProposalImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -102,6 +103,16 @@ const PublicProposal = () => {
 
       if (itemsError) throw itemsError;
       setProposalItems(itemsData || []);
+
+      // Fetch proposal images
+      const { data: imagesData, error: imagesError } = await supabase
+        .from("proposal_images")
+        .select("*")
+        .eq("proposal_id", data.id)
+        .order("image_order");
+
+      if (imagesError) throw imagesError;
+      setProposalImages(imagesData || []);
     } catch (error: any) {
       console.error("Error fetching proposal:", error);
       navigate("/404");
@@ -220,6 +231,29 @@ const PublicProposal = () => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </Card>
+        )}
+
+        {/* Proposal Images Section */}
+        {proposalImages.length > 0 && (
+          <Card className="p-8 mb-8 animate-scale-in shadow-elegant hover:shadow-glow transition-all">
+            <h2 className="text-2xl font-bold mb-6">Imágenes del Proyecto</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {proposalImages.map((image, index) => (
+                <div key={image.id} className="group relative">
+                  <img
+                    src={image.image_url}
+                    alt={image.image_caption || `Imagen ${index + 1}`}
+                    className="w-full h-64 object-cover rounded-lg shadow-md hover:shadow-xl transition-shadow"
+                  />
+                  {image.image_caption && (
+                    <p className="text-sm text-muted-foreground mt-2 text-center">
+                      {image.image_caption}
+                    </p>
+                  )}
+                </div>
+              ))}
             </div>
           </Card>
         )}
