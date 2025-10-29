@@ -19,6 +19,7 @@ import { ProposalItemsTable, ProposalItem } from "@/components/ProposalItemsTabl
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
+import { es } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import Model3DUploader from "@/components/Model3DUploader";
@@ -395,7 +396,7 @@ const CreateProposal = () => {
                     >
                       <CalendarIcon className="mr-2 h-4 w-4" />
                       {formData.presentation_date ? (
-                        format(formData.presentation_date, "PPP")
+                        format(formData.presentation_date, "PPP", { locale: es })
                       ) : (
                         <span>Seleccione una fecha</span>
                       )}
