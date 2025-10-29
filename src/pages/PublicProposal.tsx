@@ -18,7 +18,6 @@ interface ProposalData {
   offer_details: string | null;
   model_3d_url: string | null;
   technical_specs_table: string[][] | null;
-  status: string;
   public_url_slug: string | null;
 }
 
@@ -69,7 +68,6 @@ const PublicProposal = () => {
         .from("proposals")
         .select("*")
         .eq("public_url_slug", slug)
-        .eq("status", "published")
         .maybeSingle();
 
       if (error) throw error;
