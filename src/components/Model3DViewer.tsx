@@ -1,8 +1,8 @@
 import { Suspense, useState, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useGLTF, PerspectiveCamera, Environment } from "@react-three/drei";
-import { Card } from "@/components/ui/card";
-import { AlertCircle, Loader2, CheckCircle } from "lucide-react";
+
+import { AlertCircle, Loader2 } from "lucide-react";
 
 interface Model3DViewerProps {
   modelUrl: string;
@@ -12,15 +12,12 @@ interface Model3DViewerProps {
   autoRotate?: boolean;
 }
 
-function Model({ url, onError }: { url: string; onError: (error: any) => void }) {
-  try {
-    const { scene } = useGLTF(url, true);
-    return <primitive object={scene} />;
-  } catch (error) {
-    console.error("Error loading 3D model:", error);
-    onError(error);
-    return null;
-  }
+function Model({ url, onLoaded }: { url: string; onLoaded: () => void }) {
+  const { scene } = useGLTF(url);
+  useEffect(() => {
+    onLoaded?.();
+  }, [scene, onLoaded]);
+  return <primitive object={scene} />;
 }
 
 const Model3DViewer = ({
@@ -69,7 +66,7 @@ const Model3DViewer = ({
           </p>
           <ul className="text-xs text-muted-foreground text-left space-y-2 mb-4">
             <li>• El archivo no existe o no es accesible</li>
-            <li>• Configuración CORS incorrecta en Supabase Storage</li>
+            
             <li>• Formato de archivo incompatible (debe ser .glb o .gltf)</li>
             <li>• Archivo corrupto o demasiado grande</li>
           </ul>
@@ -97,7 +94,7 @@ const Model3DViewer = ({
               </mesh>
             }
           >
-            <Model url={modelUrl} onError={handleError} />
+            <Model url={modelUrl} onLoaded={handleSuccess} />
             <Environment preset="studio" />
           </Suspense>
           <ambientLight intensity={0.5} />
@@ -109,7 +106,6 @@ const Model3DViewer = ({
             autoRotateSpeed={2}
             minDistance={1}
             maxDistance={20}
-            onEnd={handleSuccess}
           />
         </Canvas>
       )}
