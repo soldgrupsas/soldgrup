@@ -22,6 +22,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import Model3DUploader from "@/components/Model3DUploader";
+import { TechnicalSpecsTable, SpecTableData } from "@/components/TechnicalSpecsTable";
 
 interface EquipmentWithDetails {
   id: string;
@@ -51,6 +52,10 @@ const CreateProposal = () => {
       unit_price: 0,
       total_price: 0,
     },
+  ]);
+  const [technicalSpecs, setTechnicalSpecs] = useState<SpecTableData>([
+    ["", ""],
+    ["", ""],
   ]);
 
   useEffect(() => {
@@ -186,6 +191,7 @@ const CreateProposal = () => {
         observations: formData.observations,
         client_name: formData.client || "",
         project_name: formData.reference || "",
+        technical_specs_table: technicalSpecs,
       };
 
       const { data, error } = await supabase
@@ -277,6 +283,29 @@ const CreateProposal = () => {
             .insert(imageRecords);
 
           if (imagesError) throw imagesError;
+        }
+      }
+
+      // Upload 3D model to Storage and save reference
+      if (selected3DModel) {
+        const fileExt = selected3DModel.name.split('.').pop();
+        const fileName = `${data.id}/${Date.now()}-model.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('3d-models')
+          .upload(fileName, selected3DModel);
+
+        if (!uploadError) {
+          const { data: { publicUrl } } = supabase.storage
+            .from('3d-models')
+            .getPublicUrl(fileName);
+
+          await supabase
+            .from('proposals')
+            .update({ model_3d_url: publicUrl })
+            .eq('id', data.id);
+        } else {
+          console.error('Error uploading 3D model:', uploadError);
         }
       }
 
@@ -487,6 +516,11 @@ const CreateProposal = () => {
                 Formatos soportados: GLB, GLTF. Tamaño máximo: 50MB
               </p>
             </div>
+
+            <TechnicalSpecsTable
+              data={technicalSpecs}
+              onChange={setTechnicalSpecs}
+            />
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">

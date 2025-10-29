@@ -25,6 +25,7 @@ interface ProposalData {
   delivery_time: string | null;
   notes: string | null;
   model_3d_url: string | null;
+  technical_specs_table: string[][] | null;
 }
 
 interface EquipmentDetail {
@@ -84,7 +85,12 @@ const PublicProposal = () => {
         return;
       }
 
-      setProposal(data);
+      setProposal({
+        ...data,
+        technical_specs_table: Array.isArray(data.technical_specs_table) 
+          ? data.technical_specs_table as string[][] 
+          : null
+      });
 
       // Fetch equipment details
       const { data: equipmentData, error: equipmentError } = await supabase
@@ -311,6 +317,33 @@ const PublicProposal = () => {
                 enablePan={true}
                 autoRotate={false}
               />
+            </Card>
+          )}
+
+          {/* Technical Specifications Table */}
+          {proposal.technical_specs_table && proposal.technical_specs_table.length > 0 && (
+            <Card className="p-8 shadow-elegant">
+              <h2 className="text-2xl font-bold mb-6">Especificaciones Técnicas</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <tbody>
+                    {proposal.technical_specs_table.map((row, rowIndex) => (
+                      <tr key={rowIndex} className={rowIndex % 2 === 0 ? "bg-muted/30" : ""}>
+                        {row.map((cell, cellIndex) => (
+                          <td
+                            key={cellIndex}
+                            className={`border border-border p-4 ${
+                              cellIndex === 0 ? "font-semibold bg-primary/5" : ""
+                            }`}
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           )}
 

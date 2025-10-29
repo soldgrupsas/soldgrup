@@ -363,6 +363,7 @@ export type Database = {
           reference: string | null
           soldgrup_contact: string | null
           status: string | null
+          technical_specs_table: Json | null
           terms_conditions: string | null
           total_amount: number | null
           updated_at: string | null
@@ -394,6 +395,7 @@ export type Database = {
           reference?: string | null
           soldgrup_contact?: string | null
           status?: string | null
+          technical_specs_table?: Json | null
           terms_conditions?: string | null
           total_amount?: number | null
           updated_at?: string | null
@@ -425,6 +427,7 @@ export type Database = {
           reference?: string | null
           soldgrup_contact?: string | null
           status?: string | null
+          technical_specs_table?: Json | null
           terms_conditions?: string | null
           total_amount?: number | null
           updated_at?: string | null
