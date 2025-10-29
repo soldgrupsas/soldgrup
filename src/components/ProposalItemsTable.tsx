@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Plus, Trash2 } from "lucide-react";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 export interface ProposalItem {
   item_number: number;
@@ -84,88 +85,85 @@ export const ProposalItemsTable = ({ items, onChange }: ProposalItemsTableProps)
           </Button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="p-2 text-left font-semibold w-16">Item</th>
-                <th className="p-2 text-left font-semibold">Características</th>
-                <th className="p-2 text-left font-semibold w-24">Cantidad</th>
-                <th className="p-2 text-left font-semibold w-32">Precio Unitario</th>
-                <th className="p-2 text-left font-semibold w-32">Precio Total</th>
-                <th className="p-2 w-12"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, index) => (
-                <tr key={index} className="border-b border-border">
-                  <td className="p-2">
-                    <div className="flex items-center justify-center h-10">
-                      {item.item_number}
-                    </div>
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      value={item.description}
-                      onChange={(e) =>
-                        handleItemChange(index, "description", e.target.value)
-                      }
-                      placeholder="Descripción del item"
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={item.quantity}
-                      onChange={(e) =>
-                        handleItemChange(index, "quantity", e.target.value)
-                      }
-                      placeholder="0"
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={item.unit_price}
-                      onChange={(e) =>
-                        handleItemChange(index, "unit_price", e.target.value)
-                      }
-                      placeholder="$0"
-                    />
-                  </td>
-                  <td className="p-2">
-                    <div className="flex items-center h-10 px-3 text-muted-foreground">
-                      {formatCurrency(item.total_price)}
-                    </div>
-                  </td>
-                  <td className="p-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveRow(index)}
-                      disabled={items.length === 1}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-              <tr className="bg-muted/50">
-                <td colSpan={4} className="p-3 text-right font-semibold">
-                  Valor total Antes de IVA
-                </td>
-                <td className="p-3 font-bold">
-                  {formatCurrency(calculateSubtotal())}
-                </td>
-                <td></td>
-              </tr>
-            </tbody>
-          </table>
+        <div className="space-y-4">
+          {items.map((item, index) => (
+            <Card key={index} className="p-4">
+              <div className="grid grid-cols-12 gap-4 items-start">
+                <div className="col-span-1">
+                  <Label className="text-sm">Item</Label>
+                  <div className="flex items-center justify-center h-10 font-semibold">
+                    {item.item_number}
+                  </div>
+                </div>
+                
+                <div className="col-span-5">
+                  <Label className="text-sm">Características</Label>
+                  <RichTextEditor
+                    value={item.description}
+                    onChange={(value) =>
+                      handleItemChange(index, "description", value)
+                    }
+                    placeholder="Descripción del item con formato"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <Label className="text-sm">Cantidad</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={item.quantity}
+                    onChange={(e) =>
+                      handleItemChange(index, "quantity", e.target.value)
+                    }
+                    placeholder="0"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <Label className="text-sm">Precio Unitario</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={item.unit_price}
+                    onChange={(e) =>
+                      handleItemChange(index, "unit_price", e.target.value)
+                    }
+                    placeholder="$0"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <Label className="text-sm">Precio Total</Label>
+                  <div className="flex items-center h-10 px-3 text-muted-foreground font-semibold">
+                    {formatCurrency(item.total_price)}
+                  </div>
+                </div>
+
+                <div className="col-span-12 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleRemoveRow(index)}
+                    disabled={items.length === 1}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Eliminar Fila
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+
+          <Card className="p-4 bg-muted/50">
+            <div className="flex justify-between items-center">
+              <span className="text-lg font-semibold">Valor total Antes de IVA</span>
+              <span className="text-2xl font-bold">{formatCurrency(calculateSubtotal())}</span>
+            </div>
+          </Card>
         </div>
       </div>
     </Card>
