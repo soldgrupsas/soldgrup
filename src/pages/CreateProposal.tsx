@@ -183,6 +183,9 @@ const CreateProposal = () => {
     setLoading(true);
 
     try {
+      // Generar slug automáticamente para hacer la propuesta pública
+      const { data: slugData } = await supabase.rpc("generate_proposal_slug");
+
       const proposalData = {
         offer_id: formData.offer_id,
         presentation_date: format(formData.presentation_date, "yyyy-MM-dd"),
@@ -193,6 +196,7 @@ const CreateProposal = () => {
         observations: formData.observations,
         technical_specs_table: technicalSpecs,
         offer_details: formData.offer_details,
+        public_url_slug: slugData, // Slug generado automáticamente
       };
 
       const { data, error } = await supabase

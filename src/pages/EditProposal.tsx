@@ -21,7 +21,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Globe, Plus, X, CalendarIcon } from "lucide-react";
+import { ArrowLeft, Plus, X, CalendarIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { RichTextEditor } from "@/components/RichTextEditor";
@@ -46,7 +46,6 @@ const proposalSchema = z.object({
   soldgrup_contact: z.string().optional(),
   observations: z.string().optional(),
   offer_details: z.string().optional(),
-  status: z.enum(["draft", "published"]),
 });
 
 type ProposalFormData = z.infer<typeof proposalSchema>;
@@ -78,7 +77,6 @@ const EditProposal = () => {
       soldgrup_contact: "",
       observations: "",
       offer_details: "",
-      status: "draft",
     },
   });
 
@@ -191,6 +189,15 @@ const EditProposal = () => {
       if (error) throw error;
 
       if (data) {
+        // Si la propuesta no tiene slug, generar uno automáticamente (para propuestas antiguas)
+        if (!data.public_url_slug) {
+          const { data: slugData } = await supabase.rpc("generate_proposal_slug");
+          await supabase
+            .from("proposals")
+            .update({ public_url_slug: slugData })
+            .eq("id", id);
+        }
+
         form.reset({
           offer_id: data.offer_id || "",
           presentation_date: data.presentation_date ? new Date(data.presentation_date) : new Date(),
@@ -200,7 +207,6 @@ const EditProposal = () => {
           soldgrup_contact: data.soldgrup_contact || "",
           observations: data.observations || "",
           offer_details: data.offer_details || "",
-          status: (data.status === "published" ? "published" : "draft") as "draft" | "published",
         });
 
         // Load technical specs
@@ -279,24 +285,9 @@ const EditProposal = () => {
         soldgrup_contact: data.soldgrup_contact || null,
         observations: data.observations || null,
         offer_details: data.offer_details || null,
-        status: data.status,
         technical_specs_table: technicalSpecs,
         updated_at: new Date().toISOString(),
       };
-
-      // Si se está publicando y no tiene slug, generar uno
-      if (data.status === "published") {
-        const { data: currentProposal } = await supabase
-          .from("proposals")
-          .select("public_url_slug")
-          .eq("id", id)
-          .single();
-
-        if (!currentProposal?.public_url_slug) {
-          const { data: slugData } = await supabase.rpc("generate_proposal_slug");
-          updateData.public_url_slug = slugData;
-        }
-      }
 
       // Upload 3D model if new one is selected
       if (model3D) {
@@ -405,9 +396,7 @@ const EditProposal = () => {
 
       toast({
         title: "Propuesta actualizada",
-        description: data.status === "published" 
-          ? "La propuesta ha sido publicada y está disponible públicamente"
-          : "La propuesta ha sido actualizada exitosamente",
+        description: "Los cambios se han guardado y están disponibles públicamente",
       });
 
       navigate("/dashboard");
@@ -449,37 +438,7 @@ const EditProposal = () => {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <Card className="p-6">
-              <FormField
-                control={form.control}
-                name="status"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Estado de la Propuesta</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecciona el estado" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="draft">Borrador</SelectItem>
-                        <SelectItem value="published">
-                          <div className="flex items-center gap-2">
-                            <Globe className="h-4 w-4" />
-                            Publicada (Visible públicamente)
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      Las propuestas publicadas generan una URL pública que puedes compartir con tus clientes
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <div className="grid md:grid-cols-2 gap-6 mt-6">
+              <div className="grid md:grid-cols-2 gap-6">
                 <FormField
                   control={form.control}
                   name="offer_id"
