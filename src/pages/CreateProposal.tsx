@@ -440,22 +440,18 @@ const CreateProposal = () => {
 
               <div className="space-y-2">
                 <Label htmlFor="reference">Referencia</Label>
-                <Input
-                  id="reference"
-                  name="reference"
+                <RichTextEditor
                   value={formData.reference}
-                  onChange={handleChange}
+                  onChange={(value) => handleRichTextChange("reference", value)}
                   placeholder="Ingrese la referencia de la propuesta..."
                 />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="soldgrup_contact">Persona de Contacto en Soldgrup</Label>
-                <Input
-                  id="soldgrup_contact"
-                  name="soldgrup_contact"
+                <RichTextEditor
                   value={formData.soldgrup_contact}
-                  onChange={handleChange}
+                  onChange={(value) => handleRichTextChange("soldgrup_contact", value)}
                   placeholder="Ingrese nombre, cargo, email, celular..."
                 />
                 <p className="text-sm text-muted-foreground">
