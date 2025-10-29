@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import soldgrupLogo from "@/assets/soldgrup-logo.webp";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -7,6 +8,11 @@ const Index = () => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-industrial">
       <div className="text-center space-y-6 p-8">
+        <img 
+          src={soldgrupLogo} 
+          alt="Soldgrup - La fuerza de su industria" 
+          className="mx-auto mb-8 h-24 w-auto"
+        />
         <h1 className="text-5xl font-bold text-foreground mb-4">
           Smart Workspace
         </h1>
