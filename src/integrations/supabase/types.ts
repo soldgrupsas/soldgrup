@@ -339,21 +339,27 @@ export type Database = {
       proposals: {
         Row: {
           click_count: number | null
+          client: string | null
           client_contact: string | null
           client_email: string | null
-          client_name: string
+          client_name: string | null
           client_phone: string | null
+          contact_person: string | null
           created_at: string | null
           delivery_time: string | null
           engineer_name: string | null
           engineer_title: string | null
           id: string
           notes: string | null
+          offer_id: string | null
           payment_terms: string | null
+          presentation_date: string | null
           project_location: string | null
-          project_name: string
+          project_name: string | null
           proposal_date: string | null
           public_url_slug: string | null
+          reference: string | null
+          soldgrup_contact: string | null
           status: string | null
           terms_conditions: string | null
           total_amount: number | null
@@ -362,21 +368,27 @@ export type Database = {
         }
         Insert: {
           click_count?: number | null
+          client?: string | null
           client_contact?: string | null
           client_email?: string | null
-          client_name: string
+          client_name?: string | null
           client_phone?: string | null
+          contact_person?: string | null
           created_at?: string | null
           delivery_time?: string | null
           engineer_name?: string | null
           engineer_title?: string | null
           id?: string
           notes?: string | null
+          offer_id?: string | null
           payment_terms?: string | null
+          presentation_date?: string | null
           project_location?: string | null
-          project_name: string
+          project_name?: string | null
           proposal_date?: string | null
           public_url_slug?: string | null
+          reference?: string | null
+          soldgrup_contact?: string | null
           status?: string | null
           terms_conditions?: string | null
           total_amount?: number | null
@@ -385,21 +397,27 @@ export type Database = {
         }
         Update: {
           click_count?: number | null
+          client?: string | null
           client_contact?: string | null
           client_email?: string | null
-          client_name?: string
+          client_name?: string | null
           client_phone?: string | null
+          contact_person?: string | null
           created_at?: string | null
           delivery_time?: string | null
           engineer_name?: string | null
           engineer_title?: string | null
           id?: string
           notes?: string | null
+          offer_id?: string | null
           payment_terms?: string | null
+          presentation_date?: string | null
           project_location?: string | null
-          project_name?: string
+          project_name?: string | null
           proposal_date?: string | null
           public_url_slug?: string | null
+          reference?: string | null
+          soldgrup_contact?: string | null
           status?: string | null
           terms_conditions?: string | null
           total_amount?: number | null

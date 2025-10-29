@@ -137,9 +137,20 @@ const CreateProposal = () => {
     setLoading(true);
 
     try {
+      const proposalData = {
+        offer_id: formData.offer_id,
+        presentation_date: format(formData.presentation_date, "yyyy-MM-dd"),
+        client: formData.client,
+        contact_person: formData.contact_person,
+        reference: formData.reference,
+        soldgrup_contact: formData.soldgrup_contact,
+        client_name: formData.client || "",
+        project_name: formData.reference || "",
+      };
+
       const { data, error } = await supabase
         .from("proposals")
-        .insert([formData])
+        .insert([proposalData])
         .select()
         .single();
 
