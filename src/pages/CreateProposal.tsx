@@ -175,6 +175,7 @@ const CreateProposal = () => {
     reference: "",
     soldgrup_contact: "",
     observations: "",
+    offer_details: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -193,6 +194,7 @@ const CreateProposal = () => {
         client_name: formData.client || "",
         project_name: formData.reference || "",
         technical_specs_table: technicalSpecs,
+        offer_details: formData.offer_details,
       };
 
       const { data, error } = await supabase
@@ -616,6 +618,18 @@ const CreateProposal = () => {
                   )}
                 </Card>
               ))}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="offer_details">Detalles de la oferta</Label>
+              <RichTextEditor
+                value={formData.offer_details}
+                onChange={(value) => handleRichTextChange("offer_details", value)}
+                placeholder="Incluya aquí los detalles de la oferta..."
+              />
+              <p className="text-sm text-muted-foreground">
+                Incluya aquí: Forma de Pago, Tiempos de entrega, Validez de la oferta, Garantía y cualquier comentario adicional relevante.
+              </p>
             </div>
 
             <div className="flex gap-4 justify-end">

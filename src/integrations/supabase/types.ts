@@ -353,6 +353,7 @@ export type Database = {
           model_3d_url: string | null
           notes: string | null
           observations: string | null
+          offer_details: string | null
           offer_id: string | null
           payment_terms: string | null
           presentation_date: string | null
@@ -385,6 +386,7 @@ export type Database = {
           model_3d_url?: string | null
           notes?: string | null
           observations?: string | null
+          offer_details?: string | null
           offer_id?: string | null
           payment_terms?: string | null
           presentation_date?: string | null
@@ -417,6 +419,7 @@ export type Database = {
           model_3d_url?: string | null
           notes?: string | null
           observations?: string | null
+          offer_details?: string | null
           offer_id?: string | null
           payment_terms?: string | null
           presentation_date?: string | null
