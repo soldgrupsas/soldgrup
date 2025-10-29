@@ -5,10 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Plus, X } from "lucide-react";
+import { ArrowLeft, Plus, X, CalendarIcon } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -17,6 +16,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProposalItemsTable, ProposalItem } from "@/components/ProposalItemsTable";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { cn } from "@/lib/utils";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 interface EquipmentWithDetails {
   id: string;
@@ -120,19 +124,12 @@ const CreateProposal = () => {
     setSelectedEquipment(selectedEquipment.filter((_, i) => i !== index));
   };
   const [formData, setFormData] = useState({
-    client_name: "",
-    client_contact: "",
-    client_email: "",
-    client_phone: "",
-    project_name: "",
-    project_location: "",
-    engineer_name: "",
-    engineer_title: "",
-    notes: "",
-    terms_conditions: "",
-    payment_terms: "",
-    delivery_time: "",
-    validity_days: 30,
+    offer_id: "",
+    presentation_date: new Date(),
+    client: "",
+    contact_person: "",
+    reference: "",
+    soldgrup_contact: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -212,12 +209,19 @@ const CreateProposal = () => {
   };
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const { name, value } = e.target;
     setFormData({
       ...formData,
-      [name]: name === "validity_days" ? parseInt(value) || 30 : value,
+      [name]: value,
+    });
+  };
+
+  const handleRichTextChange = (name: string, value: string) => {
+    setFormData({
+      ...formData,
+      [name]: value,
     });
   };
 
@@ -249,108 +253,89 @@ const CreateProposal = () => {
           <h1 className="text-3xl font-bold mb-6">Nueva Propuesta Comercial</h1>
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="client_name">Nombre del Cliente *</Label>
+                <Label htmlFor="offer_id">ID de la oferta</Label>
                 <Input
-                  id="client_name"
-                  name="client_name"
-                  value={formData.client_name}
-                  onChange={handleChange}
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="client_contact">Contacto</Label>
-                <Input
-                  id="client_contact"
-                  name="client_contact"
-                  value={formData.client_contact}
+                  id="offer_id"
+                  name="offer_id"
+                  value={formData.offer_id}
                   onChange={handleChange}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="client_email">Email</Label>
+                <Label>Fecha de presentación</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !formData.presentation_date && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {formData.presentation_date ? (
+                        format(formData.presentation_date, "PPP")
+                      ) : (
+                        <span>Seleccione una fecha</span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={formData.presentation_date}
+                      onSelect={(date) =>
+                        setFormData({ ...formData, presentation_date: date || new Date() })
+                      }
+                      initialFocus
+                      className="pointer-events-auto"
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="client">Cliente</Label>
                 <Input
-                  id="client_email"
-                  name="client_email"
-                  type="email"
-                  value={formData.client_email}
+                  id="client"
+                  name="client"
+                  value={formData.client}
                   onChange={handleChange}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="client_phone">Teléfono</Label>
+                <Label htmlFor="contact_person">Persona de Contacto</Label>
                 <Input
-                  id="client_phone"
-                  name="client_phone"
-                  value={formData.client_phone}
+                  id="contact_person"
+                  name="contact_person"
+                  value={formData.contact_person}
                   onChange={handleChange}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="project_name">Nombre del Proyecto *</Label>
-                <Input
-                  id="project_name"
-                  name="project_name"
-                  value={formData.project_name}
-                  onChange={handleChange}
-                  required
+                <Label htmlFor="reference">Referencia</Label>
+                <RichTextEditor
+                  value={formData.reference}
+                  onChange={(value) => handleRichTextChange("reference", value)}
+                  placeholder="Ingrese la referencia de la propuesta..."
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="project_location">Ubicación del Proyecto</Label>
-                <Input
-                  id="project_location"
-                  name="project_location"
-                  value={formData.project_location}
-                  onChange={handleChange}
+                <Label htmlFor="soldgrup_contact">Persona de Contacto en Soldgrup</Label>
+                <RichTextEditor
+                  value={formData.soldgrup_contact}
+                  onChange={(value) => handleRichTextChange("soldgrup_contact", value)}
+                  placeholder="Ingrese nombre, cargo, email, celular..."
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="engineer_name">Nombre del Ingeniero</Label>
-                <Input
-                  id="engineer_name"
-                  name="engineer_name"
-                  value={formData.engineer_name}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="engineer_title">Cargo del Ingeniero</Label>
-                <Input
-                  id="engineer_title"
-                  name="engineer_title"
-                  value={formData.engineer_title}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="payment_terms">Términos de Pago</Label>
-                <Input
-                  id="payment_terms"
-                  name="payment_terms"
-                  value={formData.payment_terms}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="delivery_time">Tiempo de Entrega</Label>
-                <Input
-                  id="delivery_time"
-                  name="delivery_time"
-                  value={formData.delivery_time}
-                  onChange={handleChange}
-                />
+                <p className="text-sm text-muted-foreground">
+                  Ingrese aquí nombre, cargo, email, celular de la persona que presenta la propuesta comercial.
+                </p>
               </div>
             </div>
 
@@ -358,47 +343,6 @@ const CreateProposal = () => {
               items={proposalItems}
               onChange={setProposalItems}
             />
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="validity_days">Validez de la Propuesta (días)</Label>
-                <Input
-                  id="validity_days"
-                  name="validity_days"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={formData.validity_days}
-                  onChange={handleChange}
-                  placeholder="30"
-                />
-                <p className="text-sm text-muted-foreground">
-                  Número de días que la propuesta será válida desde su fecha de emisión
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="notes">Notas</Label>
-              <Textarea
-                id="notes"
-                name="notes"
-                value={formData.notes}
-                onChange={handleChange}
-                rows={3}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="terms_conditions">Términos y Condiciones</Label>
-              <Textarea
-                id="terms_conditions"
-                name="terms_conditions"
-                value={formData.terms_conditions}
-                onChange={handleChange}
-                rows={4}
-              />
-            </div>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
