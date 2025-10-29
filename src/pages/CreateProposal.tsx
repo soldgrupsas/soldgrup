@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import Model3DUploader from "@/components/Model3DUploader";
 
 interface EquipmentWithDetails {
   id: string;
@@ -40,6 +41,8 @@ const CreateProposal = () => {
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [selected3DModel, setSelected3DModel] = useState<File | null>(null);
+  const [model3DPreview, setModel3DPreview] = useState<string | null>(null);
   const [proposalItems, setProposalItems] = useState<ProposalItem[]>([
     {
       item_number: 1,
@@ -143,6 +146,19 @@ const CreateProposal = () => {
     
     setSelectedImages(selectedImages.filter((_, i) => i !== index));
     setImagePreviews(imagePreviews.filter((_, i) => i !== index));
+  };
+
+  const handle3DModelSelect = (file: File) => {
+    setSelected3DModel(file);
+    setModel3DPreview(URL.createObjectURL(file));
+  };
+
+  const handleRemove3DModel = () => {
+    if (model3DPreview) {
+      URL.revokeObjectURL(model3DPreview);
+    }
+    setSelected3DModel(null);
+    setModel3DPreview(null);
   };
 
   const [formData, setFormData] = useState({
@@ -458,6 +474,18 @@ const CreateProposal = () => {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Visualizador Proyecto 3D</Label>
+              <Model3DUploader
+                onFileSelect={handle3DModelSelect}
+                preview={model3DPreview || undefined}
+                onRemove={handleRemove3DModel}
+              />
+              <p className="text-sm text-muted-foreground">
+                Formatos soportados: GLB, GLTF. Tamaño máximo: 50MB
+              </p>
             </div>
 
             <div className="space-y-4">

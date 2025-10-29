@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Building2, MapPin, Calendar, Mail, Phone, User } from "lucide-react";
+import Model3DViewer from "@/components/Model3DViewer";
 
 interface ProposalData {
   id: string;
@@ -23,6 +24,7 @@ interface ProposalData {
   payment_terms: string | null;
   delivery_time: string | null;
   notes: string | null;
+  model_3d_url: string | null;
 }
 
 interface EquipmentDetail {
@@ -292,6 +294,23 @@ const PublicProposal = () => {
             <Card className="p-8 shadow-elegant">
               <h3 className="text-xl font-bold mb-4">Notas Adicionales</h3>
               <p className="text-muted-foreground whitespace-pre-wrap">{proposal.notes}</p>
+            </Card>
+          )}
+
+          {/* 3D Model Viewer */}
+          {proposal.model_3d_url && (
+            <Card className="p-8 shadow-elegant">
+              <h2 className="text-2xl font-bold mb-4">Visualización 3D del Proyecto</h2>
+              <p className="text-muted-foreground mb-4">
+                Interactúa con el modelo: Click + arrastrar para rotar, scroll para hacer zoom
+              </p>
+              <Model3DViewer
+                modelUrl={proposal.model_3d_url}
+                height="600px"
+                enableZoom={true}
+                enablePan={true}
+                autoRotate={false}
+              />
             </Card>
           )}
 

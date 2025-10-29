@@ -350,6 +350,7 @@ export type Database = {
           engineer_name: string | null
           engineer_title: string | null
           id: string
+          model_3d_url: string | null
           notes: string | null
           observations: string | null
           offer_id: string | null
@@ -380,6 +381,7 @@ export type Database = {
           engineer_name?: string | null
           engineer_title?: string | null
           id?: string
+          model_3d_url?: string | null
           notes?: string | null
           observations?: string | null
           offer_id?: string | null
@@ -410,6 +412,7 @@ export type Database = {
           engineer_name?: string | null
           engineer_title?: string | null
           id?: string
+          model_3d_url?: string | null
           notes?: string | null
           observations?: string | null
           offer_id?: string | null
