@@ -26,6 +26,7 @@ interface ProposalData {
   notes: string | null;
   model_3d_url: string | null;
   technical_specs_table: string[][] | null;
+  offer_details: string | null;
 }
 
 interface EquipmentDetail {
@@ -300,6 +301,16 @@ const PublicProposal = () => {
             <Card className="p-8 shadow-elegant">
               <h3 className="text-xl font-bold mb-4">Notas Adicionales</h3>
               <p className="text-muted-foreground whitespace-pre-wrap">{proposal.notes}</p>
+            </Card>
+          )}
+
+          {proposal.offer_details && (
+            <Card className="p-8 shadow-elegant">
+              <h3 className="text-xl font-bold mb-4">Detalles de la Oferta</h3>
+              <div 
+                className="text-muted-foreground prose prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: proposal.offer_details }}
+              />
             </Card>
           )}
 

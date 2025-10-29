@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { ArrowLeft, Globe, Plus, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 interface EquipmentWithDetails {
   id: string;
@@ -42,6 +43,7 @@ const proposalSchema = z.object({
   delivery_time: z.string().optional(),
   terms_conditions: z.string().optional(),
   notes: z.string().optional(),
+  offer_details: z.string().optional(),
   validity_days: z.number().min(1, "La validez debe ser al menos 1 día").default(30),
 });
 
@@ -71,6 +73,7 @@ const EditProposal = () => {
       delivery_time: "",
       terms_conditions: "",
       notes: "",
+      offer_details: "",
       validity_days: 30,
     },
   });
@@ -165,6 +168,7 @@ const EditProposal = () => {
           delivery_time: data.delivery_time || "",
           terms_conditions: data.terms_conditions || "",
           notes: data.notes || "",
+          offer_details: data.offer_details || "",
           validity_days: data.validity_days || 30,
         });
 
@@ -214,6 +218,7 @@ const EditProposal = () => {
         delivery_time: data.delivery_time || null,
         terms_conditions: data.terms_conditions || null,
         notes: data.notes || null,
+        offer_details: data.offer_details || null,
         validity_days: data.validity_days,
         updated_at: new Date().toISOString(),
       };
@@ -500,6 +505,27 @@ const EditProposal = () => {
                   <FormControl>
                     <Textarea {...field} rows={4} />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="offer_details"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Detalles de la oferta</FormLabel>
+                  <FormControl>
+                    <RichTextEditor
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                      placeholder="Incluya aquí los detalles de la oferta..."
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Incluya aquí: Forma de Pago, Tiempos de entrega, Validez de la oferta, Garantía y cualquier comentario adicional relevante.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
