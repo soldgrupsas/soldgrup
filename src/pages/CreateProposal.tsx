@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ProposalItemsTable, ProposalItem } from "@/components/ProposalItemsTable";
 
 interface EquipmentWithDetails {
   id: string;
@@ -33,6 +34,15 @@ const CreateProposal = () => {
   const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
+  const [proposalItems, setProposalItems] = useState<ProposalItem[]>([
+    {
+      item_number: 1,
+      description: "",
+      quantity: 0,
+      unit_price: 0,
+      total_price: 0,
+    },
+  ]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -163,6 +173,25 @@ const CreateProposal = () => {
           .insert(equipmentDetails);
 
         if (equipmentError) throw equipmentError;
+      }
+
+      // Save proposal items
+      if (proposalItems.length > 0) {
+        const itemsToInsert = proposalItems.map((item) => ({
+          proposal_id: data.id,
+          item_number: item.item_number,
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+          unit: "unidad",
+        }));
+
+        const { error: itemsError } = await supabase
+          .from("proposal_items")
+          .insert(itemsToInsert);
+
+        if (itemsError) throw itemsError;
       }
 
       toast({
@@ -323,7 +352,14 @@ const CreateProposal = () => {
                   onChange={handleChange}
                 />
               </div>
+            </div>
 
+            <ProposalItemsTable
+              items={proposalItems}
+              onChange={setProposalItems}
+            />
+
+            <div className="grid md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <Label htmlFor="validity_days">Validez de la Propuesta (días)</Label>
                 <Input
