@@ -42,6 +42,7 @@ const proposalSchema = z.object({
   delivery_time: z.string().optional(),
   terms_conditions: z.string().optional(),
   notes: z.string().optional(),
+  validity_days: z.number().min(1, "La validez debe ser al menos 1 día").default(30),
 });
 
 type ProposalFormData = z.infer<typeof proposalSchema>;
@@ -70,6 +71,7 @@ const EditProposal = () => {
       delivery_time: "",
       terms_conditions: "",
       notes: "",
+      validity_days: 30,
     },
   });
 
@@ -163,6 +165,7 @@ const EditProposal = () => {
           delivery_time: data.delivery_time || "",
           terms_conditions: data.terms_conditions || "",
           notes: data.notes || "",
+          validity_days: data.validity_days || 30,
         });
 
         // Load existing equipment
@@ -211,6 +214,7 @@ const EditProposal = () => {
         delivery_time: data.delivery_time || null,
         terms_conditions: data.terms_conditions || null,
         notes: data.notes || null,
+        validity_days: data.validity_days,
         updated_at: new Date().toISOString(),
       };
 
@@ -444,6 +448,30 @@ const EditProposal = () => {
                   <FormControl>
                     <Textarea {...field} rows={3} />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="validity_days"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Validez de la Propuesta (días)</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="number" 
+                      min="1" 
+                      step="1" 
+                      placeholder="30"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value) || 30)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Número de días que la propuesta será válida desde su fecha de emisión
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

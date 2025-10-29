@@ -122,6 +122,7 @@ const CreateProposal = () => {
     terms_conditions: "",
     payment_terms: "",
     delivery_time: "",
+    validity_days: 30,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -184,9 +185,10 @@ const CreateProposal = () => {
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value,
+      [name]: name === "validity_days" ? parseInt(value) || 30 : value,
     });
   };
 
@@ -320,6 +322,23 @@ const CreateProposal = () => {
                   value={formData.delivery_time}
                   onChange={handleChange}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="validity_days">Validez de la Propuesta (días)</Label>
+                <Input
+                  id="validity_days"
+                  name="validity_days"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={formData.validity_days}
+                  onChange={handleChange}
+                  placeholder="30"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Número de días que la propuesta será válida desde su fecha de emisión
+                </p>
               </div>
             </div>
 
