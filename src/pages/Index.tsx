@@ -8,10 +8,10 @@ const Index = () => {
     <div className="flex min-h-screen items-center justify-center bg-gradient-industrial">
       <div className="text-center space-y-6 p-8">
         <h1 className="text-5xl font-bold text-foreground mb-4">
-          Sistema de Propuestas Comerciales
+          Smart Workspace
         </h1>
         <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-          Crea, gestiona y comparte propuestas profesionales para proyectos de electrificación industrial
+          Hub de mejoramiento corporativo
         </p>
         <Button onClick={() => navigate("/auth")} size="lg" className="mt-6">
           Iniciar Sesión
