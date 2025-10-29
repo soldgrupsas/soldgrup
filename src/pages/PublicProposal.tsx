@@ -40,6 +40,7 @@ const PublicProposal = () => {
   const navigate = useNavigate();
   const [proposal, setProposal] = useState<ProposalData | null>(null);
   const [equipment, setEquipment] = useState<EquipmentDetail[]>([]);
+  const [proposalItems, setProposalItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -91,6 +92,16 @@ const PublicProposal = () => {
 
       if (equipmentError) throw equipmentError;
       setEquipment((equipmentData as any) || []);
+
+      // Fetch proposal items
+      const { data: itemsData, error: itemsError } = await supabase
+        .from("proposal_items")
+        .select("*")
+        .eq("proposal_id", data.id)
+        .order("item_number");
+
+      if (itemsError) throw itemsError;
+      setProposalItems(itemsData || []);
     } catch (error: any) {
       console.error("Error fetching proposal:", error);
       navigate("/404");
@@ -183,6 +194,54 @@ const PublicProposal = () => {
             )}
           </div>
         </Card>
+
+        {/* Proposal Items - Oferta Comercial */}
+        {proposalItems.length > 0 && (
+          <Card className="p-8 mb-8 animate-scale-in shadow-elegant hover:shadow-glow transition-all">
+            <h2 className="text-2xl font-bold mb-6">OFERTA COMERCIAL</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-primary/10">
+                    <th className="border border-border p-3 text-left font-semibold">Item</th>
+                    <th className="border border-border p-3 text-left font-semibold">Características</th>
+                    <th className="border border-border p-3 text-left font-semibold">Cantidad</th>
+                    <th className="border border-border p-3 text-left font-semibold">Precio Unitario</th>
+                    <th className="border border-border p-3 text-left font-semibold">Precio Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proposalItems.map((item) => (
+                    <tr key={item.id}>
+                      <td className="border border-border p-3">{item.item_number}</td>
+                      <td className="border border-border p-3">
+                        <div dangerouslySetInnerHTML={{ __html: item.description }} />
+                      </td>
+                      <td className="border border-border p-3">{item.quantity} {item.unit}</td>
+                      <td className="border border-border p-3">
+                        ${Number(item.unit_price).toLocaleString("es-CO")}
+                      </td>
+                      <td className="border border-border p-3 font-semibold">
+                        ${Number(item.total_price).toLocaleString("es-CO")}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-primary/5">
+                    <td colSpan={4} className="border border-border p-3 text-right font-bold">
+                      Valor total Antes de IVA:
+                    </td>
+                    <td className="border border-border p-3 font-bold text-primary text-lg">
+                      $
+                      {proposalItems
+                        .reduce((sum, item) => sum + Number(item.total_price), 0)
+                        .toLocaleString("es-CO")}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
 
         {/* Amount and Validity */}
         {(proposal.total_amount || proposal.validity_days) && (
