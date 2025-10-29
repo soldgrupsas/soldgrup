@@ -1,6 +1,5 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Bold, Italic, List } from "lucide-react";
 
 interface RichTextEditorProps {
@@ -10,43 +9,43 @@ interface RichTextEditorProps {
 }
 
 export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorProps) => {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== value) {
+      editorRef.current.innerHTML = value || "";
+    }
+  }, [value]);
+
+  const handleInput = () => {
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML);
+    }
+  };
 
   const insertFormat = (format: string) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+    const editor = editorRef.current;
+    if (!editor) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = value.substring(start, end);
-    let newText = "";
-    let newPosition = start;
+    editor.focus();
+    const selection = window.getSelection();
+    if (!selection) return;
 
     switch (format) {
       case "bold":
-        newText = value.substring(0, start) + `<b>${selectedText || "texto en negrita"}</b>` + value.substring(end);
-        newPosition = start + 3;
+        document.execCommand("bold", false);
         break;
       case "italic":
-        newText = value.substring(0, start) + `<i>${selectedText || "texto en cursiva"}</i>` + value.substring(end);
-        newPosition = start + 3;
+        document.execCommand("italic", false);
         break;
       case "bullet":
-        const bulletText = selectedText || "Nuevo item";
-        newText = value.substring(0, start) + `\n• ${bulletText}` + value.substring(end);
-        newPosition = start + bulletText.length + 3;
+        document.execCommand("insertUnorderedList", false);
         break;
       default:
         return;
     }
 
-    onChange(newText);
-    
-    // Restore focus and cursor position
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(newPosition, newPosition);
-    }, 0);
+    handleInput();
   };
 
   return (
@@ -83,16 +82,18 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
           <List className="h-4 w-4" />
         </Button>
       </div>
-      <Textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={4}
-        className="rounded-t-none resize-none font-mono text-sm"
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={handleInput}
+        className="min-h-[100px] w-full rounded-b-md border border-t-0 border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        data-placeholder={placeholder}
+        style={{
+          whiteSpace: "pre-wrap",
+        }}
       />
       <div className="text-xs text-muted-foreground">
-        Selecciona texto y usa los botones para aplicar formato, o escribe HTML directamente
+        Selecciona texto y usa los botones para aplicar formato
       </div>
     </div>
   );
