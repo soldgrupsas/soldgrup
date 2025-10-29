@@ -187,6 +187,17 @@ const PublicProposal = () => {
           </div>
         </Card>
 
+        {/* Soldgrup Contact */}
+        {proposal.soldgrup_contact && (
+          <Card className="p-8 mb-8 animate-scale-in shadow-elegant hover:shadow-glow transition-all">
+            <h3 className="text-xl font-bold mb-4">Contacto Soldgrup</h3>
+            <div 
+              className="text-muted-foreground prose prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: proposal.soldgrup_contact }}
+            />
+          </Card>
+        )}
+
         {/* Proposal Items - Oferta Comercial */}
         {proposalItems.length > 0 && (
           <Card className="p-8 mb-8 animate-scale-in shadow-elegant hover:shadow-glow transition-all">
@@ -235,6 +246,17 @@ const PublicProposal = () => {
           </Card>
         )}
 
+        {/* Observations */}
+        {proposal.observations && (
+          <Card className="p-8 mb-8 animate-scale-in shadow-elegant hover:shadow-glow transition-all">
+            <h3 className="text-xl font-bold mb-4">Observaciones</h3>
+            <div 
+              className="text-muted-foreground prose prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: proposal.observations }}
+            />
+          </Card>
+        )}
+
         {/* Proposal Images Section */}
         {proposalImages.length > 0 && (
           <Card className="p-8 mb-8 animate-scale-in shadow-elegant hover:shadow-glow transition-all">
@@ -258,38 +280,7 @@ const PublicProposal = () => {
           </Card>
         )}
 
-        {/* Offer Details, Observations, Soldgrup Contact */}
         <div className="space-y-6 animate-fade-in">
-          {proposal.offer_details && (
-            <Card className="p-8 shadow-elegant">
-              <h3 className="text-xl font-bold mb-4">Detalles de la Oferta</h3>
-              <div 
-                className="text-muted-foreground prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{ __html: proposal.offer_details }}
-              />
-            </Card>
-          )}
-
-          {proposal.observations && (
-            <Card className="p-8 shadow-elegant">
-              <h3 className="text-xl font-bold mb-4">Observaciones</h3>
-              <div 
-                className="text-muted-foreground prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{ __html: proposal.observations }}
-              />
-            </Card>
-          )}
-
-          {proposal.soldgrup_contact && (
-            <Card className="p-8 shadow-elegant">
-              <h3 className="text-xl font-bold mb-4">Contacto Soldgrup</h3>
-              <div 
-                className="text-muted-foreground prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{ __html: proposal.soldgrup_contact }}
-              />
-            </Card>
-          )}
-
           {/* 3D Model Viewer */}
           {proposal.model_3d_url && (
             <Card className="p-8 shadow-elegant">
@@ -395,6 +386,17 @@ const PublicProposal = () => {
                 </Card>
               ))}
             </div>
+          )}
+
+          {/* Offer Details */}
+          {proposal.offer_details && (
+            <Card className="p-8 shadow-elegant">
+              <h3 className="text-xl font-bold mb-4">Detalles de la Oferta</h3>
+              <div 
+                className="text-muted-foreground prose prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: proposal.offer_details }}
+              />
+            </Card>
           )}
         </div>
       </div>
