@@ -1,1 +1,4 @@
 project_id = "hpzfmcdmywofxioayiff"
+
+[functions.compress-3d-model]
+verify_jwt = true

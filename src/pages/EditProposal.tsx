@@ -289,21 +289,77 @@ const EditProposal = () => {
         updated_at: new Date().toISOString(),
       };
 
-      // Upload 3D model if new one is selected
+      // Upload 3D model with Draco compression if new one is selected
       if (model3D) {
-        const fileExt = model3D.name.split(".").pop();
-        const fileName = `${id}-${Date.now()}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage
-          .from("3d-models")
-          .upload(fileName, model3D);
+        toast({
+          title: "Comprimiendo modelo 3D...",
+          description: "Optimizando el archivo para carga rápida. Esto puede tardar 10-30 segundos.",
+        });
 
-        if (uploadError) throw uploadError;
+        try {
+          // Convert file to ArrayBuffer
+          const arrayBuffer = await model3D.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          
+          // Convert to base64 for transmission
+          let binary = '';
+          const len = uint8Array.byteLength;
+          for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(uint8Array[i]);
+          }
+          const base64Data = btoa(binary);
 
-        const { data: urlData } = supabase.storage
-          .from("3d-models")
-          .getPublicUrl(fileName);
+          // Call Edge Function to compress and upload
+          const { data: compressData, error: compressError } = await supabase.functions.invoke(
+            'compress-3d-model',
+            {
+              body: {
+                proposalId: id,
+                fileName: model3D.name,
+                fileData: base64Data,
+              },
+            }
+          );
 
-        updateData.model_3d_url = urlData.publicUrl;
+          if (compressError) {
+            console.error('Error compressing 3D model:', compressError);
+            toast({
+              title: "Error en compresión",
+              description: "No se pudo comprimir el modelo. Subiendo archivo original...",
+              variant: "destructive",
+            });
+            
+            // Fallback: Upload without compression
+            const fileExt = model3D.name.split(".").pop();
+            const fileName = `${id}-${Date.now()}.${fileExt}`;
+            const { error: uploadError } = await supabase.storage
+              .from("3d-models")
+              .upload(fileName, model3D);
+
+            if (uploadError) throw uploadError;
+
+            const { data: urlData } = supabase.storage
+              .from("3d-models")
+              .getPublicUrl(fileName);
+
+            updateData.model_3d_url = urlData.publicUrl;
+          } else {
+            // Success: Use compressed URL
+            updateData.model_3d_url = compressData.url;
+
+            toast({
+              title: "✅ Modelo comprimido exitosamente",
+              description: `Tamaño reducido de ${compressData.originalSizeMB.toFixed(2)}MB a ${compressData.compressedSizeMB.toFixed(2)}MB (${compressData.compressionRatio}% de reducción)`,
+            });
+          }
+        } catch (error) {
+          console.error('Error in 3D model processing:', error);
+          toast({
+            title: "Error",
+            description: "No se pudo procesar el modelo 3D",
+            variant: "destructive",
+          });
+        }
       }
 
       const { error } = await supabase

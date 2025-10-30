@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, PerspectiveCamera, Environment } from "@react-three/drei";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import * as THREE from "three";
 import { AlertCircle, Loader2, ExternalLink, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -68,6 +69,13 @@ const Model3DViewer = ({
 
     const loader = new GLTFLoader();
     loaderRef.current = loader;
+
+    // Configurar DRACOLoader para modelos comprimidos con Draco
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+    dracoLoader.setDecoderConfig({ type: 'js' }); // Usar JS decoder (más compatible)
+    dracoLoader.preload(); // Pre-cargar decodificadores
+    loader.setDRACOLoader(dracoLoader);
 
     // Configurar crossOrigin para permitir carga desde diferentes dominios
     (loader as any).setCrossOrigin?.('anonymous');
@@ -252,6 +260,15 @@ const Model3DViewer = ({
     // Cleanup
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      
+      // Liberar DRACOLoader
+      if (loaderRef.current) {
+        const dracoLoader = (loaderRef.current as any)._dracoLoader;
+        if (dracoLoader) {
+          dracoLoader.dispose();
+        }
+      }
+      
       loaderRef.current = null;
       
       // Limpiar blob URL si existe
