@@ -3,7 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Calendar, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Building2, Calendar, User, Download, ExternalLink, RotateCcw } from "lucide-react";
 import Model3DViewer from "@/components/Model3DViewer";
 
 interface ProposalData {
@@ -39,6 +40,7 @@ const PublicProposal = () => {
   const [proposalItems, setProposalItems] = useState<any[]>([]);
   const [proposalImages, setProposalImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [modelKey, setModelKey] = useState(0);
 
   useEffect(() => {
     if (slug) {
@@ -287,26 +289,63 @@ const PublicProposal = () => {
             <Card className="p-8 shadow-elegant">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold">Visualización 3D del Proyecto</h2>
-                <a
-                  href={proposal.model_3d_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-primary hover:underline flex items-center gap-1"
-                  onClick={() => console.log('🔗 Probando enlace directo del modelo:', proposal.model_3d_url)}
-                >
-                  🔗 Probar enlace directo
-                </a>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(proposal.model_3d_url, '_blank')}
+                    className="gap-2"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Abrir en nueva pestaña
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = proposal.model_3d_url;
+                      link.download = `modelo-3d-${proposal.offer_id}.glb`;
+                      link.click();
+                    }}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setModelKey(prev => prev + 1)}
+                    className="gap-2"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Reintentar
+                  </Button>
+                </div>
               </div>
               <p className="text-muted-foreground mb-4">
                 Interactúa con el modelo: Click + arrastrar para rotar, scroll para hacer zoom
               </p>
               <Model3DViewer
+                key={modelKey}
                 modelUrl={proposal.model_3d_url}
                 height="600px"
                 enableZoom={true}
                 enablePan={true}
                 autoRotate={false}
               />
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  💡 <strong>Nota:</strong> Archivos grandes (20MB+) pueden tardar en cargar. Si el modelo no aparece:
+                </p>
+                <ul className="text-sm text-muted-foreground list-disc list-inside mt-2 space-y-1">
+                  <li>Espera hasta 60 segundos para la descarga completa</li>
+                  <li>Usa el botón "Reintentar" para volver a cargar</li>
+                  <li>Descarga el modelo para verlo en tu visor 3D local</li>
+                  <li>Verifica tu conexión a internet</li>
+                </ul>
+              </div>
             </Card>
           )}
 

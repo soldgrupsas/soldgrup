@@ -35,6 +35,8 @@ const Model3DViewer = ({
   const [retryCount, setRetryCount] = useState(0);
   const loaderRef = useRef<GLTFLoader | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isFirstLoadRef = useRef(true);
+  const blobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     console.log('🔍 Model3DViewer - Intentando cargar modelo:', modelUrl);
@@ -74,104 +76,187 @@ const Model3DViewer = ({
       (loader as any).setResourcePath?.(basePath);
     }
 
-    // Timeout de 30 segundos para evitar carga infinita
+    // Timeout de 60 segundos para archivos grandes
     timeoutRef.current = setTimeout(() => {
-      console.error('⏱️ Timeout: El modelo tardó más de 30 segundos en cargar');
+      console.error('⏱️ Timeout: El modelo tardó más de 60 segundos en cargar');
       setLoadingState('error');
-      setErrorMessage('Tiempo de carga agotado (30s). El archivo puede ser demasiado grande o no estar accesible.');
-    }, 30000);
+      setErrorMessage('⏱️ Tiempo de carga agotado (60s). El archivo puede ser muy grande (20MB+) o la conexión muy lenta. Intenta descargar el archivo.');
+    }, 60000);
 
-    loader.load(
-      modelUrl,
-      // onLoad
-      (gltf) => {
-        console.log('✅ Modelo 3D cargado exitosamente');
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        
-        // Calcular bounding box y centrar modelo
-        const box = new THREE.Box3().setFromObject(gltf.scene);
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        
-        // Calcular escala para que quepa en la vista
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const scale = maxDim > 0 ? 4 / maxDim : 1;
-        
-        // Aplicar transformaciones
-        gltf.scene.scale.setScalar(scale);
-        gltf.scene.position.x = -center.x * scale;
-        gltf.scene.position.y = -center.y * scale;
-        gltf.scene.position.z = -center.z * scale;
-        
-        console.log('📐 Modelo centrado y escalado:', {
-          originalSize: size,
-          scale: scale,
-          center: center
-        });
-        
+    // Callbacks para GLTFLoader
+    const onLoad = (gltf: any) => {
+      console.log('✅ Modelo 3D cargado exitosamente');
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      
+      // Calcular bounding box y centrar modelo
+      const box = new THREE.Box3().setFromObject(gltf.scene);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      
+      // Validar que el bounding box sea válido
+      if (size.x === 0 || size.y === 0 || size.z === 0) {
+        console.warn('⚠️ Bounding box inválido, usando valores por defecto');
         setScene(gltf.scene);
         setLoadingState('success');
         setLoadingProgress(100);
-      },
-      // onProgress
-      (progress) => {
-        if (progress.lengthComputable) {
-          const percentComplete = (progress.loaded / progress.total) * 100;
-          setLoadingProgress(Math.round(percentComplete));
-          console.log(`📊 Progreso de carga: ${Math.round(percentComplete)}%`);
-        }
-      },
-      // onError
-      (error: unknown) => {
-        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-        const isPublicUrl = modelUrl.startsWith('http');
-        const protocol = isPublicUrl ? new URL(modelUrl).protocol : 'local';
-        
-        // Diagnóstico detallado
-        const diagnosticInfo = {
-          url: modelUrl,
-          isPublicUrl,
-          protocol,
-          timestamp: new Date().toISOString(),
-          errorType: errorMsg,
-          retryAttempt: retryCount
-        };
-        
-        console.error('❌ Error al cargar modelo 3D:', error);
-        console.error('🔍 Diagnóstico completo:', diagnosticInfo);
-        
-        // Detectar tipos específicos de error
-        let userFriendlyMessage = errorMsg;
-        if (errorMsg.includes('Failed to fetch') || errorMsg.includes('fetch')) {
-          userFriendlyMessage = 'Error de red: No se pudo acceder al archivo. Verifica que la URL sea pública y que no haya restricciones CORS.';
-          console.error('⚠️ Posible problema de CORS o disponibilidad del recurso');
-        } else if (errorMsg.includes('NetworkError') || errorMsg.includes('Network')) {
-          userFriendlyMessage = 'Error de conexión: La descarga fue bloqueada. Verifica tu conexión a internet y la accesibilidad del servidor.';
-          console.error('⚠️ Conexión de red bloqueada o interrumpida');
-        }
-        
-        // Lógica de retry con backoff exponencial
-        if (retryCount < 2) {
-          const nextRetry = retryCount + 1;
-          const waitTime = 2000 * nextRetry;
-          console.log(`🔄 Reintento ${nextRetry}/2 en ${waitTime}ms...`);
-          
-          setTimeout(() => {
-            setRetryCount(nextRetry);
-            setLoadingProgress(0);
-          }, waitTime);
-        } else {
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          setLoadingState('error');
-          setErrorMessage(userFriendlyMessage);
-        }
+        return;
       }
-    );
+      
+      // Calcular escala para que quepa en la vista (más conservador)
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = maxDim > 0 ? 3 / maxDim : 1; // Cambiar de 4 a 3 para dar más padding
+      
+      // Aplicar transformaciones
+      gltf.scene.scale.setScalar(scale);
+      gltf.scene.position.x = -center.x * scale;
+      gltf.scene.position.y = -center.y * scale;
+      gltf.scene.position.z = -center.z * scale;
+      
+      console.log('📐 Modelo centrado y escalado:', {
+        originalSize: size,
+        scale: scale,
+        center: center,
+        newPosition: gltf.scene.position
+      });
+      
+      // Usar doble requestAnimationFrame para asegurar que las transformaciones se aplicaron
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setScene(gltf.scene);
+          setLoadingState('success');
+          setLoadingProgress(100);
+          isFirstLoadRef.current = false;
+        });
+      });
+    };
+
+    const onProgress = (progress: any) => {
+      if (progress.lengthComputable) {
+        const percentComplete = (progress.loaded / progress.total) * 100;
+        setLoadingProgress(Math.round(percentComplete));
+        console.log(`📊 Progreso de carga: ${Math.round(percentComplete)}%`);
+      }
+    };
+
+    const onError = (error: unknown) => {
+      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+      const isPublicUrl = modelUrl.startsWith('http');
+      
+      // Diagnóstico detallado
+      const diagnosticInfo = {
+        url: modelUrl,
+        isPublicUrl,
+        timestamp: new Date().toISOString(),
+        errorType: errorMsg,
+        retryAttempt: retryCount
+      };
+      
+      console.error('❌ Error al cargar modelo 3D:', error);
+      console.error('🔍 Diagnóstico completo:', diagnosticInfo);
+      
+      // Detectar errores específicos que NO deben reintentar
+      let shouldRetry = true;
+      let userFriendlyMessage = errorMsg;
+      
+      if (errorMsg.includes('404') || errorMsg.includes('Not Found')) {
+        userFriendlyMessage = '❌ Archivo no encontrado (404). El modelo 3D no existe en el servidor.';
+        shouldRetry = false;
+      } else if (errorMsg.includes('403') || errorMsg.includes('Forbidden')) {
+        userFriendlyMessage = '🚫 Acceso denegado (403). No tienes permisos para ver este archivo.';
+        shouldRetry = false;
+      } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('fetch')) {
+        userFriendlyMessage = '🌐 Error de red: No se pudo descargar el archivo. Archivo grande (20MB+) o conexión lenta.';
+      } else if (errorMsg.includes('NetworkError') || errorMsg.includes('Network')) {
+        userFriendlyMessage = '📡 Error de conexión: La descarga fue bloqueada o interrumpida.';
+      } else if (errorMsg.includes('parse') || errorMsg.includes('invalid')) {
+        userFriendlyMessage = '⚠️ Archivo corrupto: El modelo 3D no se pudo interpretar.';
+        shouldRetry = false;
+      }
+      
+      // Lógica de retry mejorada
+      if (shouldRetry && retryCount < 2) {
+        const nextRetry = retryCount + 1;
+        const waitTime = 3000 * nextRetry; // 3s, 6s
+        console.log(`🔄 Reintento ${nextRetry}/2 en ${waitTime}ms...`);
+        
+        setTimeout(() => {
+          setRetryCount(nextRetry);
+          // NO resetear progress para mantener feedback visual
+        }, waitTime);
+      } else {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        setLoadingState('error');
+        setErrorMessage(userFriendlyMessage);
+      }
+    };
+
+    // Si es URL remota, hacer fetch manual primero
+    if (modelUrl.startsWith('http')) {
+      console.log('🌐 Descargando modelo remoto con fetch()...');
+      
+      fetch(modelUrl, { mode: 'cors' })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          const contentLength = response.headers.get('content-length');
+          const total = contentLength ? parseInt(contentLength, 10) : 0;
+          
+          if (total > 0) {
+            const sizeMB = (total / (1024 * 1024)).toFixed(2);
+            console.log(`📦 Tamaño del archivo: ${sizeMB}MB`);
+          }
+          
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error('No se pudo leer el archivo');
+          
+          let receivedLength = 0;
+          const chunks: Uint8Array[] = [];
+          
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            chunks.push(value);
+            receivedLength += value.length;
+            
+            if (total > 0) {
+              const progress = (receivedLength / total) * 100;
+              setLoadingProgress(Math.round(progress));
+              console.log(`📥 Descargado: ${Math.round(progress)}%`);
+            }
+          }
+          
+          // Convertir chunks a Blob
+          const blob = new Blob(chunks as BlobPart[], { type: 'model/gltf-binary' });
+          const blobUrl = URL.createObjectURL(blob);
+          blobUrlRef.current = blobUrl;
+          
+          console.log('✅ Archivo descargado, convirtiendo a blob:', blobUrl);
+          
+          // Ahora cargar con GLTFLoader usando la blob URL
+          loader.load(blobUrl, onLoad, onProgress, onError);
+        })
+        .catch((error) => {
+          console.error('❌ Error en fetch():', error);
+          onError(error);
+        });
+    } else {
+      // URL local (blob: o file:), cargar directamente
+      loader.load(modelUrl, onLoad, onProgress, onError);
+    }
 
     // Cleanup
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       loaderRef.current = null;
+      
+      // Limpiar blob URL si existe
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
       
       // Liberar memoria del scene anterior
       if (scene) {
@@ -209,25 +294,6 @@ const Model3DViewer = ({
       }
     };
   }, [modelUrl, retryCount]);
-
-  // Prefetch para URLs públicas
-  useEffect(() => {
-    if (!modelUrl.startsWith('http')) return;
-    
-    console.log('🔗 Configurando prefetch para:', modelUrl);
-    const link = document.createElement('link');
-    link.rel = 'prefetch';
-    link.href = modelUrl;
-    link.crossOrigin = 'anonymous';
-    link.as = 'fetch';
-    
-    document.head.appendChild(link);
-    
-    return () => {
-      document.head.removeChild(link);
-      console.log('🗑️ Prefetch eliminado para:', modelUrl);
-    };
-  }, [modelUrl]);
 
   const handleOpenInNewTab = () => {
     window.open(modelUrl, '_blank');

@@ -122,10 +122,10 @@ const Model3DUploader = ({ onFileSelect, preview, onRemove }: Model3DUploaderPro
                 height="400px"
                 enableZoom={true}
                 enablePan={true}
-                autoRotate={false}
+                autoRotate={true}
               />
               <p className="text-sm text-muted-foreground mt-2 text-center">
-                Click + arrastrar para rotar • Scroll para zoom • Click derecho + arrastrar para mover
+                🔄 El modelo rota automáticamente • Click + arrastrar para control manual • Scroll para zoom
               </p>
             </div>
           )}
