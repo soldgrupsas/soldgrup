@@ -45,14 +45,13 @@ const PublicProposal = () => {
   useEffect(() => {
     if (slug) {
       fetchProposal();
-      trackClick();
     }
   }, [slug]);
 
-  const trackClick = async () => {
+  const trackClick = async (proposalId: string) => {
     try {
       await supabase.from("proposal_clicks").insert({
-        proposal_id: proposal?.id,
+        proposal_id: proposalId,
         ip_address: null,
         user_agent: navigator.userAgent,
       });
@@ -86,6 +85,9 @@ const PublicProposal = () => {
           ? data.technical_specs_table as string[][] 
           : null
       });
+
+      // Track click after proposal is loaded
+      trackClick(data.id);
 
       // Fetch equipment details
       const { data: equipmentData, error: equipmentError } = await supabase
