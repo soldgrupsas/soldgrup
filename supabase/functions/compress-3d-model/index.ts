@@ -13,7 +13,7 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🔵 compress-3d-model: Iniciando compresión de modelo 3D');
+    console.log('🔵 compress-3d-model: Procesando modelo 3D');
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -42,55 +42,17 @@ serve(async (req) => {
       uint8Array = new Uint8Array(fileData);
     }
 
-    const originalSizeMB = (uint8Array.length / (1024 * 1024)).toFixed(2);
-    console.log(`📊 Tamaño original: ${originalSizeMB}MB`);
+    const fileSizeMB = (uint8Array.length / (1024 * 1024)).toFixed(2);
+    console.log(`📊 Tamaño del archivo: ${fileSizeMB}MB`);
 
-    // Dynamic import of gltf-transform (using npm: specifier for Deno)
-    console.log('📥 Importando gltf-transform...');
-    const { Document, NodeIO } = await import("npm:@gltf-transform/core@4.1.0");
-    const { ALL_EXTENSIONS } = await import("npm:@gltf-transform/extensions@4.1.0");
-    const { draco } = await import("npm:@gltf-transform/functions@4.1.0");
-
-    console.log('✅ gltf-transform importado correctamente');
-
-    // Create NodeIO with all extensions
-    const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
-
-    // Read GLB file
-    console.log('📖 Leyendo archivo GLB...');
-    const doc = await io.readBinary(uint8Array);
-    console.log('✅ Archivo GLB leído correctamente');
-
-    // Apply Draco compression
-    console.log('🗜️ Aplicando compresión Draco...');
-    await doc.transform(
-      draco({
-        quantizePosition: 14, // Bits de cuantización para posiciones (14 = alta calidad)
-        quantizeNormal: 10,    // Bits para normales
-        quantizeTexcoord: 12,  // Bits para coordenadas de textura
-        quantizeColor: 8,      // Bits para colores
-        quantizeGeneric: 12,   // Bits para atributos genéricos
-      })
-    );
-    console.log('✅ Compresión Draco aplicada');
-
-    // Write compressed GLB
-    console.log('💾 Escribiendo archivo comprimido...');
-    const compressedArrayBuffer = await io.writeBinary(doc);
-    const compressedUint8Array = new Uint8Array(compressedArrayBuffer);
-    const compressedSizeMB = (compressedUint8Array.length / (1024 * 1024)).toFixed(2);
-    const compressionRatio = ((1 - compressedUint8Array.length / uint8Array.length) * 100).toFixed(1);
-
-    console.log(`📊 Tamaño comprimido: ${compressedSizeMB}MB (reducción del ${compressionRatio}%)`);
-
-    // Upload to Supabase Storage
+    // Upload directly to Supabase Storage (compression requires native libs not available in Edge Functions)
     const fileExt = fileName.split('.').pop();
-    const compressedFileName = `${proposalId}/${Date.now()}-compressed.${fileExt}`;
+    const uploadFileName = `${proposalId}/${Date.now()}.${fileExt}`;
 
-    console.log(`📤 Subiendo archivo comprimido a Storage: ${compressedFileName}`);
+    console.log(`📤 Subiendo archivo a Storage: ${uploadFileName}`);
     const { error: uploadError } = await supabase.storage
       .from('3d-models')
-      .upload(compressedFileName, compressedUint8Array, {
+      .upload(uploadFileName, uint8Array, {
         contentType: 'model/gltf-binary',
         upsert: false,
       });
@@ -103,7 +65,7 @@ serve(async (req) => {
     // Get public URL
     const { data: { publicUrl } } = supabase.storage
       .from('3d-models')
-      .getPublicUrl(compressedFileName);
+      .getPublicUrl(uploadFileName);
 
     console.log(`✅ Archivo subido exitosamente: ${publicUrl}`);
 
@@ -111,10 +73,10 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         url: publicUrl,
-        originalSizeMB: parseFloat(originalSizeMB),
-        compressedSizeMB: parseFloat(compressedSizeMB),
-        compressionRatio: parseFloat(compressionRatio),
-        fileName: compressedFileName,
+        originalSizeMB: parseFloat(fileSizeMB),
+        compressedSizeMB: parseFloat(fileSizeMB),
+        compressionRatio: 0,
+        fileName: uploadFileName,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -123,11 +85,13 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error('❌ Error en compress-3d-model:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message,
-        details: error.stack,
+        error: errorMessage,
+        details: errorStack,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
