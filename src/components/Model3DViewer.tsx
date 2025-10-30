@@ -54,15 +54,17 @@ const Model3DViewer = ({
       return;
     }
 
-    const fileExtension = modelUrl.split('.').pop()?.toLowerCase();
-    if (!fileExtension || !['glb', 'gltf'].includes(fileExtension)) {
-      console.error('❌ Extensión de archivo no válida:', fileExtension);
-      setLoadingState('error');
-      setErrorMessage(`Formato de archivo no soportado (.${fileExtension}). Solo se permiten archivos .glb o .gltf`);
-      return;
+    // Validar extensión solo para URLs remotas (blob URLs ya fueron validados en uploader)
+    if (!modelUrl.startsWith('blob:')) {
+      const fileExtension = modelUrl.split('.').pop()?.toLowerCase();
+      if (!fileExtension || !['glb', 'gltf'].includes(fileExtension)) {
+        console.error('❌ Extensión de archivo no válida:', fileExtension);
+        setLoadingState('error');
+        setErrorMessage(`Formato de archivo no soportado (.${fileExtension}). Solo se permiten archivos .glb o .gltf`);
+        return;
+      }
+      console.log('✅ URL validada correctamente:', { extension: fileExtension, url: modelUrl });
     }
-
-    console.log('✅ URL validada correctamente:', { extension: fileExtension, url: modelUrl });
 
     const loader = new GLTFLoader();
     loaderRef.current = loader;
