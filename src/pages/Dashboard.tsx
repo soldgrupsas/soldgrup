@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Eye, Edit, Trash2, Users, LogOut, Share2, Copy, ArrowLeft } from "lucide-react";
+import { Plus, Eye, Edit, Trash2, Users, LogOut, Share2, Copy, ArrowLeft, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
@@ -92,6 +92,40 @@ const Dashboard = () => {
     });
   };
 
+  const downloadPDF = async (proposalId: string, offerID: string, client: string) => {
+    toast({
+      title: "Generando PDF...",
+      description: "Esto puede tardar unos segundos.",
+    });
+
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-proposal-pdf', {
+        body: { proposalId },
+      });
+
+      if (error) throw error;
+
+      const blob = new Blob([data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Propuesta_${offerID}_${client}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "PDF descargado",
+        description: "El PDF se descargó exitosamente",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Error al generar el PDF",
+        variant: "destructive",
+      });
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -161,6 +195,14 @@ const Dashboard = () => {
                         <Eye className="h-4 w-4" />
                       </Button>
                     )}
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => downloadPDF(proposal.id, proposal.offer_id, proposal.client)}
+                      title="Descargar PDF"
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="outline"
                       size="icon"

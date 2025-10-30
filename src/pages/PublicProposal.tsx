@@ -4,7 +4,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, Calendar, User, Download, ExternalLink, RotateCcw } from "lucide-react";
+import { Building2, Calendar, User, Download } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import Model3DViewer from "@/components/Model3DViewer";
 
 interface ProposalData {
@@ -35,6 +36,7 @@ interface EquipmentDetail {
 const PublicProposal = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [proposal, setProposal] = useState<ProposalData | null>(null);
   const [equipment, setEquipment] = useState<EquipmentDetail[]>([]);
   const [proposalItems, setProposalItems] = useState<any[]>([]);
@@ -61,6 +63,42 @@ const PublicProposal = () => {
       });
     } catch (error) {
       console.error("Error tracking click:", error);
+    }
+  };
+
+  const downloadPDF = async () => {
+    if (!slug) return;
+
+    toast({
+      title: "Generando PDF...",
+      description: "Esto puede tardar unos segundos.",
+    });
+
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-proposal-pdf-public', {
+        body: { slug },
+      });
+
+      if (error) throw error;
+
+      const blob = new Blob([data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Propuesta_${proposal?.offer_id}_${proposal?.client}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "PDF descargado",
+        description: "El PDF se descargó exitosamente",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Error al generar el PDF",
+        variant: "destructive",
+      });
     }
   };
 
@@ -141,6 +179,18 @@ const PublicProposal = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 py-12">
       <div className="container mx-auto px-4 max-w-5xl">
+        {/* Download PDF Button - Fixed Position */}
+        <div className="fixed top-6 right-6 z-50">
+          <Button
+            onClick={downloadPDF}
+            size="lg"
+            className="shadow-elegant hover:shadow-glow transition-all"
+          >
+            <Download className="mr-2 h-5 w-5" />
+            Descargar PDF
+          </Button>
+        </div>
+
         {/* Header */}
         <div className="text-center mb-12 animate-fade-in">
           <Badge className="mb-4 text-lg px-6 py-2">

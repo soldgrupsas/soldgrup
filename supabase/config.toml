@@ -2,3 +2,9 @@ project_id = "hpzfmcdmywofxioayiff"
 
 [functions.compress-3d-model]
 verify_jwt = true
+
+[functions.generate-proposal-pdf]
+verify_jwt = true
+
+[functions.generate-proposal-pdf-public]
+verify_jwt = false
