@@ -32,6 +32,7 @@ const Model3DViewer = ({
   const [showDetails, setShowDetails] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [scene, setScene] = useState<THREE.Group | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const loaderRef = useRef<GLTFLoader | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -41,6 +42,25 @@ const Model3DViewer = ({
     setErrorMessage('');
     setLoadingProgress(0);
     setScene(null);
+    setRetryCount(0);
+
+    // Validar URL antes de intentar cargar
+    if (!modelUrl || modelUrl.trim() === '') {
+      console.error('❌ URL del modelo está vacía');
+      setLoadingState('error');
+      setErrorMessage('La URL del modelo 3D está vacía. Por favor, proporciona una URL válida.');
+      return;
+    }
+
+    const fileExtension = modelUrl.split('.').pop()?.toLowerCase();
+    if (!fileExtension || !['glb', 'gltf'].includes(fileExtension)) {
+      console.error('❌ Extensión de archivo no válida:', fileExtension);
+      setLoadingState('error');
+      setErrorMessage(`Formato de archivo no soportado (.${fileExtension}). Solo se permiten archivos .glb o .gltf`);
+      return;
+    }
+
+    console.log('✅ URL validada correctamente:', { extension: fileExtension, url: modelUrl });
 
     const loader = new GLTFLoader();
     loaderRef.current = loader;
@@ -67,6 +87,28 @@ const Model3DViewer = ({
       (gltf) => {
         console.log('✅ Modelo 3D cargado exitosamente');
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        
+        // Calcular bounding box y centrar modelo
+        const box = new THREE.Box3().setFromObject(gltf.scene);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        // Calcular escala para que quepa en la vista
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scale = maxDim > 0 ? 4 / maxDim : 1;
+        
+        // Aplicar transformaciones
+        gltf.scene.scale.setScalar(scale);
+        gltf.scene.position.x = -center.x * scale;
+        gltf.scene.position.y = -center.y * scale;
+        gltf.scene.position.z = -center.z * scale;
+        
+        console.log('📐 Modelo centrado y escalado:', {
+          originalSize: size,
+          scale: scale,
+          center: center
+        });
+        
         setScene(gltf.scene);
         setLoadingState('success');
         setLoadingProgress(100);
@@ -81,12 +123,48 @@ const Model3DViewer = ({
       },
       // onError
       (error: unknown) => {
+        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+        const isPublicUrl = modelUrl.startsWith('http');
+        const protocol = isPublicUrl ? new URL(modelUrl).protocol : 'local';
+        
+        // Diagnóstico detallado
+        const diagnosticInfo = {
+          url: modelUrl,
+          isPublicUrl,
+          protocol,
+          timestamp: new Date().toISOString(),
+          errorType: errorMsg,
+          retryAttempt: retryCount
+        };
+        
         console.error('❌ Error al cargar modelo 3D:', error);
-        console.error('🔗 URL del modelo:', modelUrl);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        setLoadingState('error');
-        const errorMsg = error instanceof Error ? error.message : 'Error desconocido al cargar el modelo';
-        setErrorMessage(errorMsg);
+        console.error('🔍 Diagnóstico completo:', diagnosticInfo);
+        
+        // Detectar tipos específicos de error
+        let userFriendlyMessage = errorMsg;
+        if (errorMsg.includes('Failed to fetch') || errorMsg.includes('fetch')) {
+          userFriendlyMessage = 'Error de red: No se pudo acceder al archivo. Verifica que la URL sea pública y que no haya restricciones CORS.';
+          console.error('⚠️ Posible problema de CORS o disponibilidad del recurso');
+        } else if (errorMsg.includes('NetworkError') || errorMsg.includes('Network')) {
+          userFriendlyMessage = 'Error de conexión: La descarga fue bloqueada. Verifica tu conexión a internet y la accesibilidad del servidor.';
+          console.error('⚠️ Conexión de red bloqueada o interrumpida');
+        }
+        
+        // Lógica de retry con backoff exponencial
+        if (retryCount < 2) {
+          const nextRetry = retryCount + 1;
+          const waitTime = 2000 * nextRetry;
+          console.log(`🔄 Reintento ${nextRetry}/2 en ${waitTime}ms...`);
+          
+          setTimeout(() => {
+            setRetryCount(nextRetry);
+            setLoadingProgress(0);
+          }, waitTime);
+        } else {
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          setLoadingState('error');
+          setErrorMessage(userFriendlyMessage);
+        }
       }
     );
 
@@ -94,6 +172,60 @@ const Model3DViewer = ({
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       loaderRef.current = null;
+      
+      // Liberar memoria del scene anterior
+      if (scene) {
+        scene.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            // Liberar geometría
+            if (object.geometry) {
+              object.geometry.dispose();
+            }
+            
+            // Liberar materiales (puede ser array o individual)
+            if (object.material) {
+              if (Array.isArray(object.material)) {
+                object.material.forEach((material) => {
+                  if (material.map) material.map.dispose();
+                  if (material.lightMap) material.lightMap.dispose();
+                  if (material.bumpMap) material.bumpMap.dispose();
+                  if (material.normalMap) material.normalMap.dispose();
+                  if (material.specularMap) material.specularMap.dispose();
+                  if (material.envMap) material.envMap.dispose();
+                  material.dispose();
+                });
+              } else {
+                if (object.material.map) object.material.map.dispose();
+                if (object.material.lightMap) object.material.lightMap.dispose();
+                if (object.material.bumpMap) object.material.bumpMap.dispose();
+                if (object.material.normalMap) object.material.normalMap.dispose();
+                if (object.material.specularMap) object.material.specularMap.dispose();
+                if (object.material.envMap) object.material.envMap.dispose();
+                object.material.dispose();
+              }
+            }
+          }
+        });
+      }
+    };
+  }, [modelUrl, retryCount]);
+
+  // Prefetch para URLs públicas
+  useEffect(() => {
+    if (!modelUrl.startsWith('http')) return;
+    
+    console.log('🔗 Configurando prefetch para:', modelUrl);
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.href = modelUrl;
+    link.crossOrigin = 'anonymous';
+    link.as = 'fetch';
+    
+    document.head.appendChild(link);
+    
+    return () => {
+      document.head.removeChild(link);
+      console.log('🗑️ Prefetch eliminado para:', modelUrl);
     };
   }, [modelUrl]);
 
