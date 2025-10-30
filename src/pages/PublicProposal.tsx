@@ -75,11 +75,19 @@ const PublicProposal = () => {
     });
 
     try {
-      const { data, error } = await supabase.functions.invoke('generate-proposal-pdf-public', {
+      const { data, error } = await supabase.functions.invoke<ArrayBuffer>('generate-proposal-pdf-public', {
         body: { slug },
+        responseType: 'arraybuffer',
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error invocando generate-proposal-pdf-public:', error);
+        throw new Error(error.message || 'Error al generar el PDF');
+      }
+
+      if (!data) {
+        throw new Error('La función no devolvió un archivo PDF');
+      }
 
       const blob = new Blob([data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
@@ -94,6 +102,7 @@ const PublicProposal = () => {
         description: "El PDF se descargó exitosamente",
       });
     } catch (error: any) {
+      console.error('Fallo al descargar PDF público:', error);
       toast({
         title: "Error",
         description: error.message || "Error al generar el PDF",
