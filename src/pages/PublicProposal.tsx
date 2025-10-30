@@ -285,7 +285,18 @@ const PublicProposal = () => {
           {/* 3D Model Viewer */}
           {proposal.model_3d_url && (
             <Card className="p-8 shadow-elegant">
-              <h2 className="text-2xl font-bold mb-4">Visualización 3D del Proyecto</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold">Visualización 3D del Proyecto</h2>
+                <a
+                  href={proposal.model_3d_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                  onClick={() => console.log('🔗 Probando enlace directo del modelo:', proposal.model_3d_url)}
+                >
+                  🔗 Probar enlace directo
+                </a>
+              </div>
               <p className="text-muted-foreground mb-4">
                 Interactúa con el modelo: Click + arrastrar para rotar, scroll para hacer zoom
               </p>
