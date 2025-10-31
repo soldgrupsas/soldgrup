@@ -28,6 +28,13 @@ interface EquipmentRecord {
   equipment_name?: string;
   equipment_specs?: {
     description?: string;
+    images?: Array<
+      | string
+      | {
+          image_url: string;
+          caption?: string | null;
+        }
+    >;
     tables?: { title: string; table_data: string[][] }[];
   };
 }
@@ -55,7 +62,7 @@ const margin = 72; // 2.5cm
 const pageWidth = 612; // Letter size
 const pageHeight = 792;
 
-const primaryColor = rgb(0.15, 0.39, 0.92); // #2563eb
+const primaryColor = rgb(0, 0, 0); // reemplazo azul por negro
 const textColor = rgb(0.12, 0.16, 0.22); // #1f2937
 const mutedColor = rgb(0.42, 0.45, 0.50); // #6b7280
 
@@ -146,6 +153,45 @@ async function generatePDFContent({
   images,
   backgroundImage,
 }: GenerateContentParams) {
+  const arial = helvetica;
+  const arialBold = helveticaBold;
+  const equipmentImageCache = new Map<string, PDFImage>();
+
+  const embedImageFromUrl = async (url: string): Promise<PDFImage | null> => {
+    if (!url) return null;
+    const normalizedUrl = url.trim();
+    if (!normalizedUrl) return null;
+
+    if (equipmentImageCache.has(normalizedUrl)) {
+      return equipmentImageCache.get(normalizedUrl) ?? null;
+    }
+
+    try {
+      const response = await fetch(normalizedUrl);
+      if (!response.ok) {
+        console.warn(`No se pudo descargar la imagen del equipo: ${normalizedUrl}`);
+        return null;
+      }
+
+      const contentType = response.headers.get('content-type') ?? '';
+      const arrayBuffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+
+      let pdfImage: PDFImage;
+      if (contentType.includes('png') || normalizedUrl.toLowerCase().endsWith('.png')) {
+        pdfImage = await pdfDoc.embedPng(bytes);
+      } else {
+        pdfImage = await pdfDoc.embedJpg(bytes);
+      }
+
+      equipmentImageCache.set(normalizedUrl, pdfImage);
+      return pdfImage;
+    } catch (error) {
+      console.error(`Error incrustando imagen del equipo ${normalizedUrl}:`, error);
+      return null;
+    }
+  };
+
   const stripHTML = (html: string) => {
     if (!html) return '';
     return html
@@ -154,6 +200,157 @@ async function generatePDFContent({
       .replace(/<[^>]+>/g, '')
       .replace(/&nbsp;/g, ' ')
       .trim();
+  };
+
+  const wrapText = (text: string, font: any, size: number, maxWidth: number) => {
+    const sanitized = text.replace(/\s+/g, ' ').trim();
+    if (!sanitized) return [];
+
+    const words = sanitized.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const candidate = currentLine ? `${currentLine} ${word}` : word;
+      const candidateWidth = font.widthOfTextAtSize(candidate, size);
+
+      if (candidateWidth <= maxWidth) {
+        currentLine = candidate;
+        continue;
+      }
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+
+      let splitWord = word;
+      while (font.widthOfTextAtSize(splitWord, size) > maxWidth && splitWord.length > 1) {
+        let sliceIndex = splitWord.length - 1;
+        while (sliceIndex > 1 && font.widthOfTextAtSize(splitWord.slice(0, sliceIndex), size) > maxWidth) {
+          sliceIndex--;
+        }
+        const segment = splitWord.slice(0, sliceIndex);
+        if (segment) {
+          lines.push(segment);
+        }
+        splitWord = splitWord.slice(sliceIndex);
+      }
+
+      currentLine = splitWord;
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    return lines;
+  };
+
+  const drawParagraph = ({
+    page,
+    text,
+    x,
+    y,
+    font,
+    size,
+    color,
+    lineHeight,
+    maxWidth,
+    maxLines,
+    alignment = 'left',
+    lineHeightMultiplier = 1.2,
+  }: {
+    page: any;
+    text: string;
+    x: number;
+    y: number;
+    font: any;
+    size: number;
+    color: any;
+    lineHeight?: number;
+    maxWidth: number;
+    maxLines?: number;
+    alignment?: 'left' | 'right' | 'center' | 'justify';
+    lineHeightMultiplier?: number;
+  }) => {
+    if (!text) return y;
+
+    const rawLines = text.split('\n');
+    let remainingY = y;
+    const allLines: string[] = [];
+    const actualLineHeight = lineHeight ?? size * lineHeightMultiplier;
+
+    for (const raw of rawLines) {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        allLines.push('');
+        continue;
+      }
+      const wrapped = wrapText(trimmed, font, size, maxWidth);
+      if (wrapped.length === 0) {
+        allLines.push('');
+      } else {
+        allLines.push(...wrapped);
+      }
+    }
+
+    const lines = typeof maxLines === 'number' ? allLines.slice(0, maxLines) : allLines;
+
+    const drawJustifiedLine = (line: string, baselineY: number) => {
+      const words = line.split(' ');
+      if (words.length <= 1) {
+        page.drawText(line, { x, y: baselineY, size, font, color });
+        return;
+      }
+
+      const wordsWidth = words.reduce((sum, word) => sum + font.widthOfTextAtSize(word, size), 0);
+      const extraSpace = maxWidth - wordsWidth;
+      if (extraSpace <= 0) {
+        page.drawText(line, { x, y: baselineY, size, font, color });
+        return;
+      }
+
+      const gapWidth = extraSpace / (words.length - 1);
+      let cursorX = x;
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        page.drawText(word, { x: cursorX, y: baselineY, size, font, color });
+        cursorX += font.widthOfTextAtSize(word, size);
+        if (i < words.length - 1) {
+          cursorX += gapWidth;
+        }
+      }
+    };
+
+    lines.forEach((line, idx) => {
+      if (remainingY < margin + actualLineHeight) {
+        return;
+      }
+
+      if (line === '') {
+        remainingY -= actualLineHeight;
+        return;
+      }
+
+      const isLastLine = idx === lines.length - 1;
+      const textWidth = font.widthOfTextAtSize(line, size);
+
+      if (alignment === 'right') {
+        const offsetX = x + Math.max(0, maxWidth - textWidth);
+        page.drawText(line, { x: offsetX, y: remainingY, size, font, color });
+      } else if (alignment === 'center') {
+        const offsetX = x + Math.max(0, (maxWidth - textWidth) / 2);
+        page.drawText(line, { x: offsetX, y: remainingY, size, font, color });
+      } else if (alignment === 'justify' && !isLastLine) {
+        drawJustifiedLine(line, remainingY);
+      } else {
+        page.drawText(line, { x, y: remainingY, size, font, color });
+      }
+
+      remainingY -= actualLineHeight;
+    });
+
+    return remainingY;
   };
 
   const addFooter = (page: any, pageNum: number, totalPages: number) => {
@@ -199,101 +396,134 @@ async function generatePDFContent({
   };
 
   let page = createPage();
-
-  page.drawText('PROPUESTA COMERCIAL', {
-    x: pageWidth / 2 - 150,
-    y: 550,
-    size: 28,
-    font: helveticaBold,
-    color: primaryColor,
-  });
-
-  page.drawText(proposal.offer_id || 'N/A', {
-    x: pageWidth / 2 - 60,
-    y: 480,
-    size: 20,
-    font: helveticaBold,
-    color: textColor,
-  });
-
-  page.drawText(proposal.client || 'Cliente', {
-    x: pageWidth / 2 - 80,
-    y: 430,
-    size: 16,
-    font: helvetica,
-    color: mutedColor,
-  });
-
-  if (proposal.presentation_date) {
-    const date = new Date(proposal.presentation_date);
-    const dateStr = date.toLocaleDateString('es-ES', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-    page.drawText(dateStr, {
-      x: pageWidth / 2 - 100,
-      y: 390,
-      size: 12,
-      font: helvetica,
-      color: mutedColor,
-    });
-  }
-
-  // PAGE 2: Client Information
-  page = createPage();
   let y = pageHeight - margin - 40;
+  const baseSize = 11;
+  const lineHeight = 16;
+  const black = rgb(0, 0, 0);
+  const contentWidth = pageWidth - margin * 2;
 
-  page.drawText('Información del Cliente', {
-    x: margin,
-    y: y,
-    size: 18,
-    font: helveticaBold,
-    color: primaryColor,
+  const addBlankLines = (count: number) => {
+    y -= lineHeight * count;
+  };
+
+  const proposalId = proposal.offer_id || 'N/A';
+  const proposalIdWidth = arialBold.widthOfTextAtSize(proposalId, baseSize);
+  page.drawText(proposalId, {
+    x: pageWidth - margin - proposalIdWidth,
+    y,
+    size: baseSize,
+    font: arialBold,
+    color: black,
   });
-  y -= 40;
+  y -= lineHeight;
 
-  if (proposal.client) {
-    page.drawText('Cliente:', { x: margin, y, size: 10, font: helveticaBold, color: textColor });
-    page.drawText(proposal.client, { x: 200, y, size: 10, font: helvetica, color: textColor });
-    y -= 25;
-  }
-
-  if (proposal.contact_person) {
-    page.drawText('Contacto:', { x: margin, y, size: 10, font: helveticaBold, color: textColor });
-    page.drawText(proposal.contact_person, { x: 200, y, size: 10, font: helvetica, color: textColor });
-    y -= 25;
-  }
-
-  if (proposal.reference) {
-    page.drawText('Referencia:', { x: margin, y, size: 10, font: helveticaBold, color: textColor });
-    y -= 15;
-    const refText = stripHTML(proposal.reference);
-    const refLines = refText.split('\n').slice(0, 5);
-    for (const line of refLines) {
-      page.drawText(line.substring(0, 80), { x: margin, y, size: 10, font: helvetica, color: textColor });
-      y -= 15;
-    }
-    y -= 10;
-  }
-
-  y -= 20;
-  page.drawText('Contacto Soldgrup', {
+  const date = proposal.presentation_date ? new Date(proposal.presentation_date) : null;
+  const dateStr = date
+    ? date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })
+    : '';
+  const cityLine = dateStr ? `Pereira, ${dateStr}` : 'Pereira,';
+  page.drawText(cityLine, {
     x: margin,
-    y: y,
-    size: 14,
-    font: helveticaBold,
-    color: primaryColor,
+    y,
+    size: baseSize,
+    font: arial,
+    color: black,
   });
-  y -= 30;
+  y -= lineHeight;
 
-  if (proposal.soldgrup_contact) {
-    const contactText = stripHTML(proposal.soldgrup_contact);
-    const contactLines = contactText.split('\n').slice(0, 5);
-    for (const line of contactLines) {
-      page.drawText(line.substring(0, 80), { x: margin, y, size: 10, font: helvetica, color: textColor });
-      y -= 15;
-    }
+  addBlankLines(4);
+
+  page.drawText('Señores.', {
+    x: margin,
+    y,
+    size: baseSize,
+    font: arial,
+    color: black,
+  });
+  y -= lineHeight;
+
+  const clientName = proposal.client || '';
+  if (clientName) {
+    page.drawText(clientName, {
+      x: margin,
+      y,
+      size: baseSize,
+      font: arial,
+      color: black,
+    });
+    y -= lineHeight;
+  }
+
+  addBlankLines(4);
+
+  const referenceText = stripHTML(proposal.reference ?? '');
+  if (referenceText) {
+    y = drawParagraph({
+      page,
+      text: `Referencia: ${referenceText}`,
+      x: margin,
+      y,
+      font: arialBold,
+      size: baseSize,
+      color: black,
+      maxWidth: contentWidth,
+      alignment: 'justify',
+      lineHeightMultiplier: 1,
+    });
+  } else {
+    page.drawText('Referencia:', {
+      x: margin,
+      y,
+      size: baseSize,
+      font: arialBold,
+      color: black,
+    });
+    y -= lineHeight;
+  }
+
+  addBlankLines(4);
+
+  const introParagraph =
+    'De acuerdo con su solicitud, presento para su análisis y consideración, la propuesta para el suministro en referencia. Esperamos que la propuesta técnico-económica cumpla con todas las expectativas que usted requiere. Cualquier consulta sobre este particular, gustosamente será resuelta a la mayor brevedad.';
+  y = drawParagraph({
+    page,
+    text: introParagraph,
+    x: margin,
+    y,
+    font: arial,
+    size: baseSize,
+    color: black,
+    lineHeight,
+    maxWidth: contentWidth,
+    alignment: 'justify',
+  });
+
+  addBlankLines(2);
+
+  page.drawText('Cordialmente,', {
+    x: margin,
+    y,
+    size: baseSize,
+    font: arial,
+    color: black,
+  });
+  y -= lineHeight;
+
+  addBlankLines(3);
+
+  const soldgrupContact = stripHTML(proposal.soldgrup_contact ?? '');
+  if (soldgrupContact) {
+    y = drawParagraph({
+      page,
+      text: soldgrupContact,
+      x: margin,
+      y,
+      font: arial,
+      size: baseSize,
+      color: black,
+      lineHeight,
+      maxWidth: contentWidth,
+    });
   }
 
   // PAGE 3+: Commercial Offer
@@ -355,12 +585,61 @@ async function generatePDFContent({
     y -= headerHeight;
 
     for (const item of items) {
-      const desc = stripHTML(item.description ?? '').substring(0, 100);
-      const rowHeight = 30;
+      const desc = stripHTML(item.description ?? '');
+      const descriptionLines = wrapText(desc, helvetica, 8, colWidths[1] - 10);
+      const rowHeight = Math.max(30, descriptionLines.length * 12 + 8);
 
       if (y - rowHeight < 100) {
         page = createPage();
         y = pageHeight - margin;
+        page.drawText('OFERTA COMERCIAL', {
+          x: margin,
+          y: y,
+          size: 18,
+          font: helveticaBold,
+          color: primaryColor,
+        });
+        y -= 40;
+
+        page.drawRectangle({
+          x: startX,
+          y: y - headerHeight,
+          width: colWidths.reduce((a, b) => a + b, 0),
+          height: headerHeight,
+          color: primaryColor,
+        });
+
+        page.drawText('Item', { x: startX + 5, y: y - 17, size: 10, font: helveticaBold, color: rgb(1, 1, 1) });
+        page.drawText('Descripción', {
+          x: startX + colWidths[0] + 5,
+          y: y - 17,
+          size: 10,
+          font: helveticaBold,
+          color: rgb(1, 1, 1),
+        });
+        page.drawText('Cant.', {
+          x: startX + colWidths[0] + colWidths[1] + 5,
+          y: y - 17,
+          size: 10,
+          font: helveticaBold,
+          color: rgb(1, 1, 1),
+        });
+        page.drawText('P. Unit.', {
+          x: startX + colWidths[0] + colWidths[1] + colWidths[2] + 5,
+          y: y - 17,
+          size: 10,
+          font: helveticaBold,
+          color: rgb(1, 1, 1),
+        });
+        page.drawText('P. Total', {
+          x: startX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + 5,
+          y: y - 17,
+          size: 10,
+          font: helveticaBold,
+          color: rgb(1, 1, 1),
+        });
+
+        y -= headerHeight;
       }
 
       page.drawRectangle({
@@ -389,14 +668,17 @@ async function generatePDFContent({
         borderWidth: 1,
       });
 
-      page.drawText(desc, {
-        x: startX + colWidths[0] + 5,
-        y: y - 17,
-        size: 8,
-        font: helvetica,
-        color: textColor,
-        maxWidth: colWidths[1] - 10,
-      });
+      let descriptionY = y - 14;
+      for (const line of descriptionLines) {
+        page.drawText(line, {
+          x: startX + colWidths[0] + 5,
+          y: descriptionY,
+          size: 8,
+          font: helvetica,
+          color: textColor,
+        });
+        descriptionY -= 12;
+      }
 
       page.drawRectangle({
         x: startX + colWidths[0] + colWidths[1],
@@ -487,107 +769,6 @@ async function generatePDFContent({
     }
   }
 
-  if (proposal.technical_specs_table && proposal.technical_specs_table.length > 0) {
-    page = createPage();
-    y = pageHeight - margin - 40;
-
-    page.drawText('Especificaciones Técnicas', {
-      x: margin,
-      y,
-      size: 18,
-      font: helveticaBold,
-      color: primaryColor,
-    });
-    y -= 40;
-
-    for (const row of proposal.technical_specs_table) {
-      if (y < 150) {
-        page = createPage();
-        y = pageHeight - margin;
-      }
-
-      const cellWidth = 250;
-      row.forEach((cell: string, idx: number) => {
-        const x = margin + idx * cellWidth;
-        page.drawRectangle({
-          x,
-          y: y - 30,
-          width: cellWidth,
-          height: 30,
-          borderColor: rgb(0.9, 0.91, 0.92),
-          borderWidth: 1,
-        });
-
-        const font = idx === 0 ? helveticaBold : helvetica;
-        const color = idx === 0 ? primaryColor : textColor;
-
-        page.drawText((cell || '').substring(0, 35), { x: x + 5, y: y - 18, size: 9, font, color });
-      });
-
-      y -= 30;
-    }
-  }
-
-  for (const eq of equipment) {
-    page = createPage();
-    y = pageHeight - margin - 40;
-
-    page.drawText(eq.equipment_name ?? 'Equipo', { x: margin, y, size: 16, font: helveticaBold, color: primaryColor });
-    y -= 40;
-
-    if (eq.equipment_specs?.description) {
-      const descLines = eq.equipment_specs.description.split('\n').slice(0, 5);
-      for (const line of descLines) {
-        page.drawText(line.substring(0, 80), { x: margin, y, size: 10, font: helvetica, color: textColor });
-        y -= 15;
-      }
-      y -= 20;
-    }
-
-    if (eq.equipment_specs?.tables) {
-      for (const table of eq.equipment_specs.tables) {
-        if (y < 200) {
-          page = createPage();
-          y = pageHeight - margin;
-        }
-
-        page.drawText(table.title, { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
-        y -= 30;
-
-        if (Array.isArray(table.table_data)) {
-          for (const row of table.table_data.slice(0, 15)) {
-            if (y < 150) break;
-
-            const cellWidth = 250;
-            row.forEach((cell: string, idx: number) => {
-              const x = margin + idx * cellWidth;
-              page.drawRectangle({
-                x,
-                y: y - 25,
-                width: cellWidth,
-                height: 25,
-                borderColor: rgb(0.9, 0.91, 0.92),
-                borderWidth: 1,
-              });
-
-              page.drawText((cell || '').substring(0, 35), {
-                x: x + 5,
-                y: y - 16,
-                size: 9,
-                font: helvetica,
-                color: textColor,
-              });
-            });
-
-            y -= 25;
-          }
-        }
-
-        y -= 20;
-      }
-    }
-  }
-
   if (images.length > 0) {
     const maxImageWidth = (pageWidth - margin * 2 - 20) / 2;
     const maxImageHeight = 180;
@@ -648,6 +829,202 @@ async function generatePDFContent({
       }
 
       x += maxImageWidth + gap;
+    }
+  }
+
+  if (proposal.technical_specs_table && proposal.technical_specs_table.length > 0) {
+    page = createPage();
+    y = pageHeight - margin - 40;
+
+    page.drawText('Especificaciones Técnicas', {
+      x: margin,
+      y,
+      size: 18,
+      font: helveticaBold,
+      color: primaryColor,
+    });
+    y -= 40;
+
+    for (const row of proposal.technical_specs_table) {
+      if (y < 150) {
+        page = createPage();
+        y = pageHeight - margin;
+      }
+
+      const cellWidth = 250;
+      row.forEach((cell: string, idx: number) => {
+        const x = margin + idx * cellWidth;
+        page.drawRectangle({
+          x,
+          y: y - 30,
+          width: cellWidth,
+          height: 30,
+          borderColor: rgb(0.9, 0.91, 0.92),
+          borderWidth: 1,
+        });
+
+        const font = idx === 0 ? helveticaBold : helvetica;
+        const color = idx === 0 ? primaryColor : textColor;
+
+        page.drawText((cell || '').substring(0, 35), { x: x + 5, y: y - 18, size: 9, font, color });
+      });
+
+      y -= 30;
+    }
+  }
+
+  for (const eq of equipment) {
+    const titleText = eq.equipment_name ?? 'Equipo';
+
+    const startEquipmentPage = () => {
+      page = createPage();
+      y = pageHeight - margin - 40;
+      page.drawText(titleText, { x: margin, y, size: 16, font: helveticaBold, color: primaryColor });
+      y -= 40;
+    };
+
+    const ensureEquipmentSpace = (neededHeight: number) => {
+      if (y - neededHeight < margin) {
+        startEquipmentPage();
+      }
+    };
+
+    startEquipmentPage();
+
+    if (eq.equipment_specs?.description) {
+      const descLines = eq.equipment_specs.description.split('\n');
+      for (const rawLine of descLines) {
+        const line = rawLine.trim();
+        if (!line) {
+          ensureEquipmentSpace(15);
+          y -= 15;
+          continue;
+        }
+        ensureEquipmentSpace(15);
+        page.drawText(line.substring(0, 90), { x: margin, y, size: 10, font: helvetica, color: textColor });
+        y -= 15;
+      }
+      y -= 20;
+    }
+
+    const equipmentImagesRaw = Array.isArray(eq.equipment_specs?.images) ? eq.equipment_specs?.images ?? [] : [];
+    const equipmentImages = equipmentImagesRaw
+      .map((img: any) => {
+        if (!img) return null;
+        if (typeof img === 'string') {
+          return { url: img, caption: null };
+        }
+        if (typeof img === 'object' && typeof img.image_url === 'string') {
+          return { url: img.image_url, caption: typeof img.caption === 'string' ? img.caption : null };
+        }
+        return null;
+      })
+      .filter((img): img is { url: string; caption: string | null } => !!img && !!img.url);
+
+    if (equipmentImages.length > 0) {
+      const maxImageWidth = (pageWidth - margin * 2 - 20) / 2;
+      const maxImageHeight = 180;
+      const gap = 20;
+
+      const drawImagesHeader = () => {
+        ensureEquipmentSpace(20);
+        page.drawText('Imágenes', { x: margin, y, size: 12, font: helveticaBold, color: textColor });
+        y -= 25;
+      };
+
+      drawImagesHeader();
+
+      let x = margin;
+      let rowHeight = 0;
+
+      for (const imgData of equipmentImages) {
+        const pdfImage = await embedImageFromUrl(imgData.url);
+        if (!pdfImage) continue;
+
+        const scale = Math.min(maxImageWidth / pdfImage.width, maxImageHeight / pdfImage.height, 1);
+        const imgWidth = pdfImage.width * scale;
+        const imgHeight = pdfImage.height * scale;
+        const captionHeight = imgData.caption ? 16 : 0;
+        const blockHeight = imgHeight + captionHeight + 10;
+
+        if (x + imgWidth > pageWidth - margin) {
+          y -= rowHeight + gap;
+          x = margin;
+          rowHeight = 0;
+        }
+
+        if (y - blockHeight < margin) {
+          startEquipmentPage();
+          drawImagesHeader();
+          x = margin;
+          rowHeight = 0;
+        }
+
+        page.drawImage(pdfImage, {
+          x,
+          y: y - imgHeight,
+          width: imgWidth,
+          height: imgHeight,
+        });
+
+        if (imgData.caption) {
+          page.drawText(imgData.caption.substring(0, 80), {
+            x,
+            y: y - imgHeight - 12,
+            size: 9,
+            font: helvetica,
+            color: mutedColor,
+          });
+        }
+
+        rowHeight = Math.max(rowHeight, blockHeight);
+        x += maxImageWidth + gap;
+      }
+
+      y -= rowHeight + 20;
+    }
+
+    if (eq.equipment_specs?.tables) {
+      for (const table of eq.equipment_specs.tables) {
+        ensureEquipmentSpace(60);
+        page.drawText(table.title, { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
+        y -= 30;
+
+        if (Array.isArray(table.table_data)) {
+          for (const row of table.table_data) {
+            if (y < margin + 80) {
+              startEquipmentPage();
+              page.drawText(table.title, { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
+              y -= 30;
+            }
+
+            const cellWidth = 250;
+            row.forEach((cell: string, idx: number) => {
+              const x = margin + idx * cellWidth;
+              page.drawRectangle({
+                x,
+                y: y - 25,
+                width: cellWidth,
+                height: 25,
+                borderColor: rgb(0.9, 0.91, 0.92),
+                borderWidth: 1,
+              });
+
+              page.drawText((cell || '').substring(0, 35), {
+                x: x + 5,
+                y: y - 16,
+                size: 9,
+                font: helvetica,
+                color: textColor,
+              });
+            });
+
+            y -= 25;
+          }
+        }
+
+        y -= 20;
+      }
     }
   }
 
