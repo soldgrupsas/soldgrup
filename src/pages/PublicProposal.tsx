@@ -44,6 +44,23 @@ const PublicProposal = () => {
   const [loading, setLoading] = useState(true);
   const [modelKey, setModelKey] = useState(0);
 
+  const notifyProposalView = async (data: ProposalData) => {
+    try {
+      await supabase.functions.invoke('notify-proposal-view', {
+        body: {
+          offer_id: data.offer_id,
+          presentation_date: data.presentation_date,
+          client: data.client,
+          contact_person: data.contact_person,
+          reference: data.reference,
+          soldgrup_contact: data.soldgrup_contact,
+        },
+      });
+    } catch (error) {
+      console.error("Error notifying proposal view:", error);
+    }
+  };
+
   useEffect(() => {
     if (slug) {
       fetchProposal();
@@ -135,6 +152,12 @@ const PublicProposal = () => {
 
       // Track click after proposal is loaded
       trackClick(data.id);
+      notifyProposalView({
+        ...data,
+        technical_specs_table: Array.isArray(data.technical_specs_table)
+          ? data.technical_specs_table as string[][]
+          : null,
+      });
 
       // Fetch equipment details
       const { data: equipmentData, error: equipmentError } = await supabase
