@@ -3,9 +3,20 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Settings, Plus, ArrowLeft } from "lucide-react";
+import { Settings, Plus, ArrowLeft, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface Equipment {
   id: string;
@@ -20,6 +31,7 @@ const EquipmentList = () => {
   const { toast } = useToast();
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -51,6 +63,29 @@ const EquipmentList = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      const { error } = await supabase.from("equipment").delete().eq("id", id);
+      if (error) throw error;
+
+      setEquipment((prev) => prev.filter((item) => item.id !== id));
+      toast({
+        title: "Equipo eliminado",
+        description: "El equipo fue eliminado correctamente.",
+      });
+    } catch (error) {
+      console.error("Error deleting equipment:", error);
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el equipo. Intenta nuevamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -111,10 +146,58 @@ const EquipmentList = () => {
               <Card
                 key={item.id}
                 className="p-6 hover:shadow-elegant transition-all duration-300 cursor-pointer hover:scale-105"
-                onClick={() => navigate(`/equipment/edit/${item.id}`)}
+                onClick={(event) => {
+                  const target = event.target as HTMLElement;
+                  if (target.closest("[data-action='delete-equipment']")) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                  }
+                  navigate(`/equipment/edit/${item.id}`);
+                }}
               >
-                <div className="bg-gradient-to-br from-accent/20 to-accent/5 rounded-lg p-4 w-fit mb-4">
-                  <Settings className="h-8 w-8" />
+                <div className="flex justify-between items-start mb-4">
+                  <div className="bg-gradient-to-br from-accent/20 to-accent/5 rounded-lg p-4 w-fit">
+                    <Settings className="h-8 w-8" />
+                  </div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive"
+                        onClick={(event) => event.stopPropagation()}
+                        data-action="delete-equipment"
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent
+                      onOpenAutoFocus={(event) => event.preventDefault()}
+                    >
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          ¿Eliminar este equipo?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Esta acción no se puede deshacer. Eliminaremos el equipo
+                          seleccionado y todos sus datos asociados.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          data-action="delete-equipment"
+                          onClick={() => handleDelete(item.id)}
+                        >
+                          {deletingId === item.id
+                            ? "Eliminando..."
+                            : "Eliminar"}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
                 <h3 className="text-xl font-bold mb-2">{item.name}</h3>
                 <p className="text-muted-foreground line-clamp-2">

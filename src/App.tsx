@@ -14,6 +14,9 @@ import UserManagement from "./pages/UserManagement";
 import EquipmentList from "./pages/EquipmentList";
 import CreateEquipment from "./pages/CreateEquipment";
 import NotFound from "./pages/NotFound";
+import AdminPanel from "./pages/admin/AdminPanel";
+import AdminRoles from "./pages/admin/AdminRoles";
+import OpenAISettings from "./pages/admin/OpenAISettings";
 
 const queryClient = new QueryClient();
 
@@ -27,6 +30,10 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/home" element={<Home />} />
+          <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/admin/users" element={<UserManagement />} />
+          <Route path="/admin/roles" element={<AdminRoles />} />
+          <Route path="/admin/openai" element={<OpenAISettings />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/create" element={<CreateProposal />} />
           <Route path="/edit/:id" element={<EditProposal />} />

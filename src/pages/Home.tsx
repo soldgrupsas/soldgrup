@@ -3,11 +3,13 @@ import { useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FileText, Settings, ClipboardList, LogOut } from "lucide-react";
+import { FileText, Settings, ClipboardList, LogOut, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const Home = () => {
   const navigate = useNavigate();
-  const { user, signOut, loading } = useAuth();
+  const { user, signOut, loading, isAdmin, isAdminLoading } = useAuth();
+  const { toast } = useToast();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -18,6 +20,23 @@ const Home = () => {
   const handleSignOut = async () => {
     await signOut();
     navigate("/auth");
+  };
+
+  const handleAdminPanelClick = () => {
+    if (isAdminLoading) {
+      return;
+    }
+
+    if (isAdmin) {
+      navigate("/admin");
+      return;
+    }
+
+    toast({
+      title: "Acceso restringido",
+      description: "Esta sección está restringida a administradores de la plataforma",
+      variant: "destructive",
+    });
   };
 
   if (loading) {
@@ -67,10 +86,21 @@ const Home = () => {
               Bienvenido al sistema de gestión industrial
             </p>
           </div>
-          <Button onClick={handleSignOut} variant="outline" size="lg">
-            <LogOut className="mr-2" />
-            Cerrar Sesión
-          </Button>
+          <div className="flex gap-3">
+            <Button
+              onClick={handleAdminPanelClick}
+              size="lg"
+              variant="secondary"
+              disabled={isAdminLoading}
+            >
+              {isAdminLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Panel de administración
+            </Button>
+            <Button onClick={handleSignOut} variant="outline" size="lg">
+              <LogOut className="mr-2" />
+              Cerrar Sesión
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">

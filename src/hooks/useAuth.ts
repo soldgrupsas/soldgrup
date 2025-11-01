@@ -7,6 +7,7 @@ export const useAuth = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdminLoading, setIsAdminLoading] = useState(true);
 
   useEffect(() => {
     // Set up auth state listener
@@ -14,25 +15,26 @@ export const useAuth = () => {
       (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-        
+
         if (session?.user) {
-          // Check if user is admin
-          setTimeout(() => {
-            checkAdminStatus(session.user.id);
-          }, 0);
+          checkAdminStatus(session.user.id);
         } else {
           setIsAdmin(false);
+          setIsAdminLoading(false);
         }
       }
     );
 
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
-      
+
       if (session?.user) {
-        checkAdminStatus(session.user.id);
+        await checkAdminStatus(session.user.id);
+      } else {
+        setIsAdmin(false);
+        setIsAdminLoading(false);
       }
       setLoading(false);
     });
@@ -41,6 +43,7 @@ export const useAuth = () => {
   }, []);
 
   const checkAdminStatus = async (userId: string) => {
+    setIsAdminLoading(true);
     try {
       const { data, error } = await supabase
         .from("user_roles")
@@ -57,6 +60,8 @@ export const useAuth = () => {
     } catch (error) {
       console.error("Error checking admin status:", error);
       setIsAdmin(false);
+    } finally {
+      setIsAdminLoading(false);
     }
   };
 
@@ -65,6 +70,7 @@ export const useAuth = () => {
     setUser(null);
     setSession(null);
     setIsAdmin(false);
+    setIsAdminLoading(false);
   };
 
   return {
@@ -72,6 +78,7 @@ export const useAuth = () => {
     session,
     loading,
     isAdmin,
+    isAdminLoading,
     signOut,
   };
 };

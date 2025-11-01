@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import soldgrupLogo from "@/assets/soldgrup-logo.webp";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -14,7 +14,6 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
 
   useEffect(() => {
     // Check if user is already logged in
@@ -61,124 +60,48 @@ const Auth = () => {
     }
   };
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/`,
-          data: {
-            full_name: fullName,
-          },
-        },
-      });
-
-      if (error) throw error;
-
-      toast({
-        title: "Cuenta creada",
-        description: "Por favor verifica tu email para continuar",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error al crear cuenta",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
-      <Card className="w-full max-w-md p-8">
-        <h1 className="text-3xl font-bold text-center mb-6">
-          Sistema de Propuestas
+      <Card className="w-full max-w-md p-8 space-y-6">
+        <img
+          src={soldgrupLogo}
+          alt="Soldgrup - La fuerza de su industria"
+          className="mx-auto h-20 w-auto"
+        />
+        <h1 className="text-3xl font-bold text-center">
+          Iniciar sesión
         </h1>
 
-        <Tabs defaultValue="login" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="login">Iniciar Sesión</TabsTrigger>
-            <TabsTrigger value="signup">Registrarse</TabsTrigger>
-          </TabsList>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="login-email">Email</Label>
+            <Input
+              id="login-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
 
-          <TabsContent value="login">
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="login-email">Email</Label>
-                <Input
-                  id="login-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
+          <div className="space-y-2">
+            <Label htmlFor="login-password">Contraseña</Label>
+            <Input
+              id="login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="login-password">Contraseña</Label>
-                <Input
-                  id="login-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
-              </Button>
-            </form>
-          </TabsContent>
-
-          <TabsContent value="signup">
-            <form onSubmit={handleSignup} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="signup-name">Nombre Completo</Label>
-                <Input
-                  id="signup-name"
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="signup-email">Email</Label>
-                <Input
-                  id="signup-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="signup-password">Contraseña</Label>
-                <Input
-                  id="signup-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                />
-              </div>
-
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Creando cuenta..." : "Crear Cuenta"}
-              </Button>
-            </form>
-          </TabsContent>
-        </Tabs>
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
+          </Button>
+          <p className="text-xs text-muted-foreground text-center">
+            La creación de nuevos usuarios y cambio de contraseña solo lo puede hacer un usuario Administrador.
+          </p>
+        </form>
       </Card>
     </div>
   );
