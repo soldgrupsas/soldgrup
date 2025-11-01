@@ -18,6 +18,7 @@ import AdminPanel from "./pages/admin/AdminPanel";
 import AdminRoles from "./pages/admin/AdminRoles";
 import OpenAISettings from "./pages/admin/OpenAISettings";
 import MaintenanceReports from "./pages/MaintenanceReports";
+import MaintenanceReportWizard from "./pages/MaintenanceReportWizard";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,8 @@ const App = () => (
           <Route path="/equipment/create" element={<CreateEquipment />} />
           <Route path="/equipment/edit/:id" element={<CreateEquipment />} />
           <Route path="/maintenance-reports" element={<MaintenanceReports />} />
+          <Route path="/maintenance-reports/new" element={<MaintenanceReportWizard />} />
+          <Route path="/maintenance-reports/:id/edit" element={<MaintenanceReportWizard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

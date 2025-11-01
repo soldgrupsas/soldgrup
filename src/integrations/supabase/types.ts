@@ -169,6 +169,127 @@ export type Database = {
           },
         ]
       }
+      maintenance_report_photos: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          report_id: string
+          storage_path: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          report_id: string
+          storage_path: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          report_id?: string
+          storage_path?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_report_photos_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "maintenance_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      maintenance_reports: {
+        Row: {
+          address: string | null
+          brand: string | null
+          capacity: string | null
+          company: string | null
+          contact: string | null
+          created_at: string
+          current_step: number
+          data: Json
+          end_date: string | null
+          equipment: string | null
+          id: string
+          initial_state: string | null
+          location_pg: string | null
+          model: string | null
+          phone: string | null
+          recommendations: string | null
+          serial: string | null
+          start_date: string | null
+          technician_name: string | null
+          tests: Json
+          updated_at: string
+          user_id: string | null
+          voltage: string | null
+        }
+        Insert: {
+          address?: string | null
+          brand?: string | null
+          capacity?: string | null
+          company?: string | null
+          contact?: string | null
+          created_at?: string
+          current_step?: number
+          data?: Json
+          end_date?: string | null
+          equipment?: string | null
+          id?: string
+          initial_state?: string | null
+          location_pg?: string | null
+          model?: string | null
+          phone?: string | null
+          recommendations?: string | null
+          serial?: string | null
+          start_date?: string | null
+          technician_name?: string | null
+          tests?: Json
+          updated_at?: string
+          user_id?: string | null
+          voltage?: string | null
+        }
+        Update: {
+          address?: string | null
+          brand?: string | null
+          capacity?: string | null
+          company?: string | null
+          contact?: string | null
+          created_at?: string
+          current_step?: number
+          data?: Json
+          end_date?: string | null
+          equipment?: string | null
+          id?: string
+          initial_state?: string | null
+          location_pg?: string | null
+          model?: string | null
+          phone?: string | null
+          recommendations?: string | null
+          serial?: string | null
+          start_date?: string | null
+          technician_name?: string | null
+          tests?: Json
+          updated_at?: string
+          user_id?: string | null
+          voltage?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_reports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string | null
