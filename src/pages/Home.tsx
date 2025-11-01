@@ -70,9 +70,9 @@ const Home = () => {
       title: "Informes de Mantenimiento",
       description: "Registros y seguimiento de mantenimiento",
       icon: ClipboardList,
-      path: "#",
+      path: "/maintenance-reports",
       color: "from-secondary/20 to-secondary/5",
-      disabled: true,
+      disabled: false,
     },
   ];
 
@@ -107,10 +107,8 @@ const Home = () => {
           {menuItems.map((item) => (
             <Card
               key={item.title}
-              className={`p-8 hover:shadow-elegant transition-all duration-300 ${
-                item.disabled ? "opacity-60" : "cursor-pointer hover:scale-105"
-              }`}
-              onClick={() => !item.disabled && navigate(item.path)}
+              className="p-8 hover:shadow-elegant transition-all duration-300 cursor-pointer hover:scale-105"
+              onClick={() => navigate(item.path)}
             >
               <div className={`bg-gradient-to-br ${item.color} rounded-lg p-4 w-fit mb-4`}>
                 <item.icon className="h-8 w-8" />
