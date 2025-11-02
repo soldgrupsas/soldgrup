@@ -122,12 +122,17 @@ const MaintenanceReports = () => {
         "generate-maintenance-report-pdf",
         {
           body: { reportId },
-          responseType: "arraybuffer" as any,
+          responseType: "arraybuffer",
         },
       );
 
-      if (error) throw error;
-      if (!data) throw new Error("No se recibió el PDF");
+      if (error) {
+        throw new Error(error.message || "Error al generar el PDF");
+      }
+
+      if (!data) {
+        throw new Error("La función no devolvió contenido");
+      }
 
       const blob = new Blob([data], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);

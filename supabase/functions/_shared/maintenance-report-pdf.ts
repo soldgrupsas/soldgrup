@@ -1,5 +1,12 @@
 import { PDFDocument, StandardFonts, rgb, type PDFImage } from 'npm:pdf-lib@1.17.1';
-import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts';
+// Local base64 decoder to avoid remote imports during cold start in Edge Functions
+const base64Decode = (base64: string): Uint8Array => {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+};
 
 type ChecklistStatus = 'good' | 'bad' | null;
 
@@ -11,7 +18,9 @@ type ChecklistEntry = {
 };
 
 type PhotoEntry = {
-  url: string;
+  url?: string; // legacy path - kept for backward compatibility
+  bytes?: Uint8Array; // preferred: raw bytes provided by the caller
+  contentType?: string | null;
   description?: string | null;
 };
 
@@ -85,38 +94,57 @@ const checklistItems = [
   'Carcazas',
 ];
 
+const SOLDGRUP_LOGO_BASE64 =
+  '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';
+
 export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPayload): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
+  let logoImage: PDFImage | null = null;
+  try {
+    const logoBytes = base64Decode(SOLDGRUP_LOGO_BASE64);
+    logoImage = await pdfDoc.embedPng(logoBytes);
+  } catch (error) {
+    console.warn('No se pudo cargar el logo de Soldgrup para el PDF', error);
+  }
+
   const embeddedPhotos: { image: PDFImage; description?: string | null; width: number; height: number }[] = [];
 
   for (const photo of payload.photos) {
     try {
-      if (!photo.url) continue;
-      const response = await fetch(photo.url);
-      if (!response.ok) {
-        console.warn('No se pudo descargar la foto:', photo.url);
+      let bytes: Uint8Array | null = null;
+      let contentType = photo.contentType ?? '';
+
+      if (photo.bytes && photo.bytes.length) {
+        bytes = photo.bytes;
+      } else if (photo.url) {
+        const response = await fetch(photo.url);
+        if (!response.ok) {
+          console.warn('No se pudo descargar la foto:', photo.url);
+          continue;
+        }
+        contentType = response.headers.get('content-type') ?? contentType ?? '';
+        const arrayBuffer = await response.arrayBuffer();
+        bytes = new Uint8Array(arrayBuffer);
+      } else {
         continue;
       }
-      const contentType = response.headers.get('content-type') ?? '';
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
+      // Omitir imágenes demasiado grandes para evitar OOM
+      if (bytes.length > 2_500_000) {
+        console.warn('Foto omitida por tamaño (bytes):', photo.url, bytes.length);
+        continue;
+      }
 
       let pdfImage: PDFImage | null = null;
-      if (contentType.includes('png') || photo.url.toLowerCase().endsWith('.png')) {
+      if (contentType.includes('png') || (photo.url?.toLowerCase().endsWith('.png'))) {
         pdfImage = await pdfDoc.embedPng(bytes);
-      } else if (contentType.includes('jpeg') || contentType.includes('jpg') || photo.url.toLowerCase().match(/\.jpe?g$/)) {
+      } else if (contentType.includes('jpeg') || contentType.includes('jpg') || (photo.url?.toLowerCase().match(/\.jpe?g$/))) {
         pdfImage = await pdfDoc.embedJpg(bytes);
-      } else if (contentType.includes('webp') || photo.url.toLowerCase().endsWith('.webp')) {
-        try {
-          const image = await Image.decode(bytes);
-          const png = image.encodePNG();
-          pdfImage = await pdfDoc.embedPng(png);
-        } catch (err) {
-          console.warn('No se pudo convertir WEBP, se omite la foto:', photo.url, err);
-        }
+      } else if (contentType.includes('webp') || (photo.url?.toLowerCase().endsWith('.webp'))) {
+        // WEBP no soportado nativamente por pdf-lib en Deno sin dependencias extra
+        console.warn('Formato WEBP detectado; se omite o se recomienda convertir a JPEG');
       } else {
         // Intento genérico: probar JPEG primero, luego PNG
         try {
@@ -143,10 +171,16 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     }
   }
 
+  let isFirstPage = true;
   const addPage = () => {
     const page = pdfDoc.addPage([pageWidth, pageHeight]);
-    drawHeader(page, fontBold, payload.title ?? 'Informe de Mantenimiento', payload.reportId);
-    return { page, cursorY: pageHeight - margin };
+    const cursorStart = drawHeader(page, fontBold, {
+      title: payload.title ?? 'Informe de Mantenimiento',
+      showTitle: isFirstPage,
+      logo: isFirstPage ? logoImage : null,
+    });
+    isFirstPage = false;
+    return { page, cursorY: cursorStart };
   };
 
   let current = addPage();
@@ -412,23 +446,52 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
   return await pdfDoc.save();
 }
 
-function drawHeader(page: any, font: any, title: string, reportId: string) {
-  const size = 18;
-  const subtitleSize = 11;
-  page.drawText(title, { x: margin, y: pageHeight - margin - size, size, font, color: headingColor });
-  page.drawText(`Código de informe: ${reportId}`, {
-    x: margin,
-    y: pageHeight - margin - size - subtitleSize - 4,
-    size: subtitleSize,
-    font,
-    color: mutedColor,
-  });
+function drawHeader(
+  page: any,
+  font: any,
+  {
+    title,
+    showTitle,
+    logo,
+  }: {
+    title: string;
+    showTitle: boolean;
+    logo: PDFImage | null;
+  },
+) {
+  const top = pageHeight - margin;
+  let headerBottom = top;
+
+  if (logo) {
+    const maxWidth = 150;
+    const maxHeight = 60;
+    const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height, 1);
+    const drawWidth = logo.width * scale;
+    const drawHeight = logo.height * scale;
+    const x = margin;
+    const y = top - drawHeight;
+    page.drawImage(logo, { x, y, width: drawWidth, height: drawHeight });
+    headerBottom = Math.min(headerBottom, y);
+  }
+
+  if (showTitle && title) {
+    const size = 18;
+    const titleWidth = font.widthOfTextAtSize(title, size);
+    const x = pageWidth - margin - titleWidth;
+    const y = top - size + 4;
+    page.drawText(title, { x, y, size, font, color: headingColor });
+    headerBottom = Math.min(headerBottom, y - 8);
+  }
+
+  const lineY = headerBottom - 12;
   page.drawLine({
-    start: { x: margin, y: pageHeight - margin - size - subtitleSize - 12 },
-    end: { x: pageWidth - margin, y: pageHeight - margin - size - subtitleSize - 12 },
+    start: { x: margin, y: lineY },
+    end: { x: pageWidth - margin, y: lineY },
     color: borderColor,
     thickness: 1,
   });
+
+  return lineY - 16;
 }
 
 function wrapText(text: string, font: any, size: number, maxWidth: number): string[] {

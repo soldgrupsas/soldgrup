@@ -32,6 +32,14 @@ const checklistFallback = [
   'Carcazas',
 ];
 
+const inferContentTypeByPath = (path: string): string => {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.match(/\.jpe?g$/)) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'application/octet-stream';
+};
+
 type MaintenanceReportRecord = {
   id: string;
   user_id: string | null;
@@ -68,6 +76,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    console.log('[maintenance-pdf] start request');
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
@@ -85,6 +94,7 @@ Deno.serve(async (req) => {
     }
 
     const { reportId } = await req.json();
+    console.log('[maintenance-pdf] reportId:', reportId);
 
     if (!reportId || typeof reportId !== 'string') {
       return new Response(JSON.stringify({ error: 'reportId es requerido' }), {
@@ -133,6 +143,7 @@ Deno.serve(async (req) => {
     }
 
     const report = reportRaw as MaintenanceReportRecord;
+    console.log('[maintenance-pdf] report loaded');
 
     if (!isAdmin && report.user_id && report.user_id !== userId) {
       return new Response(JSON.stringify({ error: 'No tienes permisos para este informe' }), {
@@ -153,16 +164,43 @@ Deno.serve(async (req) => {
 
     const storagePhotos: MaintenanceReportPhotoRecord[] = photosData ?? [];
 
-    const photos = storagePhotos
-      .map((photo) => {
-        const { data } = supabase.storage.from('maintenance-report-photos').getPublicUrl(photo.storage_path);
-        if (!data?.publicUrl) return null;
-        return {
-          url: data.publicUrl,
-          description: photo.description ?? '',
-        };
-      })
-      .filter(Boolean) as { url: string; description: string }[];
+    const toOptimizedImageUrl = (rawUrl: string): string => {
+      // Transform object public URL to render URL with resizing and JPEG format
+      // Example:
+      // https://<ref>.supabase.co/storage/v1/object/public/<bucket>/<path>
+      // -> https://<ref>.supabase.co/storage/v1/render/image/public/<bucket>/<path>?width=1600&quality=85&format=jpeg
+      try {
+        const url = new URL(rawUrl);
+        url.pathname = url.pathname.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
+        url.searchParams.set('width', '1200');
+        url.searchParams.set('quality', '80');
+        url.searchParams.set('format', 'jpeg');
+        return url.toString();
+      } catch {
+        return rawUrl; // fallback
+      }
+    };
+
+    // Descargar fotos directamente desde Storage con Service Role para evitar fallos de red/transform
+    const photos: MaintenanceReportPdfPayload['photos'] = [];
+    for (const record of storagePhotos.slice(0, 24)) {
+      try {
+        const { data: blob, error: dlError } = await supabase.storage
+          .from('maintenance-report-photos')
+          .download(record.storage_path);
+        if (dlError || !blob) {
+          console.warn('No se pudo descargar la foto de Storage:', record.storage_path, dlError);
+          continue;
+        }
+        const ab = await blob.arrayBuffer();
+        const bytes = new Uint8Array(ab);
+        const contentType = (blob as any).type || inferContentTypeByPath(record.storage_path);
+        photos.push({ bytes, contentType, description: record.description ?? '' });
+      } catch (err) {
+        console.warn('Error bajando foto de Storage:', record.storage_path, err);
+      }
+    }
+    console.log('[maintenance-pdf] photos count:', photos.length);
 
     const reportData = (report.data ?? {}) as Record<string, any>;
 
@@ -247,7 +285,9 @@ Deno.serve(async (req) => {
       photos,
     };
 
+    console.log('[maintenance-pdf] generating PDF...');
     const pdfBytes = await createMaintenanceReportPDF(payload);
+    console.log('[maintenance-pdf] PDF generated, bytes:', pdfBytes?.length ?? 0);
 
     const filenameCompany = payload.basicInfo.company?.replace(/[^a-zA-Z0-9-_]/g, '_') ?? 'Informe';
     const filenameDate = report.start_date ? new Date(report.start_date).toISOString().slice(0, 10) : report.created_at.slice(0, 10);

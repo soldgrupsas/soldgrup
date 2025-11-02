@@ -17,7 +17,7 @@ const Index = () => {
           Smart Workspace
         </h1>
         <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-          Hub de mejoramiento corporativo
+          Hub Corporativo
         </p>
         <Button onClick={() => navigate("/auth")} size="lg" className="mt-6">
           Iniciar Sesión
