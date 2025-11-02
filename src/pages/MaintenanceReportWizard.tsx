@@ -207,15 +207,15 @@ const MaintenanceReportWizard = () => {
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
       const blob: Blob | null = await new Promise((resolve) =>
-        canvas.toBlob(resolve, "image/webp", QUALITY),
+        canvas.toBlob(resolve, "image/jpeg", QUALITY),
       );
 
       if (!blob) {
         return file;
       }
 
-      const compressedFile = new File([blob], `${file.name.split(".")[0]}.webp`, {
-        type: "image/webp",
+      const compressedFile = new File([blob], `${file.name.split(".")[0]}.jpg`, {
+        type: "image/jpeg",
         lastModified: Date.now(),
       });
 

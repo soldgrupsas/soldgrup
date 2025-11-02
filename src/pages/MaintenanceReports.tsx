@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, ClipboardList, Download, Edit2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, Download, Edit2, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,6 +35,7 @@ const MaintenanceReports = () => {
   const [loading, setLoading] = useState(true);
   const [reports, setReports] = useState<MaintenanceReportListItem[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -111,6 +112,41 @@ const MaintenanceReports = () => {
       });
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDownload = async (reportId: string, reportLabel: string) => {
+    setDownloadingId(reportId);
+    try {
+      const { data, error } = await supabase.functions.invoke<ArrayBuffer>(
+        "generate-maintenance-report-pdf",
+        {
+          body: { reportId },
+          responseType: "arraybuffer" as any,
+        },
+      );
+
+      if (error) throw error;
+      if (!data) throw new Error("No se recibió el PDF");
+
+      const blob = new Blob([data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${reportLabel || "informe"}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error("Error descargando informe:", error);
+      toast({
+        title: "No se pudo generar el PDF",
+        description: error?.message ?? "Intenta nuevamente en unos minutos.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -201,8 +237,25 @@ const MaintenanceReports = () => {
                     >
                       <Edit2 className="h-4 w-4" />
                     </Button>
-                    <Button variant="outline" size="icon" disabled>
-                      <Download className="h-4 w-4" />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() =>
+                        handleDownload(
+                          report.id,
+                          report.company
+                            ? `Informe_${report.company}`.replace(/[^a-zA-Z0-9-_]+/g, "_")
+                            : `Informe_${report.id}`,
+                        )
+                      }
+                      disabled={downloadingId === report.id}
+                      title="Descargar PDF"
+                    >
+                      {downloadingId === report.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
