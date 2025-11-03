@@ -43,24 +43,6 @@ const inferContentTypeByPath = (path: string): string => {
   return 'application/octet-stream';
 };
 
-const ensurePdfCompatibleImage = async (
-  bytes: Uint8Array,
-  contentType: string,
-): Promise<{ bytes: Uint8Array; contentType: string }> => {
-  const normalized = contentType.toLowerCase();
-  if (normalized.includes('png') || normalized.includes('jpeg') || normalized.includes('jpg')) {
-    return { bytes, contentType: normalized.includes('png') ? 'image/png' : 'image/jpeg' };
-  }
-  try {
-    const image = await Image.decode(bytes);
-    const jpeg = await image.encodeJPEG(82);
-    return { bytes: new Uint8Array(jpeg), contentType: 'image/jpeg' };
-  } catch (error) {
-    console.warn('No se pudo convertir la imagen a JPEG', error);
-    return { bytes, contentType };
-  }
-};
-
 type MaintenanceReportRecord = {
   id: string;
   user_id: string | null;
@@ -252,7 +234,10 @@ Deno.serve(async (req) => {
           }
           const ab = await response.arrayBuffer();
           const contentType = response.headers.get('content-type') ?? 'image/jpeg';
-          return await ensurePdfCompatibleImage(new Uint8Array(ab), contentType);
+          return {
+            bytes: new Uint8Array(ab),
+            contentType,
+          };
         } catch (error) {
           console.warn('Optimized image fetch error', targetUrl, error);
           return null;
@@ -268,7 +253,10 @@ Deno.serve(async (req) => {
           }
           const ab = await blob.arrayBuffer();
           const contentType = (blob as any).type || inferContentTypeByPath(record.storage_path);
-          return await ensurePdfCompatibleImage(new Uint8Array(ab), contentType);
+          return {
+            bytes: new Uint8Array(ab),
+            contentType,
+          };
         } catch (error) {
           console.warn('Error bajando foto de Storage:', record.storage_path, error);
           return null;
@@ -290,6 +278,11 @@ Deno.serve(async (req) => {
         if (!result) return;
         if (result.bytes.length > 2_500_000) {
           console.warn('Foto omitida por tamaño (bytes):', result.bytes.length);
+          return;
+        }
+        const type = result.contentType.toLowerCase();
+        if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) {
+          console.warn('Formato de imagen no soportado en PDF, se omite:', type);
           return;
         }
         const record = chunk[indexInChunk];

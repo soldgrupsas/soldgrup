@@ -9,11 +9,16 @@ const corsHeaders = {
 
 const BUCKET = 'maintenance-report-photos';
 
-const resizeAndEncode = async (bytes: Uint8Array, width: number) => {
-  const image = await Image.decode(bytes);
+const resizeAndEncode = (image: Image, width: number) => {
   const resized = image.width > width ? image.resize(width, Image.RESIZE_AUTO) : image;
-  const jpeg = await resized.encodeJPEG(82);
-  return new Uint8Array(jpeg);
+  return resized.encodeJPEG(82).then((buffer) => new Uint8Array(buffer));
+};
+
+const buildRenderUrl = (publicUrl: string, params: Record<string, string>) => {
+  const url = new URL(publicUrl);
+  url.pathname = url.pathname.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
+  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+  return url.toString();
 };
 
 Deno.serve(async (req) => {
@@ -59,9 +64,22 @@ Deno.serve(async (req) => {
     if (downloadError || !originalBlob) {
       throw new Error('No se pudo descargar la imagen original');
     }
-    const originalBuffer = new Uint8Array(await originalBlob.arrayBuffer());
-    const optimizedBytes = await resizeAndEncode(originalBuffer, 1600);
-    const thumbnailBytes = await resizeAndEncode(originalBuffer, 400);
+    let baseImage: Image | null = null;
+    let workingBuffer = new Uint8Array(await originalBlob.arrayBuffer());
+    try {
+      baseImage = await Image.decode(workingBuffer);
+    } catch (decodeError) {
+      const { data: publicData } = supabase.storage.from(BUCKET).getPublicUrl(normalizedPath);
+      if (!publicData?.publicUrl) throw decodeError;
+      const fallbackUrl = buildRenderUrl(publicData.publicUrl, { width: '2048', format: 'webp' });
+      const fallbackResponse = await fetch(fallbackUrl);
+      if (!fallbackResponse.ok) throw new Error('No se pudo transformar la imagen incompatible');
+      workingBuffer = new Uint8Array(await fallbackResponse.arrayBuffer());
+      baseImage = await Image.decode(workingBuffer);
+    }
+
+    const optimizedBytes = await resizeAndEncode(baseImage!, 1600);
+    const thumbnailBytes = await resizeAndEncode(baseImage!, 400);
 
     await supabase.storage.from(BUCKET).upload(optimizedPath, optimizedBytes, {
       upsert: true,
