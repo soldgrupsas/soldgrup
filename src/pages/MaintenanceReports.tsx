@@ -144,10 +144,27 @@ const MaintenanceReports = () => {
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
     } catch (error: any) {
+      let description = error?.message ?? "Intenta nuevamente en unos minutos.";
+      try {
+        if (error?.context) {
+          const response = error.context;
+          const contentType = response?.headers?.get?.("Content-Type") ?? "";
+          if (contentType.includes("application/json")) {
+            const body = await response.json();
+            description = body?.error ?? description;
+          } else if (response?.text) {
+            const text = await response.text();
+            if (text) description = text;
+          }
+        }
+      } catch (parseError) {
+        console.warn("No se pudo leer el cuerpo de error de la función", parseError);
+      }
+
       console.error("Error descargando informe:", error);
       toast({
         title: "No se pudo generar el PDF",
-        description: error?.message ?? "Intenta nuevamente en unos minutos.",
+        description,
         variant: "destructive",
       });
     } finally {

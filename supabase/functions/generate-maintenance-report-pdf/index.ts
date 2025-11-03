@@ -181,25 +181,75 @@ Deno.serve(async (req) => {
       }
     };
 
-    // Descargar fotos directamente desde Storage con Service Role para evitar fallos de red/transform
+    const downloadPhoto = async (record: MaintenanceReportPhotoRecord) => {
+      const storagePath = record.storage_path;
+      if (!storagePath) return null;
+
+      const { data: publicData } = supabase.storage.from('maintenance-report-photos').getPublicUrl(storagePath);
+      const publicUrl = publicData?.publicUrl ?? null;
+
+      const fetchOptimized = async () => {
+        if (!publicUrl) return null;
+        const optimizedUrl = toOptimizedImageUrl(publicUrl);
+        try {
+          const response = await fetch(optimizedUrl, { headers: { accept: 'image/jpeg,image/png;q=0.9,*/*;q=0.8' } });
+          if (!response.ok) {
+            console.warn('Optimized image fetch failed', optimizedUrl, response.status);
+            return null;
+          }
+          const ab = await response.arrayBuffer();
+          const contentType = response.headers.get('content-type') ?? 'image/jpeg';
+          return {
+            bytes: new Uint8Array(ab),
+            contentType,
+            description: record.description ?? '',
+          };
+        } catch (error) {
+          console.warn('Optimized image fetch error', optimizedUrl, error);
+          return null;
+        }
+      };
+
+      const fetchOriginal = async () => {
+        try {
+          const { data: blob, error } = await supabase.storage.from('maintenance-report-photos').download(storagePath);
+          if (error || !blob) {
+            console.warn('No se pudo descargar la foto de Storage:', storagePath, error);
+            return null;
+          }
+          const ab = await blob.arrayBuffer();
+          return {
+            bytes: new Uint8Array(ab),
+            contentType: (blob as any).type || inferContentTypeByPath(storagePath),
+            description: record.description ?? '',
+          };
+        } catch (error) {
+          console.warn('Error bajando foto de Storage:', storagePath, error);
+          return null;
+        }
+      };
+
+      return (await fetchOptimized()) ?? (await fetchOriginal());
+    };
+
     const photos: MaintenanceReportPdfPayload['photos'] = [];
-    for (const record of storagePhotos.slice(0, 24)) {
-      try {
-        const { data: blob, error: dlError } = await supabase.storage
-          .from('maintenance-report-photos')
-          .download(record.storage_path);
-        if (dlError || !blob) {
-          console.warn('No se pudo descargar la foto de Storage:', record.storage_path, dlError);
+    const MAX_PHOTOS = 24;
+    const CONCURRENCY = 4;
+    const photoQueue = storagePhotos.slice(0, MAX_PHOTOS);
+
+    for (let i = 0; i < photoQueue.length; i += CONCURRENCY) {
+      const chunk = photoQueue.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(chunk.map((record) => downloadPhoto(record)));
+      for (const result of results) {
+        if (!result) continue;
+        if (result.bytes.length > 2_500_000) {
+          console.warn('Foto omitida por tamaño (bytes):', result.bytes.length);
           continue;
         }
-        const ab = await blob.arrayBuffer();
-        const bytes = new Uint8Array(ab);
-        const contentType = (blob as any).type || inferContentTypeByPath(record.storage_path);
-        photos.push({ bytes, contentType, description: record.description ?? '' });
-      } catch (err) {
-        console.warn('Error bajando foto de Storage:', record.storage_path, err);
+        photos.push(result);
       }
     }
+
     console.log('[maintenance-pdf] photos count:', photos.length);
 
     const reportData = (report.data ?? {}) as Record<string, any>;
@@ -301,7 +351,8 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('Error generando PDF de mantenimiento', error);
-    return new Response(JSON.stringify({ error: 'No fue posible generar el PDF' }), {
+    const message = error instanceof Error ? error.message : 'No fue posible generar el PDF';
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
