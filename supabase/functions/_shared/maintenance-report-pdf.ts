@@ -815,38 +815,55 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
   const drawPhotos = () => {
     if (!embeddedPhotos.length) return;
     drawSectionTitle('Registro fotográfico');
-    const maxImageWidth = contentWidth;
+
+    const maxImageWidth = contentWidth * 0.55;
     const maxImageHeight = 220;
+    const gap = 16;
 
     for (const photo of embeddedPhotos) {
       const scale = Math.min(maxImageWidth / photo.width, maxImageHeight / photo.height, 1);
       const drawWidth = photo.width * scale;
       const drawHeight = photo.height * scale;
-      const requiredHeight = drawHeight + (photo.description ? 42 : 20);
-      ensureSpace(requiredHeight);
+      const descriptionWidth = Math.max(contentWidth - drawWidth - gap, 140);
+      const descriptionText = photo.description?.trim() ?? '';
+      const hasDescription = descriptionText.length > 0;
+      const descriptionLines = hasDescription
+        ? wrapText(descriptionText, fontRegular, 11, descriptionWidth)
+        : ['Sin descripción'];
+      const descriptionHeight = descriptionLines.length * 14;
+      const blockHeight = Math.max(drawHeight, descriptionHeight) + 20;
+
+      ensureSpace(blockHeight);
+      const topY = current.cursorY;
 
       current.page.drawImage(photo.image, {
-        x: margin + (contentWidth - drawWidth) / 2,
-        y: current.cursorY - drawHeight,
+        x: margin,
+        y: topY - drawHeight,
         width: drawWidth,
         height: drawHeight,
       });
-      current.cursorY -= drawHeight + 12;
 
-      if (photo.description) {
-        const lines = wrapText(photo.description, fontRegular, 11, contentWidth);
-        drawWrappedText(current.page, lines, {
-          x: margin,
-          y: current.cursorY,
-          font: fontRegular,
-          size: 11,
-          color: mutedColor,
-          lineHeight: 14,
-        });
-        current.cursorY -= lines.length * 14 + 12;
-      } else {
-        current.cursorY -= 8;
-      }
+      const descriptionX = margin + drawWidth + gap;
+      const descriptionTopY = topY - 6;
+      const label = hasDescription ? 'Descripción' : 'Descripción';
+      current.page.drawText(label, {
+        x: descriptionX,
+        y: descriptionTopY,
+        font: fontBold,
+        size: 11,
+        color: headingColor,
+      });
+
+      drawWrappedText(current.page, descriptionLines, {
+        x: descriptionX,
+        y: descriptionTopY - 16,
+        font: fontRegular,
+        size: 11,
+        color: textColor,
+        lineHeight: 14,
+      });
+
+      current.cursorY -= blockHeight;
     }
   };
 

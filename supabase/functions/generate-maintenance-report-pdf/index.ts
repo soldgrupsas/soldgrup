@@ -164,6 +164,30 @@ Deno.serve(async (req) => {
 
     const storagePhotos: MaintenanceReportPhotoRecord[] = photosData ?? [];
 
+    const reportData = (report.data ?? {}) as Record<string, any>;
+    const reportPhotosArray = Array.isArray(reportData.photos) ? reportData.photos : [];
+    const descriptionByStoragePath = new Map<string, string>();
+    const descriptionById = new Map<string, string>();
+
+    for (const entry of reportPhotosArray) {
+      if (!entry || typeof entry !== 'object') continue;
+      const desc = typeof entry.description === 'string' ? entry.description.trim() : '';
+      const storagePath = typeof entry.storagePath === 'string' ? entry.storagePath : typeof entry.storage_path === 'string' ? entry.storage_path : null;
+      const id = typeof entry.id === 'string' ? entry.id : null;
+      if (storagePath && desc) descriptionByStoragePath.set(storagePath, desc);
+      if (id && desc) descriptionById.set(id, desc);
+    }
+
+    const resolveDescription = (record: MaintenanceReportPhotoRecord): string => {
+      const fromRecord = typeof record.description === 'string' ? record.description.trim() : '';
+      if (fromRecord) return fromRecord;
+      const byStorage = record.storage_path ? descriptionByStoragePath.get(record.storage_path)?.trim() : undefined;
+      if (byStorage) return byStorage;
+      const byId = descriptionById.get(record.id)?.trim();
+      if (byId) return byId;
+      return '';
+    };
+
     const toOptimizedImageUrl = (rawUrl: string): string => {
       // Transform object public URL to render URL with resizing and JPEG format
       // Example:
@@ -240,19 +264,19 @@ Deno.serve(async (req) => {
     for (let i = 0; i < photoQueue.length; i += CONCURRENCY) {
       const chunk = photoQueue.slice(i, i + CONCURRENCY);
       const results = await Promise.all(chunk.map((record) => downloadPhoto(record)));
-      for (const result of results) {
-        if (!result) continue;
+      results.forEach((result, indexInChunk) => {
+        if (!result) return;
         if (result.bytes.length > 2_500_000) {
           console.warn('Foto omitida por tamaño (bytes):', result.bytes.length);
-          continue;
+          return;
         }
-        photos.push(result);
-      }
+        const record = chunk[indexInChunk];
+        const description = resolveDescription(record);
+        photos.push({ ...result, description });
+      });
     }
 
     console.log('[maintenance-pdf] photos count:', photos.length);
-
-    const reportData = (report.data ?? {}) as Record<string, any>;
 
     const testsSource = (report.tests ?? reportData.tests ?? {}) as Record<string, any>;
     const voltageValue = testsSource?.voltage ?? undefined;
