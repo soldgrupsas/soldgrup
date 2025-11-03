@@ -673,15 +673,27 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
 
   const drawParagraph = (text: string | null | undefined) => {
     if (!text?.trim()) return;
-    const lines = wrapText(text.trim(), fontRegular, 11, contentWidth);
-    const height = lines.length * 14 + 8;
+    const chunks = text.replace(/\r\n/g, '\n').split('\n');
+    const lines: string[] = [];
+    chunks.forEach((chunk, index) => {
+      const trimmed = chunk.trim();
+      if (!trimmed) {
+        if (index !== chunks.length - 1) lines.push('');
+        return;
+      }
+      const wrapped = wrapText(trimmed, fontRegular, 11, contentWidth);
+      lines.push(...wrapped);
+      if (index !== chunks.length - 1) lines.push('');
+    });
+    const effectiveLines = lines.length ? lines : [''];
+    const height = effectiveLines.length * 14 + 8;
     ensureSpace(height);
-    drawWrappedText(current.page, lines, { x: margin, y: current.cursorY, font: fontRegular, size: 11, color: textColor, lineHeight: 14 });
+    drawWrappedText(current.page, effectiveLines, { x: margin, y: current.cursorY, font: fontRegular, size: 11, color: textColor, lineHeight: 14 });
     current.cursorY -= height;
   };
 
   const drawTableRow = (values: string[], colWidths: number[], lineHeight: number, isHeader: boolean) => {
-    const textSize = isHeader ? 11 : 10;
+    const textSize = isHeader ? 10 : 10;
     const textFont = isHeader ? fontBold : fontRegular;
     const paddingY = 8;
     const paddingX = 6;
@@ -760,31 +772,119 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
 
   const drawTests = (tests?: MaintenanceTests | null) => {
     if (!tests) return;
-    const rows: string[][] = [];
-    if (tests.voltage) {
-      rows.push(['Voltaje', tests.voltage, '', '']);
-    }
-    const subir = tests.polipasto?.subir;
-    const bajar = tests.polipasto?.bajar;
-    const hasSubir = Boolean(subir?.l1 || subir?.l2 || subir?.l3);
-    const hasBajar = Boolean(bajar?.l1 || bajar?.l2 || bajar?.l3);
+    const polipasto = tests.polipasto ?? {};
+    const subir = polipasto.subir ?? {};
+    const bajar = polipasto.bajar ?? {};
+    const hasVoltaje = typeof tests.voltage === 'string' && tests.voltage.trim().length > 0;
+    const hasSubir = Boolean(subir.l1 || subir.l2 || subir.l3);
+    const hasBajar = Boolean(bajar.l1 || bajar.l2 || bajar.l3);
+    if (!hasVoltaje && !hasSubir && !hasBajar) return;
+
+    const labelSize = 11;
+    const labelHeight = 18;
+    ensureSpace(labelHeight);
+    current.page.drawText('Voltaje:', {
+      x: margin,
+      y: current.cursorY - labelSize,
+      font: fontBold,
+      size: labelSize,
+      color: headingColor,
+    });
+    current.page.drawText(hasVoltaje ? tests.voltage!.trim() : 'Sin datos', {
+      x: margin + 60,
+      y: current.cursorY - labelSize,
+      font: fontRegular,
+      size: labelSize,
+      color: textColor,
+    });
+    current.cursorY -= labelHeight;
+
+    if (!hasSubir && !hasBajar) return;
+
+    const colWidths = [contentWidth * 0.25, contentWidth * 0.25, contentWidth * 0.25, contentWidth * 0.25];
+    const rowHeight = 22;
+    const rows: Array<[string, string, string, string]> = [
+      ['Polipasto', '', '', ''],
+      ['', 'L1', 'L2', 'L3'],
+    ];
     if (hasSubir) {
-      rows.push(['Polipasto - SUBIR', subir?.l1 ?? '', subir?.l2 ?? '', subir?.l3 ?? '']);
+      rows.push([
+        'SUBIR',
+        subir.l1 ? `${subir.l1}` : '',
+        subir.l2 ? `${subir.l2}` : '',
+        subir.l3 ? `${subir.l3}` : '',
+      ]);
     }
     if (hasBajar) {
-      rows.push(['Polipasto - BAJAR', bajar?.l1 ?? '', bajar?.l2 ?? '', bajar?.l3 ?? '']);
+      rows.push([
+        'BAJAR',
+        bajar.l1 ? `${bajar.l1}` : '',
+        bajar.l2 ? `${bajar.l2}` : '',
+        bajar.l3 ? `${bajar.l3}` : '',
+      ]);
     }
-    if (!rows.length) return;
 
-    const colWidths = [contentWidth * 0.4, contentWidth * 0.2, contentWidth * 0.2, contentWidth * 0.2];
-    const lineHeight = 14;
+    ensureSpace(rowHeight * rows.length + 8);
+    const tableTop = current.cursorY;
 
-    ensureSpace(24);
-    drawTableRow(['Prueba', 'L1 / Valor 1', 'L2 / Valor 2', 'L3 / Valor 3'], colWidths, lineHeight, true);
-    for (const row of rows) {
-      drawTableRow(row, colWidths, lineHeight, false);
-    }
-    current.cursorY -= 12;
+    rows.forEach((row, rowIndex) => {
+      const y = tableTop - rowHeight * (rowIndex + 1);
+      if (rowIndex === 0) {
+        current.page.drawRectangle({
+          x: margin,
+          y,
+          width: contentWidth,
+          height: rowHeight,
+          color: rgb(0.94, 0.94, 0.94),
+          borderColor,
+          borderWidth: 0.8,
+        });
+        const textWidth = fontBold.widthOfTextAtSize('Polipasto', 11);
+        current.page.drawText('Polipasto', {
+          x: margin + contentWidth / 2 - textWidth / 2,
+          y: y + 6,
+          font: fontBold,
+          size: 11,
+          color: headingColor,
+        });
+        return;
+      }
+
+      row.forEach((cell, colIndex) => {
+        const x = margin + colWidths.slice(0, colIndex).reduce((acc, w) => acc + w, 0);
+        const width = colWidths[colIndex];
+        const isHeader = rowIndex === 1;
+        current.page.drawRectangle({
+          x,
+          y,
+          width,
+          height: rowHeight,
+          color: undefined,
+          borderColor,
+          borderWidth: 0.8,
+        });
+        const font = isHeader
+          ? fontBold
+          : colIndex === 0
+          ? fontBold
+          : fontRegular;
+        const text = cell;
+        const textWidth = font.widthOfTextAtSize(text, 11);
+        const textX =
+          colIndex === 0 && !isHeader
+            ? x + 8
+            : x + width / 2 - textWidth / 2;
+        current.page.drawText(text, {
+          x: textX,
+          y: y + 6,
+          font,
+          size: 11,
+          color: isHeader ? headingColor : textColor,
+        });
+      });
+    });
+
+    current.cursorY -= rowHeight * rows.length + 8;
   };
 
   const drawChecklist = (entries: ChecklistEntry[]) => {
@@ -795,9 +895,8 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     const observationWidth = contentWidth * 0.5;
     const descriptionWidth = contentWidth - numberWidth - goodWidth - badWidth - observationWidth;
     const colWidths = [numberWidth, descriptionWidth, goodWidth, badWidth, observationWidth];
-    const lineHeight = 14;
-
-    drawTableRow(['#', 'Ítem', 'Buen estado', 'Mal estado', 'Observaciones'], colWidths, lineHeight, true);
+    const headerLineHeight = 12;
+    drawTableRow(['#', 'Ítem', 'Buen estado', 'Mal estado', 'Observaciones'], colWidths, headerLineHeight, true);
 
     entries.forEach((entry, idx) => {
       const values = [
@@ -807,7 +906,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         entry.status === 'bad' ? 'X' : '',
         entry.observation ?? '',
       ];
-      drawTableRow(values, colWidths, lineHeight, false);
+      drawTableRow(values, colWidths, 14, false);
     });
     current.cursorY -= 16;
   };
