@@ -9,6 +9,9 @@ verify_jwt = true
 [functions.generate-maintenance-report-pdf]
 verify_jwt = true
 
+[functions.process-maintenance-photo]
+verify_jwt = true
+
 [functions.generate-proposal-pdf-public]
 verify_jwt = false
 

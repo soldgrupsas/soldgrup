@@ -227,7 +227,7 @@ export type Database = {
           technician_name: string | null
           tests: Json
           updated_at: string
-          user_id: string | null
+          user_id: string
           voltage: string | null
         }
         Insert: {
@@ -252,7 +252,7 @@ export type Database = {
           technician_name?: string | null
           tests?: Json
           updated_at?: string
-          user_id?: string | null
+          user_id: string
           voltage?: string | null
         }
         Update: {
@@ -277,18 +277,10 @@ export type Database = {
           technician_name?: string | null
           tests?: Json
           updated_at?: string
-          user_id?: string | null
+          user_id?: string
           voltage?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "maintenance_reports_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -559,6 +551,33 @@ export type Database = {
         }
         Relationships: []
       }
+      secure_app_settings: {
+        Row: {
+          encrypted_value: string
+          fingerprint: string | null
+          key: string
+          key_suffix: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          encrypted_value: string
+          fingerprint?: string | null
+          key: string
+          key_suffix?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          encrypted_value?: string
+          fingerprint?: string | null
+          key?: string
+          key_suffix?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       technical_specifications: {
         Row: {
           created_at: string | null
@@ -618,6 +637,19 @@ export type Database = {
     }
     Functions: {
       generate_proposal_slug: { Args: never; Returns: string }
+      get_openai_api_key: {
+        Args: { encryption_secret: string }
+        Returns: string
+      }
+      get_openai_api_key_metadata: {
+        Args: never
+        Returns: {
+          key_exists: boolean
+          key_suffix: string
+          updated_at: string
+          updated_by: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -627,6 +659,10 @@ export type Database = {
       }
       increment_proposal_clicks: {
         Args: { proposal_slug: string }
+        Returns: undefined
+      }
+      set_openai_api_key: {
+        Args: { actor_id: string; encryption_secret: string; new_key: string }
         Returns: undefined
       }
     }

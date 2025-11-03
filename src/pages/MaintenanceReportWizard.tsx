@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
@@ -57,9 +57,110 @@ type ChecklistEntry = {
 type PhotoEntry = {
   id: string;
   storagePath: string | null;
+  optimizedPath?: string | null;
+  thumbnailPath?: string | null;
   url: string | null;
   description: string;
 };
+
+type PhotoUploadState = {
+  status: 'idle' | 'preparing' | 'queued' | 'uploading' | 'processing' | 'done' | 'error';
+  progress: number;
+  attempts: number;
+  message?: string;
+};
+
+type UploadTask = {
+  photoId: string;
+  file: File;
+  reportId: string;
+  attempts: number;
+};
+
+const PHOTO_BUCKET = "maintenance-report-photos";
+const LARGE_FILE_THRESHOLD = 8 * 1024 * 1024;
+
+const uploadButtonCopy: Record<PhotoUploadState['status'], string> = {
+  idle: "Subir foto",
+  preparing: "Preparando...",
+  queued: "En cola",
+  uploading: "Subiendo...",
+  processing: "Optimizando...",
+  done: "Reemplazar",
+  error: "Reintentar",
+};
+
+const uploadMessageCopy: Record<PhotoUploadState['status'], string> = {
+  idle: "",
+  preparing: "Preparando la imagen antes de subirla...",
+  queued: "La fotografía está en cola para subirse.",
+  uploading: "Subiendo fotografía...",
+  processing: "Optimizando fotografía en el servidor...",
+  done: "Fotografía procesada correctamente.",
+  error: "No se pudo cargar la fotografía.",
+};
+
+type UploadWithProgressParams = {
+  bucket: string;
+  path: string;
+  file: File;
+  token: string;
+  onProgress: (progress: number) => void;
+  signal?: AbortSignal;
+};
+
+const encodeStoragePath = (path: string) =>
+  path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+const sanitizeFileName = (name: string) =>
+  name
+    .normalize("NFD")
+    .replace(/[^a-zA-Z0-9.\-]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+
+const uploadWithProgress = ({ bucket, path, file, token, onProgress, signal }: UploadWithProgressParams) =>
+  new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      "POST",
+      `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodeStoragePath(path)}`,
+    );
+    xhr.responseType = "json";
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("apikey", SUPABASE_PUBLISHABLE_KEY);
+    xhr.setRequestHeader("x-upsert", "true");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const progress = Math.round((event.loaded / event.total) * 100);
+        onProgress(progress);
+      }
+    };
+    xhr.onerror = () => reject(new Error("No se pudo cargar la fotografía."));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100);
+        resolve();
+      } else {
+        reject(new Error(xhr.response?.message ?? "Falló la carga de la fotografía"));
+      }
+    };
+    if (signal) {
+      signal.addEventListener(
+        "abort",
+        () => {
+          xhr.abort();
+          reject(new DOMException("Upload aborted", "AbortError"));
+        },
+        { once: true },
+      );
+    }
+    xhr.send(file);
+  });
 
 type MaintenanceReportForm = {
   startDate: string | null;
@@ -160,7 +261,7 @@ const MaintenanceReportWizard = () => {
   const params = useParams<{ id?: string }>();
   const isEditMode = Boolean(params.id);
   const { toast } = useToast();
-  const { user, loading: authLoading } = useAuth();
+  const { user, session, loading: authLoading } = useAuth();
 
   const [formData, setFormData] = useState<MaintenanceReportForm>(defaultForm);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -169,7 +270,219 @@ const MaintenanceReportWizard = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [pendingAutoSave, setPendingAutoSave] = useState(false);
-  const [photoUploading, setPhotoUploading] = useState<Record<string, boolean>>({});
+  const [photoUploads, setPhotoUploads] = useState<Record<string, PhotoUploadState>>({});
+  const uploadQueueRef = useRef<UploadTask[]>([]);
+  const activeUploadRef = useRef<{ task: UploadTask; controller: AbortController } | null>(null);
+  const reportIdRef = useRef<string | null>(null);
+  const formDataRef = useRef<MaintenanceReportForm>(defaultForm);
+
+  useEffect(() => {
+    reportIdRef.current = reportId ?? null;
+  }, [reportId]);
+
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
+  const updatePhotoUploadState = useCallback(
+    (photoId: string, partial: Partial<PhotoUploadState>) => {
+      setPhotoUploads((prev) => {
+        const current = prev[photoId] ?? { status: "idle", progress: 0, attempts: 0 };
+        return {
+          ...prev,
+          [photoId]: {
+            ...current,
+            ...partial,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const logPhotoMetric = useCallback(
+    async (
+      photoId: string,
+      event: string,
+      payload?: { durationMs?: number; sizeBytes?: number; metadata?: Record<string, any> },
+    ) => {
+      try {
+        await supabase.from("maintenance_photo_upload_metrics").insert({
+          photo_id: photoId,
+          event,
+          duration_ms: payload?.durationMs ? Math.round(payload.durationMs) : null,
+          size_bytes: payload?.sizeBytes ?? null,
+          metadata: payload?.metadata ?? {},
+        });
+      } catch (error) {
+        console.warn("No se pudo registrar la métrica de la foto", error);
+      }
+    },
+    [],
+  );
+
+  const handleUploadTask = useCallback(
+    async (task: UploadTask, controller: AbortController) => {
+      if (!session) throw new Error("Debes iniciar sesión para subir fotografías");
+      const activeReportId = reportIdRef.current ?? task.reportId;
+      if (!activeReportId) throw new Error("No se encontró el informe asociado a la fotografía");
+
+      const description =
+        formDataRef.current.photos.find((photo) => photo.id === task.photoId)?.description ?? "";
+
+      const sanitizedName = sanitizeFileName(task.file.name || `${task.photoId}.jpg`);
+      const storagePath = `${activeReportId}/${task.photoId}/${Date.now()}-${sanitizedName || "foto.jpg"}`;
+
+      updatePhotoUploadState(task.photoId, {
+        status: "uploading",
+        progress: 0,
+        attempts: task.attempts + 1,
+        message: undefined,
+      });
+
+      const uploadStart = performance.now();
+      await uploadWithProgress({
+        bucket: PHOTO_BUCKET,
+        path: storagePath,
+        file: task.file,
+        token: session.access_token,
+        onProgress: (progress) => updatePhotoUploadState(task.photoId, { progress }),
+        signal: controller.signal,
+      });
+      await logPhotoMetric(task.photoId, "upload", {
+        durationMs: performance.now() - uploadStart,
+        sizeBytes: task.file.size,
+        metadata: { attempts: task.attempts + 1 },
+      });
+
+      await supabase
+        .from("maintenance_report_photos")
+        .upsert(
+          [
+            {
+              id: task.photoId,
+              report_id: activeReportId,
+              storage_path: storagePath,
+              description,
+              original_size_bytes: task.file.size,
+              processing_status: "processing",
+            },
+          ],
+          { onConflict: "id" },
+        );
+
+      updatePhotoUploadState(task.photoId, { status: "processing", progress: 100 });
+
+      const processStart = performance.now();
+      const { data: processData, error: processError } = await supabase.functions.invoke(
+        "process-maintenance-photo",
+        {
+          body: {
+            photoId: task.photoId,
+            storagePath,
+          },
+        },
+      );
+      if (processError) {
+        throw new Error(processError.message ?? "No se pudo optimizar la fotografía");
+      }
+      await logPhotoMetric(task.photoId, "process", {
+        durationMs: performance.now() - processStart,
+        metadata: processData ?? {},
+      });
+
+      const optimizedPath = processData?.optimizedPath ?? `optimized/${storagePath}`;
+      const thumbnailPath = processData?.thumbnailPath ?? `thumbnails/${storagePath}`;
+
+      const { data: optimizedPublic } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(optimizedPath);
+      const { data: fallbackPublic } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath);
+      const photoUrl = optimizedPublic?.publicUrl ?? fallbackPublic?.publicUrl ?? null;
+
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.map((photo) =>
+          photo.id === task.photoId
+            ? {
+                ...photo,
+                storagePath,
+                optimizedPath,
+                thumbnailPath,
+                url: photoUrl,
+              }
+            : photo,
+        ),
+      }));
+
+      updatePhotoUploadState(task.photoId, {
+        status: "done",
+        progress: 100,
+        message: undefined,
+      });
+
+      toast({
+        title: "Foto cargada",
+        description: "La fotografía se optimizó correctamente.",
+      });
+    },
+    [logPhotoMetric, session, toast, updatePhotoUploadState],
+  );
+
+  const scheduleUploadProcessing = useCallback(() => {
+    if (activeUploadRef.current) return;
+    if (!session) return;
+    const nextTask = uploadQueueRef.current.shift();
+    if (!nextTask) return;
+
+    const controller = new AbortController();
+    activeUploadRef.current = { task: nextTask, controller };
+
+    handleUploadTask(nextTask, controller)
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          updatePhotoUploadState(nextTask.photoId, { status: "idle", progress: 0 });
+          return;
+        }
+
+        const attempts = nextTask.attempts + 1;
+        const message = error instanceof Error ? error.message : "No se pudo cargar la fotografía";
+        if (attempts < 3) {
+          uploadQueueRef.current.unshift({ ...nextTask, attempts });
+          updatePhotoUploadState(nextTask.photoId, {
+            status: "queued",
+            progress: 0,
+            attempts,
+            message: `Reintentando (${attempts}/3)…`,
+          });
+        } else {
+          updatePhotoUploadState(nextTask.photoId, {
+            status: "error",
+            progress: 0,
+            attempts,
+            message,
+          });
+          void supabase
+            .from("maintenance_report_photos")
+            .update({ processing_status: "error", processing_error: message })
+            .eq("id", nextTask.photoId);
+        }
+        console.error("Error al subir la fotografía", error);
+      })
+      .finally(() => {
+        activeUploadRef.current = null;
+        setTimeout(() => scheduleUploadProcessing(), 250);
+      });
+  }, [handleUploadTask, session, updatePhotoUploadState]);
+
+  useEffect(() => {
+    return () => {
+      activeUploadRef.current?.controller.abort();
+      uploadQueueRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    scheduleUploadProcessing();
+  }, [scheduleUploadProcessing]);
 
   const initialLoadRef = useRef(true);
 
@@ -485,6 +798,8 @@ const MaintenanceReportWizard = () => {
         {
           id,
           storagePath: null,
+          optimizedPath: null,
+          thumbnailPath: null,
           url: null,
           description: "",
         },
@@ -494,83 +809,77 @@ const MaintenanceReportWizard = () => {
 
   const handlePhotoFileUpload = async (photoId: string, fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
+    if (!session) {
+      toast({
+        title: "Sesión requerida",
+        description: "Vuelve a iniciar sesión para cargar fotografías.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     let activeReportId = reportId;
     if (!activeReportId) {
       activeReportId = await ensureReportExists();
       if (!activeReportId) {
         toast({
           title: "No se pudo preparar el informe",
-          description:
-            "Intenta nuevamente crear el informe antes de adjuntar fotografías.",
+          description: "Intenta nuevamente crear el informe antes de adjuntar fotografías.",
           variant: "destructive",
         });
         return;
       }
       setReportId(activeReportId);
     }
-    const file = fileList[0];
-    setPhotoUploading((prev) => ({ ...prev, [photoId]: true }));
 
-    try {
-      const compressedFile = await compressImageFile(file);
-      const extension = compressedFile.name.split(".").pop() || "webp";
-      const sanitizedName = `${photoId}.${extension}`;
-      const storagePath = `${activeReportId}/${sanitizedName}`;
+    const originalFile = fileList[0];
 
-      const { error: uploadError } = await supabase.storage
-        .from("maintenance-report-photos")
-        .upload(storagePath, compressedFile, {
-          upsert: true,
-        });
-
-      if (uploadError) throw uploadError;
-
-      await supabase
-        .from("maintenance_report_photos")
-        .upsert(
-          [
-            {
-              id: photoId,
-              report_id: activeReportId,
-              storage_path: storagePath,
-              description:
-                formData.photos.find((photo) => photo.id === photoId)?.description ?? "",
-            },
-          ],
-          { onConflict: "id" },
-        );
-
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("maintenance-report-photos").getPublicUrl(storagePath);
-
-      setFormData((prev) => ({
-        ...prev,
-        photos: prev.photos.map((photo) =>
-          photo.id === photoId
-            ? {
-                ...photo,
-                storagePath,
-                url: publicUrl,
-              }
-            : photo,
-        ),
-      }));
-
-      toast({
-        title: "Foto cargada",
-        description: "La fotografía se guardó correctamente.",
+    setFormData((prev) => ({
+      ...prev,
+      photos: prev.photos.map((photo) =>
+        photo.id === photoId
+          ? {
+              ...photo,
+              url: null,
+              storagePath: null,
+              optimizedPath: null,
+              thumbnailPath: null,
+            }
+          : photo,
+      ),
+    }));
+    if (originalFile.size > LARGE_FILE_THRESHOLD) {
+      updatePhotoUploadState(photoId, {
+        status: "preparing",
+        progress: 0,
+        message: "Optimizando la imagen antes de subirla...",
       });
-    } catch (error) {
-      console.error("Error subiendo la fotografía:", error);
-      toast({
-        title: "Error al subir la foto",
-        description: "No se pudo subir la fotografía. Intenta nuevamente.",
-        variant: "destructive",
-      });
-    } finally {
-      setPhotoUploading((prev) => ({ ...prev, [photoId]: false }));
     }
+
+    let preparedFile = originalFile;
+    if (originalFile.size > LARGE_FILE_THRESHOLD) {
+      try {
+        preparedFile = await compressImageFile(originalFile);
+      } catch (error) {
+        console.warn("No se pudo comprimir la imagen localmente", error);
+        preparedFile = originalFile;
+      }
+    }
+
+    uploadQueueRef.current = [...uploadQueueRef.current, {
+      photoId,
+      file: preparedFile,
+      reportId: activeReportId,
+      attempts: 0,
+    }];
+
+    updatePhotoUploadState(photoId, {
+      status: "queued",
+      progress: 0,
+      attempts: 0,
+      message: undefined,
+    });
+    scheduleUploadProcessing();
   };
 
   const handleRemovePhoto = async (photo: PhotoEntry) => {
@@ -579,10 +888,24 @@ const MaintenanceReportWizard = () => {
       photos: prev.photos.filter((item) => item.id !== photo.id),
     }));
 
-    if (photo.storagePath) {
+    uploadQueueRef.current = uploadQueueRef.current.filter((task) => task.photoId !== photo.id);
+    if (activeUploadRef.current?.task.photoId === photo.id) {
+      activeUploadRef.current.controller.abort();
+    }
+
+    setPhotoUploads((prev) => {
+      const next = { ...prev };
+      delete next[photo.id];
+      return next;
+    });
+
+    const pathsToRemove = [photo.storagePath, photo.optimizedPath, photo.thumbnailPath].filter(
+      (path): path is string => Boolean(path),
+    );
+    if (pathsToRemove.length > 0) {
       const { error: storageError } = await supabase.storage
-        .from("maintenance-report-photos")
-        .remove([photo.storagePath]);
+        .from(PHOTO_BUCKET)
+        .remove(pathsToRemove);
       if (storageError) {
         console.warn("No se pudo eliminar la imagen del almacenamiento:", storageError);
       }
@@ -940,6 +1263,15 @@ const MaintenanceReportWizard = () => {
             <div className="space-y-4">
               {formData.photos.map((photo) => {
                 const inputId = `photo-upload-${photo.id}`;
+                const uploadState = photoUploads[photo.id];
+                const isBusy = uploadState
+                  ? ["preparing", "queued", "uploading", "processing"].includes(uploadState.status)
+                  : false;
+                const buttonLabel = uploadState && uploadState.status !== "idle" && uploadState.status !== "done"
+                  ? uploadButtonCopy[uploadState.status]
+                  : photo.url
+                  ? "Reemplazar"
+                  : "Subir foto";
                 return (
                   <Card key={photo.id} className="p-4 space-y-4">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -975,14 +1307,10 @@ const MaintenanceReportWizard = () => {
                           onClick={() =>
                             (document.getElementById(inputId) as HTMLInputElement | null)?.click()
                           }
-                          disabled={photoUploading[photo.id]}
+                          disabled={isBusy}
                         >
                           <Upload className="h-4 w-4" />
-                          {photoUploading[photo.id]
-                            ? "Subiendo..."
-                            : photo.url
-                              ? "Reemplazar"
-                              : "Subir foto"}
+                          {buttonLabel}
                         </Button>
                         <Input
                           id={inputId}
@@ -1017,8 +1345,22 @@ const MaintenanceReportWizard = () => {
                         placeholder="Describe la fotografía para futuras referencias."
                       />
                     </div>
-                    {photoUploading[photo.id] && (
-                      <p className="text-xs text-muted-foreground">Cargando fotografía...</p>
+                    {uploadState && uploadState.status !== "idle" && (
+                      <div className="space-y-2">
+                        {!["done", "error"].includes(uploadState.status) && (
+                          <Progress value={uploadState.progress} />
+                        )}
+                        <p
+                          className={cn(
+                            "text-xs",
+                            uploadState.status === "error"
+                              ? "text-destructive"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {uploadState.message ?? uploadMessageCopy[uploadState.status]}
+                        </p>
+                      </div>
                     )}
                   </Card>
                 );

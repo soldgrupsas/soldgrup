@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts';
 import { createMaintenanceReportPDF, type MaintenanceReportPdfPayload } from '../_shared/maintenance-report-pdf.ts';
 import { buildPdfResponseHeaders } from '../_shared/response.ts';
 
@@ -37,7 +38,27 @@ const inferContentTypeByPath = (path: string): string => {
   if (lower.endsWith('.png')) return 'image/png';
   if (lower.match(/\.jpe?g$/)) return 'image/jpeg';
   if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.avif')) return 'image/avif';
+  if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'image/heic';
   return 'application/octet-stream';
+};
+
+const ensurePdfCompatibleImage = async (
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<{ bytes: Uint8Array; contentType: string }> => {
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes('png') || normalized.includes('jpeg') || normalized.includes('jpg')) {
+    return { bytes, contentType: normalized.includes('png') ? 'image/png' : 'image/jpeg' };
+  }
+  try {
+    const image = await Image.decode(bytes);
+    const jpeg = await image.encodeJPEG(82);
+    return { bytes: new Uint8Array(jpeg), contentType: 'image/jpeg' };
+  } catch (error) {
+    console.warn('No se pudo convertir la imagen a JPEG', error);
+    return { bytes, contentType };
+  }
 };
 
 type MaintenanceReportRecord = {
@@ -67,6 +88,8 @@ type MaintenanceReportRecord = {
 type MaintenanceReportPhotoRecord = {
   id: string;
   storage_path: string;
+  optimized_path: string | null;
+  thumbnail_path: string | null;
   description: string | null;
 };
 
@@ -154,7 +177,7 @@ Deno.serve(async (req) => {
 
     const { data: photosData, error: photosError } = await supabase
       .from('maintenance_report_photos')
-      .select('id, storage_path, description')
+      .select('id, storage_path, optimized_path, thumbnail_path, description')
       .eq('report_id', reportId)
       .order('created_at', { ascending: true });
 
@@ -206,49 +229,48 @@ Deno.serve(async (req) => {
     };
 
     const downloadPhoto = async (record: MaintenanceReportPhotoRecord) => {
-      const storagePath = record.storage_path;
-      if (!storagePath) return null;
+      const preferredPath = record.optimized_path || record.storage_path;
+      if (!preferredPath) return null;
 
-      const { data: publicData } = supabase.storage.from('maintenance-report-photos').getPublicUrl(storagePath);
-      const publicUrl = publicData?.publicUrl ?? null;
+      const { data: preferredPublic } = supabase.storage
+        .from('maintenance-report-photos')
+        .getPublicUrl(preferredPath);
+      const { data: fallbackPublic } = record.optimized_path
+        ? supabase.storage.from('maintenance-report-photos').getPublicUrl(record.storage_path)
+        : { data: null, error: null } as any;
+
+      const publicUrl = preferredPublic?.publicUrl ?? fallbackPublic?.publicUrl ?? null;
 
       const fetchOptimized = async () => {
         if (!publicUrl) return null;
-        const optimizedUrl = toOptimizedImageUrl(publicUrl);
+        const targetUrl = record.optimized_path ? publicUrl : toOptimizedImageUrl(publicUrl);
         try {
-          const response = await fetch(optimizedUrl, { headers: { accept: 'image/jpeg,image/png;q=0.9,*/*;q=0.8' } });
+          const response = await fetch(targetUrl, { headers: { accept: 'image/jpeg,image/png;q=0.9,*/*;q=0.8' } });
           if (!response.ok) {
-            console.warn('Optimized image fetch failed', optimizedUrl, response.status);
+            console.warn('Optimized image fetch failed', targetUrl, response.status);
             return null;
           }
           const ab = await response.arrayBuffer();
           const contentType = response.headers.get('content-type') ?? 'image/jpeg';
-          return {
-            bytes: new Uint8Array(ab),
-            contentType,
-            description: record.description ?? '',
-          };
+          return await ensurePdfCompatibleImage(new Uint8Array(ab), contentType);
         } catch (error) {
-          console.warn('Optimized image fetch error', optimizedUrl, error);
+          console.warn('Optimized image fetch error', targetUrl, error);
           return null;
         }
       };
 
       const fetchOriginal = async () => {
         try {
-          const { data: blob, error } = await supabase.storage.from('maintenance-report-photos').download(storagePath);
+          const { data: blob, error } = await supabase.storage.from('maintenance-report-photos').download(record.storage_path);
           if (error || !blob) {
-            console.warn('No se pudo descargar la foto de Storage:', storagePath, error);
+            console.warn('No se pudo descargar la foto de Storage:', record.storage_path, error);
             return null;
           }
           const ab = await blob.arrayBuffer();
-          return {
-            bytes: new Uint8Array(ab),
-            contentType: (blob as any).type || inferContentTypeByPath(storagePath),
-            description: record.description ?? '',
-          };
+          const contentType = (blob as any).type || inferContentTypeByPath(record.storage_path);
+          return await ensurePdfCompatibleImage(new Uint8Array(ab), contentType);
         } catch (error) {
-          console.warn('Error bajando foto de Storage:', storagePath, error);
+          console.warn('Error bajando foto de Storage:', record.storage_path, error);
           return null;
         }
       };
