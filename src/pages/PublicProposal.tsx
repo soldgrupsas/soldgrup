@@ -3,10 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Building2, Calendar, User, Download } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Building2, Calendar, User } from "lucide-react";
 import Model3DViewer from "@/components/Model3DViewer";
+import soldgrupLogo from "@/assets/soldgrup-logo.webp";
 
 interface ProposalData {
   id: string;
@@ -36,7 +35,6 @@ interface EquipmentDetail {
 const PublicProposal = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { toast } = useToast();
   const [proposal, setProposal] = useState<ProposalData | null>(null);
   const [equipment, setEquipment] = useState<EquipmentDetail[]>([]);
   const [proposalItems, setProposalItems] = useState<any[]>([]);
@@ -80,51 +78,6 @@ const PublicProposal = () => {
       });
     } catch (error) {
       console.error("Error tracking click:", error);
-    }
-  };
-
-  const downloadPDF = async () => {
-    if (!slug) return;
-
-    toast({
-      title: "Generando PDF...",
-      description: "Esto puede tardar unos segundos.",
-    });
-
-    try {
-      const { data, error } = await supabase.functions.invoke<ArrayBuffer>('generate-proposal-pdf-public', {
-        body: { slug },
-        responseType: 'arraybuffer',
-      });
-
-      if (error) {
-        console.error('Error invocando generate-proposal-pdf-public:', error);
-        throw new Error(error.message || 'Error al generar el PDF');
-      }
-
-      if (!data) {
-        throw new Error('La función no devolvió un archivo PDF');
-      }
-
-      const blob = new Blob([data], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `Propuesta_${proposal?.offer_id}_${proposal?.client}.pdf`;
-      link.click();
-      window.URL.revokeObjectURL(url);
-
-      toast({
-        title: "PDF descargado",
-        description: "El PDF se descargó exitosamente",
-      });
-    } catch (error: any) {
-      console.error('Fallo al descargar PDF público:', error);
-      toast({
-        title: "Error",
-        description: error.message || "Error al generar el PDF",
-        variant: "destructive",
-      });
     }
   };
 
@@ -211,16 +164,13 @@ const PublicProposal = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 py-12">
       <div className="container mx-auto px-4 max-w-5xl">
-        {/* Download PDF Button - Fixed Position */}
-        <div className="fixed top-6 right-6 z-50">
-          <Button
-            onClick={downloadPDF}
-            size="lg"
-            className="shadow-elegant hover:shadow-glow transition-all"
-          >
-            <Download className="mr-2 h-5 w-5" />
-            Descargar PDF
-          </Button>
+        {/* Company Logo */}
+        <div className="flex justify-center mb-8 animate-fade-in">
+          <img 
+            src={soldgrupLogo} 
+            alt="Soldgrup - La fuerza de su industria" 
+            className="h-28 w-auto"
+          />
         </div>
 
         {/* Header */}
