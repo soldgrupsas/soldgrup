@@ -41,7 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Loader2, Pencil, Wand2, Trash2, Search, X } from "lucide-react";
+import { ArrowLeft, Loader2, Pencil, Wand2, Trash2, Search, X, Plus } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -113,6 +113,7 @@ const UserManagement = () => {
   const [isFetchingUsers, setIsFetchingUsers] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [formData, setFormData] = useState<UserFormState>(DEFAULT_FORM);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserWithRole | null>(null);
@@ -204,8 +205,19 @@ const UserManagement = () => {
     e.preventDefault();
     setIsCreatingUser(true);
 
+    const roleToAssign = formData.role;
+    const emailToCreate = formData.email;
+
+    // Logging para depuración
+    console.log("Creando usuario con datos:", {
+      email: emailToCreate,
+      full_name: formData.full_name,
+      role: roleToAssign,
+      hasPassword: !!formData.password,
+    });
+
     try {
-      const { error } = await supabase.functions.invoke("admin-manage-users", {
+      const { data, error } = await supabase.functions.invoke("admin-manage-users", {
         body: {
           action: "create_user",
           email: formData.email,
@@ -215,25 +227,210 @@ const UserManagement = () => {
         },
       });
 
+      // Logging de respuesta
+      console.log("Respuesta de Edge Function:", { data, error });
+
+      // Verificar error de Supabase
       if (error) {
-        throw new Error(error.message || "No se pudo crear el usuario");
+        console.error("Error de Supabase al invocar función:", error);
+        console.error("Detalles del error:", {
+          message: error.message,
+          context: error.context,
+          status: error.context?.status,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        });
+        
+        // Intentar obtener más detalles del error
+        let errorMessage = error.message || "No se pudo crear el usuario";
+        
+        // Si es un error 422, puede ser un problema de validación
+        if (error.context?.status === 422) {
+          errorMessage = "Error de validación: " + (error.message || "Los datos enviados no son válidos");
+        }
+        
+        // Si menciona función no encontrada o no disponible
+        if (error.message?.includes('función') || error.message?.includes('function') || 
+            error.message?.includes('no está disponible')) {
+          errorMessage = "Error crítico del sistema: " + error.message + ". Por favor, contacta al administrador técnico.";
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      // Verificar que la respuesta contiene los datos esperados
+      // La Edge Function retorna directamente el objeto con id, email, full_name, role
+      if (!data || (!data.id && typeof data !== 'object')) {
+        console.error("La respuesta no contiene los datos esperados:", data);
+        console.error("Tipo de data:", typeof data);
+        console.error("data completo:", JSON.stringify(data, null, 2));
+        
+        // Si la función fue exitosa pero no tenemos datos, intentar verificar de todas formas
+        // puede ser que el usuario se haya creado pero la respuesta no se parseó correctamente
+        console.log("Intentando verificar usuario creado de todas formas...");
+      } else {
+        // Log debug info si está disponible
+        if (data._debug) {
+          console.log("=== DEBUG INFO FROM EDGE FUNCTION ===");
+          console.log("Assign Role Result:", data._debug.assignRoleResult);
+          console.log("Assign Role Success:", data._debug.assignRoleSuccess);
+          console.log("Assigned Role:", data._debug.assignedRole);
+          console.log("Message:", data._debug.message);
+          console.log("===================================");
+        }
+        
+        // Verificar que el rol en la respuesta coincide con el enviado
+        if (data.role && data.role !== roleToAssign) {
+          console.warn(`Rol en respuesta no coincide. Enviado: ${roleToAssign}, Recibido: ${data.role}`);
+        }
+        
+        // Si el debug info indica que no se asignó correctamente
+        if (data._debug && !data._debug.assignRoleSuccess) {
+          console.error("⚠️ El debug info indica que el rol NO se asignó correctamente");
+          console.error("Detalles:", data._debug);
+        }
+      }
+
+      // Invalidar caché antes de verificar
+      clearCachedPermissions();
+
+      // Esperar un momento para que la base de datos se actualice
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Cargar usuarios para verificar que se creó correctamente
+      await loadUsers();
+
+      // Verificar que el usuario se creó con el rol correcto
+      const { data: allUsers, error: usersError } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, created_at")
+        .eq("email", emailToCreate)
+        .maybeSingle();
+
+      if (usersError) {
+        console.error("Error al verificar usuario creado:", usersError);
+        throw new Error("No se pudo verificar que el usuario se creó correctamente");
+      }
+
+      if (!allUsers) {
+        // Si no encontramos el usuario, puede ser que aún no se haya propagado
+        // Esperar un poco más y reintentar
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const { data: retryUsers, error: retryError } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, created_at")
+          .eq("email", emailToCreate)
+          .maybeSingle();
+
+        if (retryError || !retryUsers) {
+          throw new Error("El usuario no se encontró después de la creación. Por favor, verifica manualmente.");
+        }
+
+        // Usar los datos del reintento
+        const retryRoleData = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", retryUsers.id)
+          .maybeSingle();
+
+        if (retryRoleData.error) {
+          throw new Error("No se pudo verificar el rol asignado al usuario");
+        }
+
+        const assignedRole = retryRoleData.data?.role || "sin rol";
+
+        if (assignedRole !== roleToAssign) {
+          const errorMsg = `El usuario se creó pero el rol no coincide. Esperado: ${ROLE_LABELS[roleToAssign]}, Obtenido: ${assignedRole === "sin rol" ? "Sin rol" : ROLE_LABELS[assignedRole as AppRole] || assignedRole}`;
+          console.error(errorMsg);
+          toast({
+            title: "Advertencia: Rol no asignado correctamente",
+            description: errorMsg + ". Por favor, edita el usuario para asignarle el rol correcto.",
+            variant: "destructive",
+          });
+          setIsCreatingUser(false);
+          return;
+        }
+
+        // Todo está correcto
+        toast({
+          title: "Usuario creado",
+          description: `El usuario ${formData.full_name} ha sido creado exitosamente con rol ${ROLE_LABELS[roleToAssign]}.`,
+        });
+
+        setFormData(DEFAULT_FORM);
+        setIsCreateDialogOpen(false);
+        return;
+      }
+
+      // Obtener el rol del usuario recién creado
+      const { data: roleData, error: roleError } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", allUsers.id)
+        .maybeSingle();
+
+      if (roleError) {
+        console.error("Error al verificar rol del usuario:", roleError);
+        throw new Error("No se pudo verificar el rol asignado al usuario");
+      }
+
+      const assignedRole = roleData?.role || "sin rol";
+
+      if (assignedRole !== roleToAssign) {
+        const errorMsg = `El usuario se creó pero el rol no coincide. Esperado: ${ROLE_LABELS[roleToAssign]}, Obtenido: ${assignedRole === "sin rol" ? "Sin rol" : ROLE_LABELS[assignedRole as AppRole] || assignedRole}`;
+        console.error(errorMsg);
+        toast({
+          title: "Advertencia: Rol no asignado correctamente",
+          description: errorMsg + ". Por favor, edita el usuario para asignarle el rol correcto.",
+          variant: "destructive",
+        });
+        setIsCreatingUser(false);
+        return;
+      }
+
+      // Todo está correcto, mostrar éxito y cerrar dialog
+      toast({
+        title: "Usuario creado",
+        description: `El usuario ${formData.full_name} ha sido creado exitosamente con rol ${ROLE_LABELS[roleToAssign]}.`,
+      });
+
+      setFormData(DEFAULT_FORM);
+      setIsCreateDialogOpen(false);
+    } catch (error: any) {
+      console.error("Error completo al crear usuario:", error);
+      console.error("Error context:", error?.context);
+
+      let errorMessage = error.message || "No se pudo crear el usuario";
+
+      // Intentar obtener más detalles del error si está disponible
+      if (error?.context?.response) {
+        try {
+          const errorBody = await error.context.response.clone().json();
+          errorMessage = errorBody?.error || errorMessage;
+          console.error("Error del servidor:", errorBody);
+        } catch (parseError) {
+          // Si no se puede parsear como JSON, intentar como texto
+          try {
+            const errorText = await error.context.response.clone().text();
+            if (errorText) {
+              errorMessage = errorText;
+              console.error("Error del servidor (texto):", errorText);
+            }
+          } catch (textError) {
+            console.warn("No se pudo leer el cuerpo del error:", textError);
+          }
+        }
+      }
+
+      // Si es un error 422, proporcionar mensaje más específico
+      if (error?.context?.status === 422) {
+        errorMessage = errorMessage || "Error de validación: Los datos enviados no son válidos. Verifica que todos los campos estén completos.";
       }
 
       toast({
-        title: "Usuario creado",
-        description: `El usuario ${formData.full_name} ha sido creado exitosamente con rol ${ROLE_LABELS[formData.role]}.`,
-      });
-
-      // Invalidar caché del nuevo usuario si es necesario
-      // (No es necesario ya que es un usuario nuevo, pero invalidamos todo por seguridad)
-      clearCachedPermissions();
-
-      setFormData(DEFAULT_FORM);
-      await loadUsers();
-    } catch (error: any) {
-      toast({
         title: "Error al crear usuario",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -374,7 +571,13 @@ const UserManagement = () => {
         </Button>
 
         <Card className="p-6">
-          <h1 className="text-3xl font-bold mb-6">Administrar Usuarios</h1>
+          <div className="flex justify-between items-center mb-6">
+            <h1 className="text-3xl font-bold">Administrar Usuarios</h1>
+            <Button onClick={() => setIsCreateDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Crear Usuario
+            </Button>
+          </div>
 
           {usersWithoutRole > 0 && (
             <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
@@ -384,93 +587,6 @@ const UserManagement = () => {
               </p>
             </div>
           )}
-
-          <form onSubmit={handleCreateUser} className="space-y-4">
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="full_name">Nombre Completo *</Label>
-                <Input
-                  id="full_name"
-                  value={formData.full_name}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, full_name: e.target.value }))
-                  }
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="password">Contraseña *</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="password"
-                    type="text"
-                    value={formData.password}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, password: e.target.value }))
-                    }
-                    required
-                    minLength={8}
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() =>
-                      handleGeneratePassword((generated) =>
-                        setFormData((prev) => ({ ...prev, password: generated })),
-                      )
-                    }
-                  >
-                    <Wand2 className="h-4 w-4 mr-2" />
-                    Generar
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="role">Rol *</Label>
-                <Select
-                  value={formData.role}
-                  onValueChange={(value) =>
-                    setFormData((prev) => ({ ...prev, role: value as AppRole }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona un rol" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="user">Usuario General</SelectItem>
-                    <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <Button type="submit" disabled={isCreatingUser}>
-              {isCreatingUser ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creando...
-                </>
-              ) : (
-                "Crear Usuario"
-              )}
-            </Button>
-          </form>
         </Card>
 
         <Card className="p-6">
@@ -593,6 +709,120 @@ const UserManagement = () => {
           </div>
         </Card>
       </div>
+
+      <Dialog 
+        open={isCreateDialogOpen} 
+        onOpenChange={(open) => {
+          setIsCreateDialogOpen(open);
+          if (!open) {
+            setFormData(DEFAULT_FORM);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Crear nuevo usuario</DialogTitle>
+            <DialogDescription>
+              Completa el formulario para crear un nuevo usuario en el sistema.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateUser} className="space-y-4">
+            <div className="grid md:grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="create_full_name">Nombre Completo *</Label>
+                <Input
+                  id="create_full_name"
+                  value={formData.full_name}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, full_name: e.target.value }))
+                  }
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="create_email">Email *</Label>
+                <Input
+                  id="create_email"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, email: e.target.value }))
+                  }
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="create_password">Contraseña *</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="create_password"
+                    type="text"
+                    value={formData.password}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, password: e.target.value }))
+                    }
+                    required
+                    minLength={8}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      handleGeneratePassword((generated) =>
+                        setFormData((prev) => ({ ...prev, password: generated })),
+                      )
+                    }
+                  >
+                    <Wand2 className="h-4 w-4 mr-2" />
+                    Generar
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="create_role">Rol *</Label>
+                <Select
+                  value={formData.role}
+                  onValueChange={(value) =>
+                    setFormData((prev) => ({ ...prev, role: value as AppRole }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona un rol" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">Usuario General</SelectItem>
+                    <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsCreateDialogOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isCreatingUser}>
+                {isCreatingUser ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creando...
+                  </>
+                ) : (
+                  "Crear Usuario"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent className="max-w-md">

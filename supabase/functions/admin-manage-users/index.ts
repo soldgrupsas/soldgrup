@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -39,6 +41,10 @@ const ensureAdmin = async (userToken: string) => {
 
   if (!userResponse.ok) {
     const payload = await fetchJson(userResponse);
+    console.error('Error obteniendo usuario:', {
+      status: userResponse.status,
+      payload,
+    });
     throw new Response(JSON.stringify({ error: payload?.message ?? 'Usuario no autorizado' }), {
       status: userResponse.status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -49,6 +55,7 @@ const ensureAdmin = async (userToken: string) => {
   const userId: string | undefined = userData?.id;
 
   if (!userId) {
+    console.error('No se pudo obtener el ID del usuario:', userData);
     throw new Response(JSON.stringify({ error: 'No se pudo determinar el usuario autenticado' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -64,7 +71,11 @@ const ensureAdmin = async (userToken: string) => {
 
   if (!roleResponse.ok) {
     const payload = await fetchJson(roleResponse);
-    console.error('Error consultando roles de administrador:', payload);
+    console.error('Error consultando roles de administrador:', {
+      status: roleResponse.status,
+      payload,
+      userId,
+    });
     throw new Response(JSON.stringify({ error: 'No se pudo validar el rol del usuario' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -73,6 +84,7 @@ const ensureAdmin = async (userToken: string) => {
 
   const roles = await roleResponse.json();
   if (!Array.isArray(roles) || roles.length === 0) {
+    console.error('Usuario no tiene rol de admin:', { userId, roles });
     throw new Response(JSON.stringify({ error: 'Se requiere rol de administrador' }), {
       status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -104,6 +116,14 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Crear cliente de Supabase con SERVICE_ROLE_KEY para bypass RLS
+    const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.replace('Bearer ', '').trim();
 
@@ -114,9 +134,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    const adminId = await ensureAdmin(token);
+    let adminId: string;
+    try {
+      adminId = await ensureAdmin(token);
+    } catch (error) {
+      if (error instanceof Response) {
+        return error;
+      }
+      console.error('Error en ensureAdmin:', error);
+      return new Response(JSON.stringify({ error: 'Error validando privilegios de administrador' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    const payload = (await req.json()) as { action?: AdminAction } & Record<string, unknown>;
+    let payload: { action?: AdminAction } & Record<string, unknown>;
+    try {
+      payload = (await req.json()) as { action?: AdminAction } & Record<string, unknown>;
+    } catch (error) {
+      console.error('Error parseando JSON del request:', error);
+      return new Response(JSON.stringify({ error: 'El cuerpo de la petición debe ser JSON válido' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { action } = payload;
 
     if (!action) {
@@ -134,6 +176,13 @@ Deno.serve(async (req) => {
         role?: string;
       };
 
+      console.log('Creando usuario con datos:', {
+        email,
+        full_name,
+        role,
+        hasPassword: !!password,
+      });
+
       if (!email || !password || !full_name || !role) {
         return new Response(
           JSON.stringify({ error: 'email, password, full_name y role son requeridos' }),
@@ -145,6 +194,7 @@ Deno.serve(async (req) => {
       }
 
       if (!validateRole(role)) {
+        console.error('Rol no válido recibido:', role);
         return new Response(JSON.stringify({ error: 'Rol no válido' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -164,10 +214,23 @@ Deno.serve(async (req) => {
 
       const createPayload = await fetchJson(createResponse);
 
-      if (!createResponse.ok || !createPayload?.user?.id) {
-        console.error('Error creando usuario:', createPayload);
+      // La API puede retornar el usuario directamente o dentro de { user: {...} }
+      const userData = createPayload?.user || createPayload;
+      const userId = userData?.id;
+
+      console.log('Respuesta de creación de usuario:', {
+        status: createResponse.status,
+        ok: createResponse.ok,
+        hasUser: !!createPayload?.user,
+        hasDirectUser: !!createPayload?.id,
+        userId: userId,
+        payloadKeys: Object.keys(createPayload || {}),
+      });
+
+      if (!userId) {
+        console.error('Error creando usuario: No se encontró ID del usuario en la respuesta', createPayload);
         return new Response(
-          JSON.stringify({ error: createPayload?.message ?? 'No se pudo crear el usuario' }),
+          JSON.stringify({ error: createPayload?.message ?? 'No se pudo crear el usuario - ID no encontrado' }),
           {
             status: createResponse.status || 500,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -175,7 +238,22 @@ Deno.serve(async (req) => {
         );
       }
 
-      const userId: string = createPayload.user.id;
+      if (!createResponse.ok && createResponse.status !== 200 && createResponse.status !== 201) {
+        console.error('Error creando usuario: Status no OK', {
+          status: createResponse.status,
+          payload: createPayload,
+        });
+        return new Response(
+          JSON.stringify({ error: createPayload?.message ?? `Error HTTP ${createResponse.status}: No se pudo crear el usuario` }),
+          {
+            status: createResponse.status || 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      const userIdString: string = userId as string;
+      console.log('Usuario creado con ID:', userIdString);
 
       const profileResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
         method: 'POST',
@@ -184,7 +262,7 @@ Deno.serve(async (req) => {
           Prefer: 'resolution=merge-duplicates',
         },
         body: JSON.stringify({
-          id: userId,
+          id: userIdString,
           email,
           full_name,
         }),
@@ -193,65 +271,166 @@ Deno.serve(async (req) => {
       if (!profileResponse.ok) {
         const payload = await fetchJson(profileResponse);
         console.error('Error actualizando perfil:', payload);
+      } else {
+        console.log('Perfil actualizado correctamente');
       }
 
-      const clearRolesResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${userId}`,
-        {
-          method: 'DELETE',
-          headers: restHeaders(),
-        },
-      );
+      console.log('=== INICIANDO ASIGNACIÓN DE ROL ===');
+      console.log('Datos de entrada:', { email, full_name, role, userId: userIdString });
+      console.log('Usuario creado con ID:', userIdString);
+      console.log('Rol a asignar:', role);
 
-      if (!clearRolesResponse.ok) {
-        const payload = await fetchJson(clearRolesResponse);
-        console.error('Error limpiando roles previos:', payload);
-      }
+      // Esperar un momento para asegurar que el usuario esté completamente disponible
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('Espera completada, procediendo con asignación de rol...');
 
-      const insertRoleResponse = await fetch(`${SUPABASE_URL}/rest/v1/user_roles`, {
-        method: 'POST',
-        headers: restHeaders(),
-        body: JSON.stringify({ user_id: userId, role }),
+      // Usar función SQL assign_user_role que existe permanentemente en la base de datos
+      console.log('=== INICIANDO ASIGNACIÓN DE ROL ===');
+      console.log('Llamando a assign_user_role con:', { user_id: userIdString, role: role });
+      
+      const { data: insertData, error: insertError } = await supabaseAdmin
+        .rpc('assign_user_role', {
+          _user_id: userIdString,
+          _role: role,
+        });
+
+      console.log('Respuesta de assign_user_role:', {
+        data: insertData,
+        error: insertError,
+        errorDetails: insertError ? {
+          message: insertError.message,
+          code: insertError.code,
+          details: insertError.details,
+          hint: insertError.hint,
+        } : null,
       });
 
-      if (!insertRoleResponse.ok) {
-        const payload = await fetchJson(insertRoleResponse);
-        console.error('Error asignando rol al usuario:', payload);
-        return new Response(JSON.stringify({ error: 'No se pudo asignar el rol' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      if (insertError) {
+        console.error('ERROR: assign_user_role falló, intentando mecanismo de respaldo:', {
+          error: insertError,
+          userId: userIdString,
+          role,
         });
+        
+        // MECANISMO DE RESPALDO: Insertar en pending_role_assignments que tiene un trigger automático
+        try {
+          const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+            .from('pending_role_assignments')
+            .insert({
+              user_id: userIdString,
+              role: role,
+            })
+            .select();
+          
+          console.log('Resultado del mecanismo de respaldo (pending_role_assignments):', {
+            data: fallbackData,
+            error: fallbackError,
+          });
+          
+          if (fallbackError) {
+            console.error('ERROR CRÍTICO: Ambos mecanismos fallaron');
+            throw fallbackError;
+          }
+          
+          // Esperar un momento para que el trigger procese
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Verificar que el trigger asignó el rol
+          const { data: verifyData } = await supabaseAdmin
+            .from('user_roles')
+            .select('*')
+            .eq('user_id', userIdString)
+            .eq('role', role)
+            .maybeSingle();
+          
+          if (verifyData) {
+            console.log('✅ Rol asignado exitosamente mediante mecanismo de respaldo (trigger)');
+            insertData = {
+              success: true,
+              user_id: userIdString,
+              role: role,
+              message: 'Rol asignado mediante mecanismo de respaldo (trigger)',
+            };
+          } else {
+            throw new Error('El trigger no procesó la asignación de rol');
+          }
+        } catch (fallbackFailure: any) {
+          console.error('ERROR CRÍTICO: Todos los mecanismos fallaron:', fallbackFailure);
+          return new Response(
+            JSON.stringify({ error: `No se pudo asignar el rol: ${insertError.message}. Mecanismo de respaldo también falló: ${fallbackFailure.message || 'Error desconocido'}` }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            },
+          );
+        }
       }
 
-      // Verificar que el rol se insertó correctamente
-      const verifyRoleResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${userId}&role=eq.${role}`,
-        { headers: restHeaders() }
-      );
-
-      if (!verifyRoleResponse.ok) {
-        const payload = await fetchJson(verifyRoleResponse);
-        console.error('Error verificando rol:', payload);
-        return new Response(JSON.stringify({ error: 'No se pudo verificar la asignación del rol' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      // assign_user_role retorna un objeto JSONB con { success, user_id, role, message }
+      if (!insertData || !insertData.success) {
+        console.error('ERROR: assign_user_role no retornó éxito:', insertData);
+        return new Response(
+          JSON.stringify({ error: 'El rol no se asignó correctamente' }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
       }
 
-      const verifyData = await verifyRoleResponse.json();
-      if (!Array.isArray(verifyData) || verifyData.length === 0) {
-        return new Response(JSON.stringify({ error: 'El rol no se asignó correctamente' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      // Verificación adicional: confirmar que user_roles tiene el registro esperado
+      const { data: postVerifyData } = await supabaseAdmin
+        .from('user_roles')
+        .select('*')
+        .eq('user_id', userIdString)
+        .eq('role', role)
+        .maybeSingle();
+
+      if (!postVerifyData) {
+        console.warn('Advertencia: No se encontró el rol justo después de assign_user_role. Activando mecanismo de respaldo.');
+        // Reutilizar mecanismo de respaldo
+        const { error: fallbackError2 } = await supabaseAdmin
+          .from('pending_role_assignments')
+          .insert({ user_id: userIdString, role: role });
+        if (fallbackError2) {
+          console.error('Error en mecanismo de respaldo posterior:', fallbackError2);
+          return new Response(
+            JSON.stringify({ error: 'El rol no se pudo verificar ni asignar con el respaldo' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
+        }
+        // Esperar al trigger y re-verificar
+        await new Promise(r => setTimeout(r, 800));
+        const { data: postVerifyData2 } = await supabaseAdmin
+          .from('user_roles')
+          .select('*')
+          .eq('user_id', userIdString)
+          .eq('role', role)
+          .maybeSingle();
+        if (!postVerifyData2) {
+          console.error('Error: Tras mecanismo de respaldo, el rol sigue sin aparecer.');
+          return new Response(
+            JSON.stringify({ error: 'El rol no se pudo asignar incluso con el respaldo' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
+        }
       }
+
+      console.log('✅ Rol asignado exitosamente:', insertData);
+      console.log('=== ASIGNACIÓN DE ROL COMPLETADA ===');
 
       return new Response(
         JSON.stringify({
-          id: userId,
+          id: userIdString,
           email,
           full_name,
           role,
+          _debug: {
+            assignRoleResult: insertData,
+            assignRoleSuccess: insertData?.success,
+            assignedRole: insertData?.role,
+            message: insertData?.message,
+          }
         }),
         {
           status: 200,
@@ -331,48 +510,101 @@ Deno.serve(async (req) => {
         console.error('Error actualizando perfil:', payload);
       }
 
-      await fetch(`${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${userId}`, {
-        method: 'DELETE',
-        headers: restHeaders(),
+      console.log('=== INICIANDO ACTUALIZACIÓN DE ROL ===');
+      console.log('Llamando a assign_user_role con:', { user_id: userId, role: role });
+
+      // Usar función SQL assign_user_role que existe permanentemente en la base de datos
+      const { data: updateRoleData, error: updateRoleError } = await supabaseAdmin
+        .rpc('assign_user_role', {
+          _user_id: userId,
+          _role: role,
+        });
+
+      console.log('Respuesta de assign_user_role:', {
+        data: updateRoleData,
+        error: updateRoleError,
+        errorDetails: updateRoleError ? {
+          message: updateRoleError.message,
+          code: updateRoleError.code,
+          details: updateRoleError.details,
+        } : null,
       });
 
-      const insertRoleResponse = await fetch(`${SUPABASE_URL}/rest/v1/user_roles`, {
-        method: 'POST',
-        headers: restHeaders(),
-        body: JSON.stringify({ user_id: userId, role }),
-      });
-
-      if (!insertRoleResponse.ok) {
-        const payload = await fetchJson(insertRoleResponse);
-        console.error('Error asignando rol al usuario:', payload);
-        return new Response(JSON.stringify({ error: 'No se pudo asignar el rol' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      if (updateRoleError) {
+        console.error('ERROR: assign_user_role falló en update, intentando mecanismo de respaldo:', {
+          error: updateRoleError,
+          userId,
+          role,
         });
+        
+        // MECANISMO DE RESPALDO: Insertar en pending_role_assignments
+        try {
+          const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+            .from('pending_role_assignments')
+            .insert({
+              user_id: userId,
+              role: role,
+            })
+            .select();
+          
+          console.log('Resultado del mecanismo de respaldo (pending_role_assignments):', {
+            data: fallbackData,
+            error: fallbackError,
+          });
+          
+          if (fallbackError) {
+            console.error('ERROR CRÍTICO: Ambos mecanismos fallaron en update');
+            throw fallbackError;
+          }
+          
+          // Esperar un momento para que el trigger procese
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Verificar que el trigger asignó el rol
+          const { data: verifyData } = await supabaseAdmin
+            .from('user_roles')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('role', role)
+            .maybeSingle();
+          
+          if (verifyData) {
+            console.log('✅ Rol actualizado exitosamente mediante mecanismo de respaldo (trigger)');
+            updateRoleData = {
+              success: true,
+              user_id: userId,
+              role: role,
+              message: 'Rol actualizado mediante mecanismo de respaldo (trigger)',
+            };
+          } else {
+            throw new Error('El trigger no procesó la actualización de rol');
+          }
+        } catch (fallbackFailure: any) {
+          console.error('ERROR CRÍTICO: Todos los mecanismos fallaron en update:', fallbackFailure);
+          return new Response(
+            JSON.stringify({ error: `No se pudo actualizar el rol: ${updateRoleError.message}. Mecanismo de respaldo también falló: ${fallbackFailure.message || 'Error desconocido'}` }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            },
+          );
+        }
       }
 
-      // Verificar que el rol se insertó correctamente
-      const verifyRoleResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${userId}&role=eq.${role}`,
-        { headers: restHeaders() }
-      );
-
-      if (!verifyRoleResponse.ok) {
-        const payload = await fetchJson(verifyRoleResponse);
-        console.error('Error verificando rol:', payload);
-        return new Response(JSON.stringify({ error: 'No se pudo verificar la asignación del rol' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      // assign_user_role retorna un objeto JSONB con { success, user_id, role, message }
+      if (!updateRoleData || !updateRoleData.success) {
+        console.error('ERROR: assign_user_role no retornó éxito:', updateRoleData);
+        return new Response(
+          JSON.stringify({ error: 'El rol no se actualizó correctamente' }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
       }
 
-      const verifyData = await verifyRoleResponse.json();
-      if (!Array.isArray(verifyData) || verifyData.length === 0) {
-        return new Response(JSON.stringify({ error: 'El rol no se asignó correctamente' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
+      console.log('✅ Rol actualizado exitosamente:', updateRoleData);
+      console.log('=== ACTUALIZACIÓN DE ROL COMPLETADA ===');
 
       return new Response(
         JSON.stringify({
@@ -380,6 +612,12 @@ Deno.serve(async (req) => {
           email,
           full_name,
           role,
+          _debug: {
+            assignRoleResult: updateRoleData,
+            assignRoleSuccess: updateRoleData?.success,
+            assignedRole: updateRoleData?.role,
+            message: updateRoleData?.message,
+          }
         }),
         {
           status: 200,
@@ -436,7 +674,16 @@ Deno.serve(async (req) => {
     }
 
     console.error('admin-manage-users error:', error);
-    return new Response(JSON.stringify({ error: (error as Error).message }), {
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : undefined,
+    });
+    
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : 'Error interno del servidor',
+      details: process.env.DENO_ENV === 'development' ? String(error) : undefined,
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
