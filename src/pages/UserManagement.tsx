@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -28,8 +29,21 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Loader2, Pencil, Wand2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ArrowLeft, Loader2, Pencil, Wand2, Trash2, Search, X } from "lucide-react";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 type AppRole = "admin" | "user" | "mantenimiento";
 
@@ -38,6 +52,7 @@ interface UserWithRole {
   email: string;
   full_name: string;
   role: string;
+  created_at: string;
 }
 
 interface UserFormState {
@@ -52,6 +67,19 @@ const DEFAULT_FORM: UserFormState = {
   full_name: "",
   role: "user",
   password: "",
+};
+
+const ROLE_LABELS: Record<AppRole, string> = {
+  admin: "Administrador",
+  user: "Usuario General",
+  mantenimiento: "Mantenimiento",
+};
+
+const ROLE_COLORS: Record<string, string> = {
+  admin: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+  user: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+  mantenimiento: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+  "sin rol": "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
 };
 
 const generateSecurePassword = () => {
@@ -79,7 +107,7 @@ const generateSecurePassword = () => {
 const UserManagement = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { isAdmin, loading: authLoading } = useAuth();
+  const { isAdmin, loading: authLoading, user: currentUser, clearCachedPermissions } = useAuth();
 
   const [users, setUsers] = useState<UserWithRole[]>([]);
   const [isFetchingUsers, setIsFetchingUsers] = useState(false);
@@ -90,6 +118,13 @@ const UserManagement = () => {
   const [editingUser, setEditingUser] = useState<UserWithRole | null>(null);
   const [editForm, setEditForm] = useState<UserFormState>(DEFAULT_FORM);
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserWithRole | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("all");
 
   useEffect(() => {
     if (!authLoading && !isAdmin) {
@@ -113,7 +148,7 @@ const UserManagement = () => {
     try {
       const [{ data: profiles, error: profilesError }, { data: rolesData, error: rolesError }] =
         await Promise.all([
-          supabase.from("profiles").select("id, email, full_name").order("full_name"),
+          supabase.from("profiles").select("id, email, full_name, created_at").order("created_at", { ascending: false }),
           supabase.from("user_roles").select("user_id, role"),
         ]);
 
@@ -129,6 +164,7 @@ const UserManagement = () => {
           email: profile.email,
           full_name: profile.full_name ?? "",
           role: roleMap.get(profile.id) ?? "sin rol",
+          created_at: profile.created_at,
         })) ?? [];
 
       setUsers(formattedUsers);
@@ -142,6 +178,18 @@ const UserManagement = () => {
       setIsFetchingUsers(false);
     }
   };
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      const matchesSearch =
+        user.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        user.email.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesRole = roleFilter === "all" || user.role === roleFilter;
+
+      return matchesSearch && matchesRole;
+    });
+  }, [users, searchQuery, roleFilter]);
 
   const handleGeneratePassword = (setter: (value: string) => void) => {
     const newPassword = generateSecurePassword();
@@ -173,8 +221,12 @@ const UserManagement = () => {
 
       toast({
         title: "Usuario creado",
-        description: "El usuario ha sido creado exitosamente.",
+        description: `El usuario ${formData.full_name} ha sido creado exitosamente con rol ${ROLE_LABELS[formData.role]}.`,
       });
+
+      // Invalidar caché del nuevo usuario si es necesario
+      // (No es necesario ya que es un usuario nuevo, pero invalidamos todo por seguridad)
+      clearCachedPermissions();
 
       setFormData(DEFAULT_FORM);
       await loadUsers();
@@ -232,8 +284,13 @@ const UserManagement = () => {
 
       toast({
         title: "Usuario actualizado",
-        description: "Los cambios fueron guardados correctamente.",
+        description: `Los cambios de ${editForm.full_name} fueron guardados correctamente.`,
       });
+
+      // Invalidar caché del usuario actualizado para que recargue permisos
+      if (editingUser.id) {
+        clearCachedPermissions(editingUser.id);
+      }
 
       setIsEditOpen(false);
       setEditingUser(null);
@@ -249,10 +306,57 @@ const UserManagement = () => {
     }
   };
 
+  const openDeleteDialog = (user: UserWithRole) => {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    setIsDeletingUser(true);
+    try {
+      const { error } = await supabase.functions.invoke("admin-manage-users", {
+        body: {
+          action: "delete_user",
+          userId: userToDelete.id,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message || "No se pudo eliminar el usuario");
+      }
+
+      toast({
+        title: "Usuario eliminado",
+        description: `El usuario ${userToDelete.full_name} ha sido eliminado exitosamente.`,
+      });
+
+      // Limpiar caché del usuario eliminado
+      if (userToDelete.id) {
+        clearCachedPermissions(userToDelete.id);
+      }
+
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+      await loadUsers();
+    } catch (error: any) {
+      toast({
+        title: "Error al eliminar usuario",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeletingUser(false);
+    }
+  };
+
+  const usersWithoutRole = users.filter((u) => u.role === "sin rol").length;
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <p>Cargando...</p>
+        <Loader2 className="h-6 w-6 animate-spin" />
       </div>
     );
   }
@@ -271,6 +375,15 @@ const UserManagement = () => {
 
         <Card className="p-6">
           <h1 className="text-3xl font-bold mb-6">Administrar Usuarios</h1>
+
+          {usersWithoutRole > 0 && (
+            <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+              <p className="text-sm text-yellow-800 dark:text-yellow-300">
+                <strong>Advertencia:</strong> Hay {usersWithoutRole} usuario(s) sin rol asignado. 
+                Asigna un rol para que puedan acceder al sistema.
+              </p>
+            </div>
+          )}
 
           <form onSubmit={handleCreateUser} className="space-y-4">
             <div className="grid md:grid-cols-2 gap-4">
@@ -315,11 +428,11 @@ const UserManagement = () => {
                   <Button
                     type="button"
                     variant="secondary"
-                  onClick={() =>
-                    handleGeneratePassword((generated) =>
-                      setFormData((prev) => ({ ...prev, password: generated })),
-                    )
-                  }
+                    onClick={() =>
+                      handleGeneratePassword((generated) =>
+                        setFormData((prev) => ({ ...prev, password: generated })),
+                      )
+                    }
                   >
                     <Wand2 className="h-4 w-4 mr-2" />
                     Generar
@@ -361,66 +474,133 @@ const UserManagement = () => {
         </Card>
 
         <Card className="p-6">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
             <div>
               <h2 className="text-2xl font-bold">Usuarios Registrados</h2>
               <p className="text-muted-foreground text-sm">
-                Consulta y edita la información de todos los usuarios del sistema.
+                {filteredUsers.length} de {users.length} usuario(s)
               </p>
             </div>
-            <Button variant="ghost" onClick={() => void loadUsers()} disabled={isFetchingUsers}>
-              <Loader2
-                className={`mr-2 h-4 w-4 ${isFetchingUsers ? "animate-spin" : ""}`}
-              />
-              Actualizar
-            </Button>
+            <div className="flex gap-2">
+              <div className="relative flex-1 md:w-64">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar usuarios..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8"
+                />
+                {searchQuery && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-1 top-1 h-6 w-6 p-0"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+              <Select value={roleFilter} onValueChange={setRoleFilter}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Filtrar por rol" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los roles</SelectItem>
+                  <SelectItem value="admin">Administrador</SelectItem>
+                  <SelectItem value="user">Usuario General</SelectItem>
+                  <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
+                  <SelectItem value="sin rol">Sin rol</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="ghost" onClick={() => void loadUsers()} disabled={isFetchingUsers}>
+                <Loader2
+                  className={`h-4 w-4 ${isFetchingUsers ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
           </div>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nombre</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Rol</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isFetchingUsers ? (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-6 text-muted-foreground">
-                    Cargando usuarios...
-                  </TableCell>
+                  <TableHead>Nombre</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Rol</TableHead>
+                  <TableHead>Fecha de creación</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
-              ) : users.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-6 text-muted-foreground">
-                    No hay usuarios registrados.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell>{user.full_name}</TableCell>
-                    <TableCell>{user.email}</TableCell>
-                    <TableCell className="capitalize">{user.role}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => openEditDialog(user)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
+              </TableHeader>
+              <TableBody>
+                {isFetchingUsers ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-6 text-muted-foreground">
+                      Cargando usuarios...
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : filteredUsers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-6 text-muted-foreground">
+                      {searchQuery || roleFilter !== "all"
+                        ? "No se encontraron usuarios con los filtros aplicados."
+                        : "No hay usuarios registrados."}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredUsers.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell className="font-medium">{user.full_name || "Sin nombre"}</TableCell>
+                      <TableCell>{user.email}</TableCell>
+                      <TableCell>
+                        <Badge
+                          className={ROLE_COLORS[user.role] || ROLE_COLORS["sin rol"]}
+                        >
+                          {ROLE_LABELS[user.role as AppRole] || user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {format(new Date(user.created_at), "PP", { locale: es })}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditDialog(user)}
+                            title="Editar usuario"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          {user.id !== currentUser?.id && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openDeleteDialog(user)}
+                              title="Eliminar usuario"
+                              className="text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </Card>
       </div>
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Editar usuario</DialogTitle>
+            <DialogDescription>
+              Modifica la información del usuario. Los cambios se guardarán inmediatamente.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
@@ -431,6 +611,7 @@ const UserManagement = () => {
                 onChange={(e) =>
                   setEditForm((prev) => ({ ...prev, full_name: e.target.value }))
                 }
+                required
               />
             </div>
 
@@ -443,6 +624,7 @@ const UserManagement = () => {
                 onChange={(e) =>
                   setEditForm((prev) => ({ ...prev, email: e.target.value }))
                 }
+                required
               />
             </div>
 
@@ -476,6 +658,7 @@ const UserManagement = () => {
                     setEditForm((prev) => ({ ...prev, password: e.target.value }))
                   }
                   placeholder="Deja en blanco para mantener la actual"
+                  minLength={8}
                 />
                 <Button
                   type="button"
@@ -510,6 +693,35 @@ const UserManagement = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. Esto eliminará permanentemente el usuario{" "}
+              <strong>{userToDelete?.full_name}</strong> ({userToDelete?.email}) y todos sus datos asociados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteUser}
+              disabled={isDeletingUser}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingUser ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                "Eliminar"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

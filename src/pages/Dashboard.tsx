@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Eye, Edit, Trash2, Users, LogOut, Share2, Copy, ArrowLeft, Download } from "lucide-react";
+import { Plus, Eye, Edit, Trash2, LogOut, Share2, Copy, ArrowLeft, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
@@ -162,12 +162,6 @@ const Dashboard = () => {
             <h1 className="text-4xl font-bold">Propuestas Comerciales</h1>
           </div>
           <div className="flex gap-2">
-            {isAdmin && (
-              <Button onClick={() => navigate("/users")} variant="outline" size="lg">
-                <Users className="mr-2" />
-                Gestionar Usuarios
-              </Button>
-            )}
             <Button onClick={() => navigate("/create")} size="lg">
               <Plus className="mr-2" />
               Nueva Propuesta

@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowLeft, Users, Key, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Users, ShieldCheck } from "lucide-react";
 
 const AdminPanel = () => {
   const navigate = useNavigate();
@@ -46,12 +46,6 @@ const AdminPanel = () => {
       description: "Configura los permisos disponibles en la plataforma",
       icon: ShieldCheck,
       action: () => navigate("/admin/roles"),
-    },
-    {
-      title: "OpenAI API Key",
-      description: "Administra la integración con OpenAI",
-      icon: Key,
-      action: () => navigate("/admin/openai"),
     },
   ];
 

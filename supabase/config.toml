@@ -17,6 +17,3 @@ verify_jwt = false
 
 [functions.admin-manage-users]
 verify_jwt = true
-
-[functions.admin-openai-key]
-verify_jwt = true

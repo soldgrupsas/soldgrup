@@ -4,7 +4,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type AdminAction = 'create_user' | 'update_user';
+type AdminAction = 'create_user' | 'update_user' | 'delete_user';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    await ensureAdmin(token);
+    const adminId = await ensureAdmin(token);
 
     const payload = (await req.json()) as { action?: AdminAction } & Record<string, unknown>;
     const { action } = payload;
@@ -218,6 +218,29 @@ Deno.serve(async (req) => {
         const payload = await fetchJson(insertRoleResponse);
         console.error('Error asignando rol al usuario:', payload);
         return new Response(JSON.stringify({ error: 'No se pudo asignar el rol' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Verificar que el rol se insertó correctamente
+      const verifyRoleResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${userId}&role=eq.${role}`,
+        { headers: restHeaders() }
+      );
+
+      if (!verifyRoleResponse.ok) {
+        const payload = await fetchJson(verifyRoleResponse);
+        console.error('Error verificando rol:', payload);
+        return new Response(JSON.stringify({ error: 'No se pudo verificar la asignación del rol' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const verifyData = await verifyRoleResponse.json();
+      if (!Array.isArray(verifyData) || verifyData.length === 0) {
+        return new Response(JSON.stringify({ error: 'El rol no se asignó correctamente' }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -328,6 +351,29 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Verificar que el rol se insertó correctamente
+      const verifyRoleResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${userId}&role=eq.${role}`,
+        { headers: restHeaders() }
+      );
+
+      if (!verifyRoleResponse.ok) {
+        const payload = await fetchJson(verifyRoleResponse);
+        console.error('Error verificando rol:', payload);
+        return new Response(JSON.stringify({ error: 'No se pudo verificar la asignación del rol' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const verifyData = await verifyRoleResponse.json();
+      if (!Array.isArray(verifyData) || verifyData.length === 0) {
+        return new Response(JSON.stringify({ error: 'El rol no se asignó correctamente' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       return new Response(
         JSON.stringify({
           id: userId,
@@ -340,6 +386,44 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         },
       );
+    }
+
+    if (action === 'delete_user') {
+      const { userId } = payload as { userId?: string };
+
+      if (!userId) {
+        return new Response(JSON.stringify({ error: 'userId es requerido' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Validar que no se está eliminando a sí mismo
+      if (userId === adminId) {
+        return new Response(JSON.stringify({ error: 'No puedes eliminarte a ti mismo' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Eliminar usuario (esto eliminará cascade los roles y permisos)
+      const deleteResponse = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: restHeaders(),
+      });
+
+      if (!deleteResponse.ok) {
+        const payload = await fetchJson(deleteResponse);
+        return new Response(JSON.stringify({ error: payload?.message ?? 'No se pudo eliminar el usuario' }), {
+          status: deleteResponse.status || 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     return new Response(JSON.stringify({ error: 'Acción no soportada' }), {
