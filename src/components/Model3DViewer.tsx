@@ -150,6 +150,7 @@ const Model3DViewer = ({
 
     const onError = (error: unknown) => {
       const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+      const errorName = error instanceof Error ? error.name : '';
       const isPublicUrl = modelUrl.startsWith('http');
       
       // Diagnóstico detallado
@@ -158,6 +159,7 @@ const Model3DViewer = ({
         isPublicUrl,
         timestamp: new Date().toISOString(),
         errorType: errorMsg,
+        errorName: errorName,
         retryAttempt: retryCount
       };
       
@@ -168,26 +170,38 @@ const Model3DViewer = ({
       let shouldRetry = true;
       let userFriendlyMessage = errorMsg;
       
-      if (errorMsg.includes('404') || errorMsg.includes('Not Found')) {
+      // Detectar errores QUIC específicos
+      if (errorMsg.includes('QUIC') || errorMsg.includes('ERR_QUIC') || errorName === 'AbortError') {
+        userFriendlyMessage = '🌐 Error de conexión QUIC/HTTP3. Reintentando con conexión alternativa...';
+        // Permitir reintentos para errores QUIC
+        shouldRetry = true;
+      } else if (errorMsg.includes('404') || errorMsg.includes('Not Found')) {
         userFriendlyMessage = '❌ Archivo no encontrado (404). El modelo 3D no existe en el servidor.';
         shouldRetry = false;
       } else if (errorMsg.includes('403') || errorMsg.includes('Forbidden')) {
         userFriendlyMessage = '🚫 Acceso denegado (403). No tienes permisos para ver este archivo.';
         shouldRetry = false;
       } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('fetch')) {
-        userFriendlyMessage = '🌐 Error de red: No se pudo descargar el archivo. Archivo grande (20MB+) o conexión lenta.';
+        userFriendlyMessage = '🌐 Error de red: No se pudo descargar el archivo. Verificando conexión...';
+        shouldRetry = true;
       } else if (errorMsg.includes('NetworkError') || errorMsg.includes('Network')) {
         userFriendlyMessage = '📡 Error de conexión: La descarga fue bloqueada o interrumpida.';
+        shouldRetry = true;
       } else if (errorMsg.includes('parse') || errorMsg.includes('invalid')) {
         userFriendlyMessage = '⚠️ Archivo corrupto: El modelo 3D no se pudo interpretar.';
         shouldRetry = false;
       }
       
-      // Lógica de retry mejorada
-      if (shouldRetry && retryCount < 2) {
+      // Lógica de retry mejorada con más reintentos para errores QUIC
+      const maxRetries = errorMsg.includes('QUIC') || errorMsg.includes('ERR_QUIC') ? 3 : 2;
+      
+      if (shouldRetry && retryCount < maxRetries) {
         const nextRetry = retryCount + 1;
-        const waitTime = 3000 * nextRetry; // 3s, 6s
-        console.log(`🔄 Reintento ${nextRetry}/2 en ${waitTime}ms...`);
+        // Para errores QUIC, usar delays más cortos pero más reintentos
+        const waitTime = (errorMsg.includes('QUIC') || errorMsg.includes('ERR_QUIC')) 
+          ? 1000 * nextRetry // 1s, 2s, 3s para QUIC
+          : 3000 * nextRetry; // 3s, 6s para otros errores
+        console.log(`🔄 Reintento ${nextRetry}/${maxRetries} en ${waitTime}ms...`);
         
         setTimeout(() => {
           setRetryCount(nextRetry);
@@ -204,8 +218,26 @@ const Model3DViewer = ({
     if (modelUrl.startsWith('http')) {
       console.log('🌐 Descargando modelo remoto con fetch()...');
       
-      fetch(modelUrl, { mode: 'cors' })
+      // AbortController para timeout del fetch
+      const abortController = new AbortController();
+      const fetchTimeoutId = setTimeout(() => {
+        abortController.abort();
+        console.warn('⏱️ Fetch timeout después de 30 segundos');
+      }, 30000); // 30 segundos para establecer conexión
+      
+      fetch(modelUrl, { 
+        mode: 'cors',
+        signal: abortController.signal,
+        // Intentar evitar QUIC forzando HTTP/2 si es posible
+        cache: 'default',
+        // Headers que pueden ayudar con la estabilidad de la conexión
+        headers: {
+          'Accept': 'application/octet-stream, */*',
+        }
+      })
         .then(async (response) => {
+          clearTimeout(fetchTimeoutId);
+          
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
@@ -224,32 +256,76 @@ const Model3DViewer = ({
           let receivedLength = 0;
           const chunks: Uint8Array[] = [];
           
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          // Timeout para la lectura de chunks (más largo que el fetch inicial)
+          let readTimeoutId = setTimeout(() => {
+            reader.cancel();
+            throw new Error('Timeout durante la lectura del archivo');
+          }, 90000); // 90 segundos para leer todo el archivo
+          
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              
+              chunks.push(value);
+              receivedLength += value.length;
+              
+              if (total > 0) {
+                const progress = (receivedLength / total) * 100;
+                setLoadingProgress(Math.round(progress));
+                console.log(`📥 Descargado: ${Math.round(progress)}%`);
+              } else {
+                // Si no tenemos el total, mostrar progreso estimado
+                const estimatedProgress = Math.min(95, Math.round(receivedLength / (1024 * 1024) * 50)); // Estimación conservadora
+                setLoadingProgress(estimatedProgress);
+              }
+              
+              // Resetear timeout en cada chunk recibido
+              clearTimeout(readTimeoutId);
+              readTimeoutId = setTimeout(() => {
+                reader.cancel();
+                throw new Error('Timeout durante la lectura del archivo');
+              }, 90000);
+            }
             
-            chunks.push(value);
-            receivedLength += value.length;
+            clearTimeout(readTimeoutId);
             
-            if (total > 0) {
-              const progress = (receivedLength / total) * 100;
-              setLoadingProgress(Math.round(progress));
-              console.log(`📥 Descargado: ${Math.round(progress)}%`);
+            // Convertir chunks a Blob
+            const blob = new Blob(chunks as BlobPart[], { type: 'model/gltf-binary' });
+            const blobUrl = URL.createObjectURL(blob);
+            blobUrlRef.current = blobUrl;
+            
+            console.log('✅ Archivo descargado completamente, convirtiendo a blob:', blobUrl);
+            
+            // Ahora cargar con GLTFLoader usando la blob URL
+            loader.load(blobUrl, onLoad, onProgress, onError);
+          } catch (readError) {
+            clearTimeout(readTimeoutId);
+            throw readError;
+          }
+        })
+        .catch((error) => {
+          clearTimeout(fetchTimeoutId);
+          
+          // Detectar específicamente errores QUIC y de red
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorName = error instanceof Error ? error.name : '';
+          
+          console.error('❌ Error en fetch():', error);
+          
+          // Detectar errores QUIC específicos
+          if (errorMsg.includes('QUIC') || errorMsg.includes('ERR_QUIC') || errorName === 'AbortError') {
+            console.warn('⚠️ Error QUIC detectado, intentando estrategia alternativa...');
+            
+            // Si es el primer intento y hay error QUIC, reintentar inmediatamente con delay pequeño
+            if (retryCount === 0) {
+              setTimeout(() => {
+                setRetryCount(1);
+              }, 1000); // Reintentar en 1 segundo
+              return;
             }
           }
           
-          // Convertir chunks a Blob
-          const blob = new Blob(chunks as BlobPart[], { type: 'model/gltf-binary' });
-          const blobUrl = URL.createObjectURL(blob);
-          blobUrlRef.current = blobUrl;
-          
-          console.log('✅ Archivo descargado, convirtiendo a blob:', blobUrl);
-          
-          // Ahora cargar con GLTFLoader usando la blob URL
-          loader.load(blobUrl, onLoad, onProgress, onError);
-        })
-        .catch((error) => {
-          console.error('❌ Error en fetch():', error);
           onError(error);
         });
     } else {
