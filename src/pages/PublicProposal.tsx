@@ -175,14 +175,14 @@ const PublicProposal = () => {
 
         {/* Header */}
         <div className="text-center mb-12 animate-fade-in">
-          <Badge className="mb-4 text-lg px-6 py-2">
+          <Badge className="mb-4 text-lg px-6 py-2 bg-gray-100 text-black border-gray-300">
             Propuesta Comercial - {proposal.offer_id}
           </Badge>
-          <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+          <h1 className="text-5xl font-bold mb-4 text-black">
             {proposal.client}
           </h1>
           {proposal.presentation_date && (
-            <div className="flex items-center justify-center gap-2 text-muted-foreground">
+            <div className="flex items-center justify-center gap-2 text-black">
               <Calendar className="h-4 w-4" />
               <span>
                 Fecha: {new Date(proposal.presentation_date).toLocaleDateString("es-ES", {
