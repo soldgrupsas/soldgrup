@@ -8,7 +8,6 @@ import Index from "./pages/Index";
 import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import CreateProposal from "./pages/CreateProposal";
-import EditProposal from "./pages/EditProposal";
 import PublicProposal from "./pages/PublicProposal";
 import Auth from "./pages/Auth";
 import UserManagement from "./pages/UserManagement";
@@ -39,7 +38,7 @@ const App = () => (
           <Route path="/admin/roles" element={<ProtectedRoute><AdminRoles /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/create" element={<ProtectedRoute><CreateProposal /></ProtectedRoute>} />
-          <Route path="/edit/:id" element={<ProtectedRoute><EditProposal /></ProtectedRoute>} />
+          <Route path="/edit/:id" element={<ProtectedRoute><CreateProposal /></ProtectedRoute>} />
           <Route path="/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
           <Route path="/equipment" element={<ProtectedRoute><EquipmentList /></ProtectedRoute>} />
           <Route path="/equipment/create" element={<ProtectedRoute><CreateEquipment /></ProtectedRoute>} />
