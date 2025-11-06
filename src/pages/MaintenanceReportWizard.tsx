@@ -29,23 +29,25 @@ const CHECKLIST_ITEMS = [
   "Freno motor trolley",
   "Guías de trolley",
   "Ruedas trolley",
-  "Monorriel",
+  "Carros testeros",
+  "Estructura",
   "Gancho",
   "Cadena",
+  "Guaya",
   "Gabinete eléctrico",
   "Aceite",
-  "Estructura y aparellaje",
+  "Sistema de cables planos",
   "Topes mecánicos",
   "Botonera",
   "Pines de seguridad",
   "Polipasto",
   "Límite de elevación",
-  "Carro porta escobillas",
-  "Carros intermedios, y cables planos",
+  "Limitador de carga",
+  "Sistema de alimentación de línea blindada",
   "Carcazas",
 ];
 
-type ChecklistStatus = "good" | "bad" | null;
+type ChecklistStatus = "good" | "bad" | "na" | null;
 
 type ChecklistEntry = {
   id: string;
@@ -941,7 +943,7 @@ const MaintenanceReportWizard = () => {
           onValueChange={(value: ChecklistStatus) =>
             updateChecklistEntry(index, { status: value })
           }
-          className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          className="grid grid-cols-1 sm:grid-cols-3 gap-3"
         >
           <Label
             htmlFor={`status-good-${entry.id}`}
@@ -962,6 +964,16 @@ const MaintenanceReportWizard = () => {
           >
             <RadioGroupItem value="bad" id={`status-bad-${entry.id}`} />
             Mal estado
+          </Label>
+          <Label
+            htmlFor={`status-na-${entry.id}`}
+            className={cn(
+              "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+              entry.status === "na" && "border-blue-500 bg-blue-500/10",
+            )}
+          >
+            <RadioGroupItem value="na" id={`status-na-${entry.id}`} />
+            N/A
           </Label>
         </RadioGroup>
 
@@ -1129,7 +1141,7 @@ const MaintenanceReportWizard = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="locationPg">Ubicación PG</Label>
+                <Label htmlFor="locationPg">Código Activo</Label>
                 <Input
                   id="locationPg"
                   value={formData.locationPg}

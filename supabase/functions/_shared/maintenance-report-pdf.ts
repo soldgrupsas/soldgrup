@@ -8,7 +8,7 @@ const base64Decode = (base64: string): Uint8Array => {
   return bytes;
 };
 
-type ChecklistStatus = 'good' | 'bad' | null;
+type ChecklistStatus = 'good' | 'bad' | 'na' | null;
 
 type ChecklistEntry = {
   index: number;
@@ -78,19 +78,21 @@ const checklistItems = [
   'Freno motor trolley',
   'Guías de trolley',
   'Ruedas trolley',
-  'Monorriel',
+  'Carros testeros',
+  'Estructura',
   'Gancho',
   'Cadena',
+  'Guaya',
   'Gabinete eléctrico',
   'Aceite',
-  'Estructura y aparellaje',
+  'Sistema de cables planos',
   'Topes mecánicos',
   'Botonera',
   'Pines de seguridad',
   'Polipasto',
   'Límite de elevación',
-  'Carro porta escobillas',
-  'Carros intermedios y cables planos',
+  'Limitador de carga',
+  'Sistema de alimentación de línea blindada',
   'Carcazas',
 ];
 
@@ -700,7 +702,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
 
     const lineSets = values.map((value, index) => {
       const width = colWidths[index] - paddingX * 2;
-      if (index === 2 || index === 3) {
+      if (index === 2 || index === 3 || index === 4) {
         return value ? [value] : [''];
       }
       return wrapText(value ?? '', textFont, textSize, Math.max(width, 4));
@@ -739,7 +741,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         });
       }
 
-      if (index === 0 || index === 2 || index === 3) {
+      if (index === 0 || index === 2 || index === 3 || index === 4) {
         const text = (value ?? '').toString();
         const textWidth = textFont.widthOfTextAtSize(text, textSize);
         const textX = xPointer + width / 2 - textWidth / 2;
@@ -892,11 +894,12 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     const numberWidth = 40;
     const goodWidth = 60;
     const badWidth = 60;
-    const observationWidth = contentWidth * 0.5;
-    const descriptionWidth = contentWidth - numberWidth - goodWidth - badWidth - observationWidth;
-    const colWidths = [numberWidth, descriptionWidth, goodWidth, badWidth, observationWidth];
+    const naWidth = 50;
+    const observationWidth = contentWidth * 0.45;
+    const descriptionWidth = contentWidth - numberWidth - goodWidth - badWidth - naWidth - observationWidth;
+    const colWidths = [numberWidth, descriptionWidth, goodWidth, badWidth, naWidth, observationWidth];
     const headerLineHeight = 12;
-    drawTableRow(['#', 'Ítem', 'Buen estado', 'Mal estado', 'Observaciones'], colWidths, headerLineHeight, true);
+    drawTableRow(['#', 'Ítem', 'Buen estado', 'Mal estado', 'N/A', 'Observaciones'], colWidths, headerLineHeight, true);
 
     entries.forEach((entry, idx) => {
       const values = [
@@ -904,6 +907,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         entry.name,
         entry.status === 'good' ? 'X' : '',
         entry.status === 'bad' ? 'X' : '',
+        entry.status === 'na' ? 'X' : '',
         entry.observation ?? '',
       ];
       drawTableRow(values, colWidths, 14, false);
@@ -979,7 +983,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     { label: 'Modelo', value: payload.basicInfo.model },
     { label: 'Serie', value: payload.basicInfo.serial },
     { label: 'Capacidad', value: payload.basicInfo.capacity },
-    { label: 'Ubicación PG', value: payload.basicInfo.locationPg },
+    { label: 'Código Activo', value: payload.basicInfo.locationPg },
     { label: 'Voltaje', value: payload.basicInfo.voltage },
     { label: 'Fecha de inicio', value: formatDate(payload.basicInfo.startDate) },
     { label: 'Fecha final', value: formatDate(payload.basicInfo.endDate) },
