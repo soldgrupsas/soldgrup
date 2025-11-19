@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -12,6 +12,8 @@ import {
   Trash2,
   Image as ImageIcon,
   Upload,
+  Check,
+  Loader2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -32,9 +34,19 @@ const CreateEquipment = () => {
   const [description, setDescription] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [existingImages, setExistingImages] = useState<
-    Array<{ url: string; order: number }>
+    Array<{ id: string; url: string; order: number }>
+  >([]);
+  const [originalImages, setOriginalImages] = useState<
+    Array<{ id: string; url: string; order: number }>
   >([]);
   const [tables, setTables] = useState<CustomTable[]>([]);
+  
+  // Autosave states
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [pendingAutoSave, setPendingAutoSave] = useState(false);
+  const initialLoadRef = useRef(true);
+  const equipmentIdRef = useRef<string | null>(id || null);
 
   const isEditMode = !!id;
 
@@ -71,10 +83,18 @@ const CreateEquipment = () => {
         .order("image_order");
 
       if (imagesData) {
-        setExistingImages(
-          imagesData.map((img) => ({ url: img.image_url, order: img.image_order }))
-        );
+        const imagesWithId = imagesData.map((img) => ({
+          id: img.id,
+          url: img.image_url,
+          order: img.image_order,
+        }));
+        setExistingImages(imagesWithId);
+        setOriginalImages(imagesWithId);
       }
+
+      equipmentIdRef.current = equipmentData.id;
+      setLastSavedAt(new Date(equipmentData.updated_at || equipmentData.created_at));
+      initialLoadRef.current = false;
 
       const { data: tablesData } = await supabase
         .from("equipment_tables")
@@ -207,8 +227,158 @@ const CreateEquipment = () => {
     );
   };
 
-  const uploadImages = async (equipmentId: string) => {
-    const uploadPromises = images.map(async (image, index) => {
+  const extractStoragePath = (publicUrl: string): string | null => {
+    try {
+      // Handle different Supabase URL formats:
+      // 1. https://[project].supabase.co/storage/v1/object/public/proposal-images/[path]
+      // 2. https://[project].supabase.co/storage/v1/object/public/proposal-images/[path]?t=timestamp
+      // 3. CDN URLs or custom domains
+      
+      // Remove query parameters first
+      const urlWithoutQuery = publicUrl.split('?')[0];
+      
+      // Try standard pattern
+      let urlPattern = /\/storage\/v1\/object\/public\/proposal-images\/(.+)$/;
+      let match = urlWithoutQuery.match(urlPattern);
+      if (match) {
+        return decodeURIComponent(match[1]);
+      }
+      
+      // Try alternative pattern (in case of CDN or different URL structure)
+      urlPattern = /proposal-images\/(.+)$/;
+      match = urlWithoutQuery.match(urlPattern);
+      if (match) {
+        return decodeURIComponent(match[1]);
+      }
+      
+      // Try extracting from full path
+      const urlObj = new URL(urlWithoutQuery);
+      const pathParts = urlObj.pathname.split('/');
+      const bucketIndex = pathParts.findIndex(part => part === 'proposal-images');
+      if (bucketIndex !== -1 && bucketIndex < pathParts.length - 1) {
+        return decodeURIComponent(pathParts.slice(bucketIndex + 1).join('/'));
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn("Error extracting storage path from URL:", publicUrl, error);
+      return null;
+    }
+  };
+
+  const findStoragePathByUrl = async (equipmentId: string, publicUrl: string): Promise<string | null> => {
+    try {
+      // Alternative approach: list files in the equipment folder and match by URL
+      const searchInFolder = async (folderPath: string): Promise<string | null> => {
+        const { data: files, error } = await supabase.storage
+          .from("proposal-images")
+          .list(folderPath, {
+            limit: 100,
+            offset: 0,
+          });
+
+        if (error || !files) return null;
+
+        // Compare URLs (without query params) for comparison
+        const originalUrlClean = publicUrl.split('?')[0].toLowerCase();
+
+        // Check all items - files have id, folders might not
+        for (const file of files) {
+          // Files typically have an id and image extensions
+          const hasImageExtension = /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(file.name);
+          
+          // Only check files (those with id or image extension)
+          if (file.id !== null || hasImageExtension) {
+            const path = folderPath ? `${folderPath}/${file.name}` : file.name;
+            
+            try {
+              const { data: { publicUrl: fileUrl } } = supabase.storage
+                .from("proposal-images")
+                .getPublicUrl(path);
+              
+              const fileUrlClean = fileUrl.split('?')[0].toLowerCase();
+              
+              if (originalUrlClean === fileUrlClean) {
+                return path;
+              }
+            } catch (e) {
+              // Skip if we can't get URL (might be a folder)
+              continue;
+            }
+          }
+        }
+
+        // Check subfolders recursively (items without id and without image extension)
+        for (const file of files) {
+          const hasImageExtension = /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(file.name);
+          
+          if (file.id === null && !hasImageExtension) {
+            const subfolderPath = folderPath ? `${folderPath}/${file.name}` : file.name;
+            const result = await searchInFolder(subfolderPath);
+            if (result) return result;
+          }
+        }
+
+        return null;
+      };
+
+      return await searchInFolder(equipmentId);
+    } catch (error) {
+      console.warn("Error finding storage path by URL:", error);
+      return null;
+    }
+  };
+
+  const deleteRemovedImages = async (equipmentId: string) => {
+    // Find images that were removed (in originalImages but not in existingImages)
+    const currentImageIds = new Set(existingImages.map((img) => img.id));
+    const removedImages = originalImages.filter((img) => !currentImageIds.has(img.id));
+
+    if (removedImages.length === 0) return;
+
+    // Delete from database
+    const removedIds = removedImages.map((img) => img.id);
+    const { error: deleteError } = await supabase
+      .from("equipment_images")
+      .delete()
+      .in("id", removedIds);
+
+    if (deleteError) throw deleteError;
+
+    // Delete from storage
+    const pathsToDelete: string[] = [];
+    for (const img of removedImages) {
+      let storagePath = extractStoragePath(img.url);
+      
+      // If extraction failed, try alternative method
+      if (!storagePath) {
+        console.warn(`Could not extract path from URL: ${img.url}, trying alternative method...`);
+        storagePath = await findStoragePathByUrl(equipmentId, img.url);
+      }
+      
+      if (storagePath) {
+        pathsToDelete.push(storagePath);
+      } else {
+        console.warn(`Could not determine storage path for image: ${img.url}`);
+      }
+    }
+
+    if (pathsToDelete.length > 0) {
+      const { error: storageError } = await supabase.storage
+        .from("proposal-images")
+        .remove(pathsToDelete);
+
+      if (storageError) {
+        console.warn("Error deleting images from storage:", storageError);
+        // Don't throw - database deletion already succeeded
+      }
+    } else {
+      console.warn("No storage paths found to delete, but images were removed from database");
+    }
+  };
+
+  const uploadImages = useCallback(async (equipmentId: string, imagesToUpload: File[] = images) => {
+    const uploadPromises = imagesToUpload.map(async (image, index) => {
       const fileExt = image.name.split(".").pop();
       const fileName = `${equipmentId}/${crypto.randomUUID()}.${fileExt}`;
 
@@ -234,7 +404,7 @@ const CreateEquipment = () => {
     });
 
     await Promise.all(uploadPromises);
-  };
+  }, [images, existingImages.length]);
 
   const saveTables = async (equipmentId: string) => {
     if (isEditMode) {
@@ -256,6 +426,263 @@ const CreateEquipment = () => {
     await Promise.all(tablePromises);
   };
 
+  const isSavingRef = useRef(false);
+
+  const persistEquipment = useCallback(async () => {
+    const equipmentId = equipmentIdRef.current;
+    
+    // Guard clause checks
+    if (!equipmentId) {
+      console.warn("persistEquipment: No equipmentId, skipping autosave");
+      return;
+    }
+    
+    if (isSavingRef.current) {
+      console.warn("persistEquipment: Already saving, skipping");
+      return;
+    }
+    
+    if (!name.trim()) {
+      console.warn("persistEquipment: No name, skipping autosave");
+      return;
+    }
+
+    console.log("persistEquipment: Starting autosave for equipment", equipmentId);
+    isSavingRef.current = true;
+    setIsSaving(true);
+    setPendingAutoSave(false);
+
+    try {
+      // Update main equipment data
+      const { error: updateError } = await supabase
+        .from("equipment")
+        .update({
+          name,
+          description,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", equipmentId);
+
+      if (updateError) {
+        console.error("Error actualizando equipo:", updateError);
+        throw updateError;
+      }
+
+      console.log("persistEquipment: Equipment data updated successfully");
+
+      // Delete removed images
+      const currentImageIds = new Set(existingImages.map((img) => img.id));
+      const removedImages = originalImages.filter((img) => !currentImageIds.has(img.id));
+
+      if (removedImages.length > 0) {
+        const removedIds = removedImages.map((img) => img.id);
+        const { error: deleteError } = await supabase
+          .from("equipment_images")
+          .delete()
+          .in("id", removedIds);
+
+        if (deleteError) {
+          console.error("Error eliminando imágenes:", deleteError);
+          throw deleteError;
+        }
+
+        // Delete from storage
+        const pathsToDelete: string[] = [];
+        for (const img of removedImages) {
+          let storagePath = extractStoragePath(img.url);
+          
+          if (!storagePath) {
+            storagePath = await findStoragePathByUrl(equipmentId, img.url);
+          }
+          
+          if (storagePath) {
+            pathsToDelete.push(storagePath);
+          }
+        }
+
+        if (pathsToDelete.length > 0) {
+          const { error: storageError } = await supabase.storage
+            .from("proposal-images")
+            .remove(pathsToDelete);
+
+          if (storageError) {
+            console.warn("Error eliminando archivos de storage:", storageError);
+            // No lanzar error, la eliminación de la BD ya se completó
+          }
+        }
+
+        // Update original images after deletion
+        setOriginalImages(existingImages);
+      }
+
+      // Save tables
+      if (isEditMode) {
+        const { error: deleteTablesError } = await supabase
+          .from("equipment_tables")
+          .delete()
+          .eq("equipment_id", equipmentId);
+
+        if (deleteTablesError) {
+          console.error("Error eliminando tablas:", deleteTablesError);
+          throw deleteTablesError;
+        }
+      }
+
+      if (tables.length > 0) {
+        const tablePromises = tables.map((table, index) => {
+          return supabase.from("equipment_tables").insert({
+            equipment_id: equipmentId,
+            title: table.title,
+            table_data: table.data,
+            table_order: index,
+          });
+        });
+
+        const results = await Promise.all(tablePromises);
+        const errors = results.filter((r) => r.error).map((r) => r.error);
+        if (errors.length > 0) {
+          console.error("Error insertando tablas:", errors);
+          throw errors[0];
+        }
+      }
+
+      setLastSavedAt(new Date());
+      console.log("persistEquipment: Autosave completed successfully");
+    } catch (error) {
+      console.error("Error en autoguardado:", error);
+      // Don't show toast on autosave errors to avoid annoying the user
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+      console.log("persistEquipment: Cleanup complete, isSavingRef set to false");
+    }
+  }, [name, description, existingImages, originalImages, tables, isEditMode]);
+
+  // Serialize tables and images for comparison
+  const tablesSerialized = useMemo(() => JSON.stringify(tables), [tables]);
+  const existingImagesIdsSerialized = useMemo(() => 
+    JSON.stringify(existingImages.map(img => img.id).sort()), 
+    [existingImages]
+  );
+
+  // Autosave with debounce
+  useEffect(() => {
+    if (initialLoadRef.current) {
+      console.log("Autosave effect: Skipping, initial load");
+      return;
+    }
+    
+    if (!equipmentIdRef.current) {
+      console.log("Autosave effect: Skipping, no equipmentId");
+      return;
+    }
+
+    // Don't autosave if currently saving
+    if (isSavingRef.current) {
+      console.log("Autosave effect: Skipping, already saving");
+      return;
+    }
+
+    console.log("Autosave effect: Scheduling autosave", { 
+      imagesCount: images.length, 
+      name, 
+      tablesCount: tables.length 
+    });
+    setPendingAutoSave(true);
+
+    const handler = setTimeout(async () => {
+      console.log("Autosave effect: Timer fired, starting autosave process");
+      
+      const equipmentId = equipmentIdRef.current;
+      if (!equipmentId) {
+        console.warn("Autosave effect: No equipmentId, aborting");
+        return;
+      }
+
+      // Capture current state to avoid stale closures
+      const currentImages = [...images];
+      const currentExistingImagesCount = existingImages.length;
+      
+      // If there are new images, upload them first
+      if (currentImages.length > 0) {
+        try {
+          console.log("Autosave effect: Uploading new images first", currentImages.length);
+          isSavingRef.current = true;
+          setIsSaving(true);
+          setPendingAutoSave(false);
+          
+          // Upload images manually here to avoid closure issues
+          const uploadPromises = currentImages.map(async (image, index) => {
+            const fileExt = image.name.split(".").pop();
+            const fileName = `${equipmentId}/${crypto.randomUUID()}.${fileExt}`;
+
+            const { error: uploadError } = await supabase.storage
+              .from("proposal-images")
+              .upload(fileName, image);
+
+            if (uploadError) throw uploadError;
+
+            const {
+              data: { publicUrl },
+            } = supabase.storage.from("proposal-images").getPublicUrl(fileName);
+
+            const { error: dbError } = await supabase
+              .from("equipment_images")
+              .insert({
+                equipment_id: equipmentId,
+                image_url: publicUrl,
+                image_order: currentExistingImagesCount + index,
+              });
+
+            if (dbError) throw dbError;
+          });
+
+          await Promise.all(uploadPromises);
+          
+          console.log("Autosave effect: Images uploaded successfully");
+          
+          // Clear uploaded images after successful upload
+          setImages([]);
+          
+          // Refresh existing images after upload
+          const { data: imagesData } = await supabase
+            .from("equipment_images")
+            .select("*")
+            .eq("equipment_id", equipmentId)
+            .order("image_order");
+
+          if (imagesData) {
+            const imagesWithId = imagesData.map((img) => ({
+              id: img.id,
+              url: img.image_url,
+              order: img.image_order,
+            }));
+            setExistingImages(imagesWithId);
+            setOriginalImages(imagesWithId);
+            console.log("Autosave effect: Existing images refreshed", imagesWithId.length);
+          }
+          
+          isSavingRef.current = false;
+          setIsSaving(false);
+          setLastSavedAt(new Date());
+        } catch (error) {
+          console.error("Error uploading images in autosave:", error);
+          isSavingRef.current = false;
+          setIsSaving(false);
+          // Continue with other saves even if image upload fails
+        }
+      }
+      
+      // Then persist the rest (name, description, tables, deleted images)
+      await persistEquipment();
+    }, 1500); // Debounce time to 1.5 seconds
+
+    return () => {
+      console.log("Autosave effect: Cleaning up timer");
+      clearTimeout(handler);
+    };
+  }, [name, description, tablesSerialized, existingImagesIdsSerialized, persistEquipment, images.length]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -271,18 +698,26 @@ const CreateEquipment = () => {
     setLoading(true);
 
     try {
-      let equipmentId = id;
+      let equipmentId = equipmentIdRef.current || id;
 
       if (isEditMode) {
+        if (!equipmentId) {
+          throw new Error("ID de equipo no encontrado");
+        }
+
         const { error: updateError } = await supabase
           .from("equipment")
           .update({
             name,
             description,
+            updated_at: new Date().toISOString(),
           })
-          .eq("id", id);
+          .eq("id", equipmentId);
 
         if (updateError) throw updateError;
+
+        // Delete removed images in edit mode
+        await deleteRemovedImages(equipmentId);
       } else {
         const { data, error: insertError } = await supabase
           .from("equipment")
@@ -295,13 +730,39 @@ const CreateEquipment = () => {
 
         if (insertError) throw insertError;
         equipmentId = data.id;
+        equipmentIdRef.current = data.id;
       }
 
+      // Upload new images
       if (images.length > 0) {
         await uploadImages(equipmentId!);
+        setImages([]); // Clear uploaded images
       }
 
+      // Save tables
       await saveTables(equipmentId!);
+
+      // Update original images after uploads
+      if (isEditMode && images.length === 0) {
+        // Refresh existing images
+        const { data: imagesData } = await supabase
+          .from("equipment_images")
+          .select("*")
+          .eq("equipment_id", equipmentId)
+          .order("image_order");
+
+        if (imagesData) {
+          const imagesWithId = imagesData.map((img) => ({
+            id: img.id,
+            url: img.image_url,
+            order: img.image_order,
+          }));
+          setExistingImages(imagesWithId);
+          setOriginalImages(imagesWithId);
+        }
+      }
+
+      setLastSavedAt(new Date());
 
       toast({
         title: "Éxito",
@@ -310,12 +771,15 @@ const CreateEquipment = () => {
           : "Equipo creado correctamente",
       });
 
-      navigate("/equipment");
-    } catch (error) {
+      // Only navigate away if creating new equipment
+      if (!isEditMode) {
+        navigate("/equipment");
+      }
+    } catch (error: any) {
       console.error("Error saving equipment:", error);
       toast({
         title: "Error",
-        description: "No se pudo guardar el equipo",
+        description: error.message || "No se pudo guardar el equipo",
         variant: "destructive",
       });
     } finally {
@@ -346,7 +810,7 @@ const CreateEquipment = () => {
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
+          <div className="flex-1">
             <h1 className="text-4xl font-bold mb-2">
               {isEditMode ? "Editar Equipo" : "Crear Nuevo Equipo"}
             </h1>
@@ -354,6 +818,32 @@ const CreateEquipment = () => {
               Completa los datos del equipo
             </p>
           </div>
+          {isEditMode && equipmentIdRef.current && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Guardando...</span>
+                </>
+              ) : pendingAutoSave ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Pendiente...</span>
+                </>
+              ) : lastSavedAt ? (
+                <>
+                  <Check className="h-4 w-4 text-green-500" />
+                  <span>
+                    Guardado {new Intl.DateTimeFormat("es-CO", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    }).format(lastSavedAt)}
+                  </span>
+                </>
+              ) : null}
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -410,7 +900,7 @@ const CreateEquipment = () => {
                   <Label>Imágenes existentes</Label>
                   <div className="grid grid-cols-3 gap-4 mt-2">
                     {existingImages.map((img, index) => (
-                      <div key={index} className="relative group">
+                      <div key={img.id} className="relative group">
                         <img
                           src={img.url}
                           alt={`Existente ${index + 1}`}

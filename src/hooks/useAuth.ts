@@ -246,17 +246,42 @@ export const useAuth = () => {
   }, [loadUserData, clearCachedPermissions]);
 
   const signOut = async () => {
-    if (user?.id) {
-      clearCachedPermissions(user.id);
+    try {
+      if (user?.id) {
+        clearCachedPermissions(user.id);
+      }
+      
+      // Clear all caches
+      clearCachedPermissions();
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        console.error("Error signing out:", error);
+        throw error;
+      }
+      
+      // Clear state
+      setUser(null);
+      setSession(null);
+      setIsAdmin(false);
+      setIsAdminLoading(false);
+      setUserRole(null);
+      setUserPermissions(new Set());
+      setPermissionsLoading(false);
+    } catch (error) {
+      console.error("Error in signOut:", error);
+      // Even if there's an error, clear local state
+      setUser(null);
+      setSession(null);
+      setIsAdmin(false);
+      setIsAdminLoading(false);
+      setUserRole(null);
+      setUserPermissions(new Set());
+      setPermissionsLoading(false);
+      throw error;
     }
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setIsAdmin(false);
-    setIsAdminLoading(false);
-    setUserRole(null);
-    setUserPermissions(new Set());
-    setPermissionsLoading(false);
   };
 
   return {

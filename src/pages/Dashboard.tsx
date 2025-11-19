@@ -79,8 +79,17 @@ const Dashboard = () => {
   };
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate("/auth");
+    try {
+      await signOut();
+      navigate("/auth");
+    } catch (error) {
+      console.error("Error al cerrar sesión:", error);
+      toast({
+        title: "Error",
+        description: "No se pudo cerrar sesión. Por favor, intenta de nuevo.",
+        variant: "destructive",
+      });
+    }
   };
 
   const copyPublicUrl = (slug: string) => {

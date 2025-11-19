@@ -26,8 +26,17 @@ const Home = () => {
   }, [user, loading, navigate]);
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate("/auth");
+    try {
+      await signOut();
+      navigate("/auth");
+    } catch (error) {
+      console.error("Error al cerrar sesión:", error);
+      toast({
+        title: "Error",
+        description: "No se pudo cerrar sesión. Por favor, intenta de nuevo.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleAdminPanelClick = () => {
@@ -140,11 +149,31 @@ const Home = () => {
           </div>
         ) : menuItems.length === 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-            <div className="col-span-full text-center py-12">
-              <p className="text-muted-foreground">
-                No tienes acceso a ningún módulo. Contacta al administrador para obtener permisos.
-              </p>
-            </div>
+            <Card className="col-span-full p-8">
+              <div className="text-center">
+                <h2 className="text-2xl font-bold mb-4">Acceso Limitado</h2>
+                <p className="text-muted-foreground mb-4">
+                  Actualmente solo tienes acceso al módulo de Informes de Mantenimiento.
+                </p>
+                <p className="text-muted-foreground mb-6">
+                  Para acceder a <strong>Propuestas Comerciales</strong> y <strong>Equipos</strong>, necesitas el rol "Usuario General" o "Administrador".
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Contacta a un administrador para que actualice tus permisos, o ejecuta el siguiente script SQL si tienes acceso directo a la base de datos:
+                </p>
+                <div className="mt-4 p-4 bg-muted rounded-lg text-left">
+                  <code className="text-xs block whitespace-pre-wrap">
+{`-- Reemplaza 'TU_EMAIL_AQUI' con tu email de usuario
+UPDATE public.user_roles
+SET role = 'user'
+WHERE user_id = (
+  SELECT id FROM auth.users 
+  WHERE email = 'TU_EMAIL_AQUI'
+);`}
+                  </code>
+                </div>
+              </div>
+            </Card>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
