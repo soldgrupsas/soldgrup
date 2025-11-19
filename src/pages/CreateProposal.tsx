@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,15 +36,24 @@ interface EquipmentWithDetails {
 
 const CreateProposal = () => {
   const navigate = useNavigate();
+  const params = useParams<{ id?: string }>();
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
   const isSubmittingRef = useRef(false);
+  
+  // Autosave states
+  const [proposalId, setProposalId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [pendingAutoSave, setPendingAutoSave] = useState(false);
+  const initialLoadRef = useRef(true);
   const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [selected3DModel, setSelected3DModel] = useState<File | null>(null);
   const [model3DPreview, setModel3DPreview] = useState<string | null>(null);
   const [proposalItems, setProposalItems] = useState<ProposalItem[]>([
@@ -60,6 +69,271 @@ const CreateProposal = () => {
     ["", ""],
     ["", ""],
   ]);
+  const [formData, setFormData] = useState({
+    offer_id: "",
+    presentation_date: new Date(),
+    client: "",
+    contact_person: "",
+    reference: "",
+    soldgrup_contact: "",
+    observations: "",
+    offer_details: "",
+  });
+
+  // Session expiration handler
+  const handleSessionExpired = useCallback(() => {
+    toast({
+      title: "Sesión expirada",
+      description: "Tu sesión ha expirado. Por favor, inicia sesión nuevamente.",
+      variant: "destructive",
+    });
+    navigate("/auth");
+  }, [toast, navigate]);
+
+  // Error handler
+  const isAuthError = (error: any): boolean => {
+    if (!error) return false;
+    const errorMessage = error.message?.toLowerCase() || '';
+    const errorCode = error.code?.toLowerCase() || '';
+    return (
+      errorMessage.includes('refresh token') ||
+      errorMessage.includes('invalid token') ||
+      errorMessage.includes('jwt') ||
+      errorCode === 'invalid_refresh_token' ||
+      errorCode === '401' ||
+      error?.status === 401
+    );
+  };
+
+  const handleSupabaseError = useCallback((error: any, fallbackMessage: string) => {
+    console.error(fallbackMessage, error);
+    if (isAuthError(error)) {
+      handleSessionExpired();
+      return;
+    }
+    toast({
+      title: "Error",
+      description: fallbackMessage,
+      variant: "destructive",
+    });
+  }, [handleSessionExpired, toast]);
+
+  // Create initial proposal
+  const createInitialProposal = async () => {
+    try {
+      if (!user?.id) return;
+
+      const { data: slugData, error: slugError } = await supabase.rpc("generate_proposal_slug");
+      if (slugError) throw slugError;
+
+      const proposalData = {
+        offer_id: "",
+        presentation_date: format(new Date(), "yyyy-MM-dd"),
+        client: "",
+        contact_person: "",
+        reference: "",
+        soldgrup_contact: "",
+        observations: "",
+        technical_specs_table: [["", ""], ["", ""]],
+        offer_details: "",
+        public_url_slug: slugData,
+        user_id: user.id,
+      };
+
+      const { data, error } = await supabase
+        .from("proposals")
+        .insert([proposalData])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setProposalId(data.id);
+      setLastSavedAt(new Date());
+      
+      toast({
+        title: "Propuesta iniciada",
+        description: "Autoguardado activado - Tus cambios se guardarán automáticamente",
+      });
+
+      return data.id;
+    } catch (error: any) {
+      handleSupabaseError(error, "Error al crear la propuesta inicial");
+      return null;
+    }
+  };
+
+  // Load existing proposal
+  const loadExistingProposal = async (id: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("proposals")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        // Restore form data
+        setFormData({
+          offer_id: data.offer_id || "",
+          presentation_date: data.presentation_date ? new Date(data.presentation_date) : new Date(),
+          client: data.client || "",
+          contact_person: data.contact_person || "",
+          reference: data.reference || "",
+          soldgrup_contact: data.soldgrup_contact || "",
+          observations: data.observations || "",
+          offer_details: data.offer_details || "",
+        });
+
+        // Load technical specs
+        if (data.technical_specs_table && Array.isArray(data.technical_specs_table)) {
+          setTechnicalSpecs(data.technical_specs_table as SpecTableData);
+        }
+
+        // Load 3D model URL
+        if (data.model_3d_url) {
+          setModel3DPreview(data.model_3d_url);
+        }
+
+        // Load existing images
+        const { data: images, error: imagesError } = await supabase
+          .from("proposal_images")
+          .select("*")
+          .eq("proposal_id", id)
+          .order("image_order");
+
+        if (imagesError) throw imagesError;
+        if (images) {
+          const urls = images.map((img: any) => img.image_url);
+          setExistingImageUrls(urls);
+          setImagePreviews(urls);
+        }
+
+        // Load existing equipment
+        const { data: existingEquipment, error: eqError } = await supabase
+          .from("equipment_details")
+          .select("*")
+          .eq("proposal_id", id);
+
+        if (eqError) throw eqError;
+
+        if (existingEquipment && existingEquipment.length > 0) {
+          const loadedEquipment = existingEquipment.map((eq: any) => ({
+            id: eq.equipment_specs.id || eq.id,
+            name: eq.equipment_name,
+            description: eq.equipment_specs.description || "",
+            images: eq.equipment_specs.images || [],
+            tables: eq.equipment_specs.tables || [],
+          }));
+          setSelectedEquipment(loadedEquipment);
+        }
+
+        // Load proposal items
+        const { data: items, error: itemsError } = await supabase
+          .from("proposal_items")
+          .select("*")
+          .eq("proposal_id", id)
+          .order("item_number");
+
+        if (itemsError) throw itemsError;
+        if (items && items.length > 0) {
+          setProposalItems(items.map((item: any) => ({
+            item_number: item.item_number,
+            description: item.description,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            total_price: item.total_price,
+          })));
+        }
+
+        setProposalId(id);
+        setLastSavedAt(new Date(data.updated_at || data.created_at));
+      }
+    } catch (error: any) {
+      handleSupabaseError(error, "Error al cargar la propuesta");
+      navigate("/dashboard");
+    }
+  };
+
+  // Persist proposal (autosave)
+  const persistProposal = async () => {
+    if (!proposalId || isSaving) return;
+
+    setIsSaving(true);
+    setPendingAutoSave(false);
+
+    try {
+      // Update main proposal data
+      const { error: updateError } = await supabase
+        .from("proposals")
+        .update({
+          offer_id: formData.offer_id,
+          presentation_date: format(formData.presentation_date, "yyyy-MM-dd"),
+          client: formData.client,
+          contact_person: formData.contact_person,
+          reference: formData.reference,
+          soldgrup_contact: formData.soldgrup_contact,
+          observations: formData.observations,
+          technical_specs_table: technicalSpecs,
+          offer_details: formData.offer_details,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", proposalId);
+
+      if (updateError) throw updateError;
+
+      // Sync proposal items (delete and insert)
+      await supabase.from("proposal_items").delete().eq("proposal_id", proposalId);
+      
+      const itemsToInsert = proposalItems
+        .filter(item => item.description)
+        .map((item) => ({
+          proposal_id: proposalId,
+          item_number: item.item_number,
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+          unit: "unidad",
+        }));
+
+      if (itemsToInsert.length > 0) {
+        const { error: itemsError } = await supabase
+          .from("proposal_items")
+          .insert(itemsToInsert);
+        if (itemsError) throw itemsError;
+      }
+
+      // Sync equipment details (delete and insert)
+      await supabase.from("equipment_details").delete().eq("proposal_id", proposalId);
+
+      if (selectedEquipment.length > 0) {
+        const equipmentDetails = selectedEquipment.map((eq) => ({
+          proposal_id: proposalId,
+          equipment_name: eq.name,
+          equipment_specs: {
+            id: eq.id,
+            description: eq.description,
+            images: eq.images,
+            tables: eq.tables,
+          },
+        }));
+        
+        const { error: equipmentError } = await supabase
+          .from("equipment_details")
+          .insert(equipmentDetails);
+        if (equipmentError) throw equipmentError;
+      }
+
+      setLastSavedAt(new Date());
+    } catch (error: any) {
+      handleSupabaseError(error, "Error al guardar los cambios");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -77,6 +351,185 @@ const CreateProposal = () => {
       fetchAvailableEquipment();
     }
   }, [user]);
+
+  // Initialize proposal (create or load)
+  useEffect(() => {
+    const initializeProposal = async () => {
+      if (!user || initialLoadRef.current === false) return;
+      
+      if (params.id) {
+        // Edit mode: Load existing proposal
+        await loadExistingProposal(params.id);
+      } else {
+        // Create mode: Create new proposal
+        await createInitialProposal();
+      }
+      
+      initialLoadRef.current = false;
+    };
+
+    void initializeProposal();
+  }, [user, params.id]);
+
+  // Autosave with debounce (800ms)
+  useEffect(() => {
+    if (initialLoadRef.current || !proposalId) return;
+    setPendingAutoSave(true);
+
+    const handler = setTimeout(() => {
+      void persistProposal();
+    }, 800);
+
+    return () => clearTimeout(handler);
+  }, [formData, proposalItems, technicalSpecs, selectedEquipment, proposalId]);
+
+  // Upload images immediately
+  useEffect(() => {
+    const uploadImages = async () => {
+      if (initialLoadRef.current || !proposalId || selectedImages.length === 0) return;
+
+      try {
+        // Delete existing images if replacing
+        await supabase.from("proposal_images").delete().eq("proposal_id", proposalId);
+        
+        // Delete old image files from storage if replacing
+        if (existingImageUrls.length > 0) {
+          for (const url of existingImageUrls) {
+            const path = url.split('/proposal-images/')[1];
+            if (path) {
+              await supabase.storage.from('proposal-images').remove([path]);
+            }
+          }
+        }
+
+        // Upload new images
+        const imageRecords = [];
+        for (let i = 0; i < selectedImages.length; i++) {
+          const file = selectedImages[i];
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${proposalId}/${Date.now()}-${i}.${fileExt}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('proposal-images')
+            .upload(fileName, file);
+
+          if (uploadError) {
+            console.error('Error uploading image:', uploadError);
+            continue;
+          }
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('proposal-images')
+            .getPublicUrl(fileName);
+
+          imageRecords.push({
+            proposal_id: proposalId,
+            image_url: publicUrl,
+            image_order: i + 1,
+          });
+        }
+
+        if (imageRecords.length > 0) {
+          const { error: imagesError } = await supabase
+            .from("proposal_images")
+            .insert(imageRecords);
+
+          if (imagesError) throw imagesError;
+          
+          // Update existing image URLs
+          setExistingImageUrls(imageRecords.map(img => img.image_url));
+        }
+      } catch (error: any) {
+        handleSupabaseError(error, "Error al subir las imágenes");
+      }
+    };
+
+    void uploadImages();
+  }, [selectedImages, proposalId]);
+
+  // Upload 3D model immediately
+  useEffect(() => {
+    const upload3DModel = async () => {
+      if (initialLoadRef.current || !proposalId || !selected3DModel) return;
+
+      toast({
+        title: "Comprimiendo modelo 3D...",
+        description: "Optimizando el archivo para carga rápida. Esto puede tardar 10-30 segundos.",
+      });
+
+      try {
+        // Convert file to ArrayBuffer
+        const arrayBuffer = await selected3DModel.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        // Convert to base64 for transmission
+        let binary = '';
+        const len = uint8Array.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(uint8Array[i]);
+        }
+        const base64Data = btoa(binary);
+
+        // Call Edge Function to compress and upload
+        const { data: compressData, error: compressError } = await supabase.functions.invoke(
+          'compress-3d-model',
+          {
+            body: {
+              proposalId: proposalId,
+              fileName: selected3DModel.name,
+              fileData: base64Data,
+            },
+          }
+        );
+
+        if (compressError) {
+          console.error('Error compressing 3D model:', compressError);
+          toast({
+            title: "Error en compresión",
+            description: "No se pudo comprimir el modelo. Subiendo archivo original...",
+            variant: "destructive",
+          });
+          
+          // Fallback: Upload without compression
+          const fileExt = selected3DModel.name.split('.').pop();
+          const fileName = `${proposalId}/${Date.now()}-model.${fileExt}`;
+          const { error: uploadError } = await supabase.storage
+            .from('3d-models')
+            .upload(fileName, selected3DModel);
+
+          if (!uploadError) {
+            const { data: { publicUrl } } = supabase.storage
+              .from('3d-models')
+              .getPublicUrl(fileName);
+
+            await supabase
+              .from('proposals')
+              .update({ model_3d_url: publicUrl })
+              .eq('id', proposalId);
+
+            setModel3DPreview(publicUrl);
+          }
+        } else {
+          // Success: Use compressed URL
+          await supabase
+            .from('proposals')
+            .update({ model_3d_url: compressData.url })
+            .eq('id', proposalId);
+
+          setModel3DPreview(compressData.url);
+
+          toast({
+            title: "✅ Modelo comprimido exitosamente",
+            description: `Tamaño reducido de ${compressData.originalSizeMB.toFixed(2)}MB a ${compressData.compressedSizeMB.toFixed(2)}MB (${compressData.compressionRatio}% de reducción)`,
+          });
+        }
+      } catch (error: any) {
+        handleSupabaseError(error, "No se pudo procesar el modelo 3D");
+      }
+    };
+
+    void upload3DModel();
+  }, [selected3DModel, proposalId]);
 
   const fetchAvailableEquipment = async () => {
     try {
@@ -169,18 +622,7 @@ const CreateProposal = () => {
     setModel3DPreview(null);
   };
 
-  const [formData, setFormData] = useState({
-    offer_id: "",
-    presentation_date: new Date(),
-    client: "",
-    contact_person: "",
-    reference: "",
-    soldgrup_contact: "",
-    observations: "",
-    offer_details: "",
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSaveAndClose = async (e: React.FormEvent) => {
     e.preventDefault();
     
     // Prevenir múltiples envíos
@@ -192,204 +634,21 @@ const CreateProposal = () => {
     setLoading(true);
 
     try {
-      const slugData = await generateUniqueProposalSlug(
-        formData.offer_id,
-        formData.client
-      );
-      const proposalData = {
-        offer_id: formData.offer_id,
-        presentation_date: format(formData.presentation_date, "yyyy-MM-dd"),
-        client: formData.client,
-        contact_person: formData.contact_person,
-        reference: formData.reference,
-        soldgrup_contact: formData.soldgrup_contact,
-        observations: formData.observations,
-        technical_specs_table: technicalSpecs,
-        offer_details: formData.offer_details,
-        public_url_slug: slugData, // Slug generado automáticamente
-      };
-
-      const { data, error } = await supabase
-        .from("proposals")
-        .insert([proposalData])
-        .select()
-        .single();
-
-      if (error) {
-        // Provide more specific error messages for RLS policy violations
-        if (error.code === '42501' || error.message.includes('row-level security')) {
-          throw new Error(
-            'No tienes permisos para crear propuestas. Por favor, contacta al administrador para que te asigne un rol de usuario.'
-          );
-        }
-        throw error;
-      }
-
-      // Save selected equipment
-      if (selectedEquipment.length > 0) {
-        const equipmentDetails = selectedEquipment.map((eq) => ({
-          proposal_id: data.id,
-          equipment_name: eq.name,
-          equipment_specs: {
-            description: eq.description,
-            images: eq.images,
-            tables: eq.tables,
-          },
-        }));
-
-        const { error: equipmentError } = await supabase
-          .from("equipment_details")
-          .insert(equipmentDetails);
-
-        if (equipmentError) throw equipmentError;
-      }
-
-      // Save proposal items
-      if (proposalItems.length > 0) {
-        const itemsToInsert = proposalItems.map((item) => ({
-          proposal_id: data.id,
-          item_number: item.item_number,
-          description: item.description,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          total_price: item.total_price,
-          unit: "unidad",
-        }));
-
-        const { error: itemsError } = await supabase
-          .from("proposal_items")
-          .insert(itemsToInsert);
-
-        if (itemsError) throw itemsError;
-      }
-
-      // Upload images to Storage and save references
-      if (selectedImages.length > 0) {
-        const imageRecords = [];
-
-        for (let i = 0; i < selectedImages.length; i++) {
-          const file = selectedImages[i];
-          const fileExt = file.name.split('.').pop();
-          const fileName = `${data.id}/${Date.now()}-${i}.${fileExt}`;
-
-          const { error: uploadError } = await supabase.storage
-            .from('proposal-images')
-            .upload(fileName, file);
-
-          if (uploadError) {
-            console.error('Error uploading image:', uploadError);
-            continue;
-          }
-
-          const { data: { publicUrl } } = supabase.storage
-            .from('proposal-images')
-            .getPublicUrl(fileName);
-
-          imageRecords.push({
-            proposal_id: data.id,
-            image_url: publicUrl,
-            image_order: i + 1,
-          });
-        }
-
-        if (imageRecords.length > 0) {
-          const { error: imagesError } = await supabase
-            .from("proposal_images")
-            .insert(imageRecords);
-
-          if (imagesError) throw imagesError;
-        }
-      }
-
-      // Upload 3D model to Storage with Draco compression
-      if (selected3DModel) {
-        toast({
-          title: "Comprimiendo modelo 3D...",
-          description: "Optimizando el archivo para carga rápida. Esto puede tardar 10-30 segundos.",
-        });
-
-        try {
-          // Convert file to ArrayBuffer
-          const arrayBuffer = await selected3DModel.arrayBuffer();
-          const uint8Array = new Uint8Array(arrayBuffer);
-          
-          // Convert to base64 for transmission
-          let binary = '';
-          const len = uint8Array.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(uint8Array[i]);
-          }
-          const base64Data = btoa(binary);
-
-          // Call Edge Function to compress and upload
-          const { data: compressData, error: compressError } = await supabase.functions.invoke(
-            'compress-3d-model',
-            {
-              body: {
-                proposalId: data.id,
-                fileName: selected3DModel.name,
-                fileData: base64Data,
-              },
-            }
-          );
-
-          if (compressError) {
-            console.error('Error compressing 3D model:', compressError);
-            toast({
-              title: "Error en compresión",
-              description: "No se pudo comprimir el modelo. Subiendo archivo original...",
-              variant: "destructive",
-            });
-            
-            // Fallback: Upload without compression
-            const fileExt = selected3DModel.name.split('.').pop();
-            const fileName = `${data.id}/${Date.now()}-model.${fileExt}`;
-            const { error: uploadError } = await supabase.storage
-              .from('3d-models')
-              .upload(fileName, selected3DModel);
-
-            if (!uploadError) {
-              const { data: { publicUrl } } = supabase.storage
-                .from('3d-models')
-                .getPublicUrl(fileName);
-
-              await supabase
-                .from('proposals')
-                .update({ model_3d_url: publicUrl })
-                .eq('id', data.id);
-            }
-          } else {
-            // Success: Use compressed URL
-            await supabase
-              .from('proposals')
-              .update({ model_3d_url: compressData.url })
-              .eq('id', data.id);
-
-            toast({
-              title: "✅ Modelo comprimido exitosamente",
-              description: `Tamaño reducido de ${compressData.originalSizeMB.toFixed(2)}MB a ${compressData.compressedSizeMB.toFixed(2)}MB (${compressData.compressionRatio}% de reducción)`,
-            });
-          }
-        } catch (error) {
-          console.error('Error in 3D model processing:', error);
-          toast({
-            title: "Error",
-            description: "No se pudo procesar el modelo 3D",
-            variant: "destructive",
-          });
-        }
+      // Ensure final save is complete before navigating
+      if (proposalId && !isSaving) {
+        await persistProposal();
       }
 
       toast({
-        title: "Propuesta creada",
-        description: "La propuesta ha sido creada exitosamente",
+        title: "Propuesta guardada",
+        description: params.id ? "Los cambios han sido guardados exitosamente" : "La propuesta ha sido creada exitosamente",
       });
 
       navigate("/dashboard");
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Error al guardar la propuesta",
         variant: "destructive",
       });
     } finally {
@@ -440,9 +699,33 @@ const CreateProposal = () => {
         </Button>
 
         <Card className="p-8">
-          <h1 className="text-3xl font-bold mb-6">Nueva Propuesta Comercial</h1>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-3xl font-bold">
+              {params.id ? "Editar Propuesta Comercial" : "Nueva Propuesta Comercial"}
+            </h1>
+            {lastSavedAt && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                {isSaving ? (
+                  <>
+                    <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
+                    <span>Guardando...</span>
+                  </>
+                ) : pendingAutoSave ? (
+                  <>
+                    <div className="h-2 w-2 rounded-full bg-orange-500" />
+                    <span>Cambios pendientes</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-2 w-2 rounded-full bg-green-500" />
+                    <span>Guardado {lastSavedAt.toLocaleTimeString("es-ES", { hour: '2-digit', minute: '2-digit' })}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSaveAndClose} className="space-y-6">
             <div className="space-y-6">
               <div className="space-y-2">
                 <Label htmlFor="offer_id">ID de la oferta</Label>
@@ -709,8 +992,8 @@ const CreateProposal = () => {
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? "Creando..." : "Crear Propuesta"}
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar y Cerrar"}
               </Button>
             </div>
           </form>

@@ -17,19 +17,21 @@ const checklistFallback = [
   'Freno motor trolley',
   'Guías de trolley',
   'Ruedas trolley',
-  'Monorriel',
+  'Carros testeros',
+  'Estructura',
   'Gancho',
   'Cadena',
+  'Guaya',
   'Gabinete eléctrico',
   'Aceite',
-  'Estructura y aparellaje',
+  'Sistema de cables planos',
   'Topes mecánicos',
   'Botonera',
   'Pines de seguridad',
   'Polipasto',
   'Límite de elevación',
-  'Carro porta escobillas',
-  'Carros intermedios y cables planos',
+  'Limitador de carga',
+  'Sistema de alimentación de línea blindada',
   'Carcazas',
 ];
 
@@ -333,7 +335,7 @@ Deno.serve(async (req) => {
       checklistMap.set(key, {
         index,
         name: typeof entry?.name === 'string' ? entry.name : checklistFallback[index] ?? `Ítem ${index + 1}`,
-        status: entry?.status === 'good' ? 'good' : entry?.status === 'bad' ? 'bad' : null,
+        status: entry?.status === 'good' ? 'good' : entry?.status === 'bad' ? 'bad' : entry?.status === 'na' ? 'na' : null,
         observation: typeof entry?.observation === 'string' ? entry.observation : '',
       });
     });
