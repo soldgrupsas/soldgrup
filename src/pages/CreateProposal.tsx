@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { generateUniqueProposalSlug } from "@/lib/slug";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import Model3DUploader from "@/components/Model3DUploader";
 import { TechnicalSpecsTable, SpecTableData } from "@/components/TechnicalSpecsTable";
@@ -38,6 +39,7 @@ const CreateProposal = () => {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
@@ -180,12 +182,20 @@ const CreateProposal = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevenir múltiples envíos
+    if (isSubmittingRef.current) {
+      return;
+    }
+    
+    isSubmittingRef.current = true;
     setLoading(true);
 
     try {
-      // Generar slug automáticamente para hacer la propuesta pública
-      const { data: slugData } = await supabase.rpc("generate_proposal_slug");
-
+      const slugData = await generateUniqueProposalSlug(
+        formData.offer_id,
+        formData.client
+      );
       const proposalData = {
         offer_id: formData.offer_id,
         presentation_date: format(formData.presentation_date, "yyyy-MM-dd"),
@@ -384,6 +394,7 @@ const CreateProposal = () => {
       });
     } finally {
       setLoading(false);
+      isSubmittingRef.current = false;
     }
   };
 
