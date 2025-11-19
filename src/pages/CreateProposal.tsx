@@ -48,6 +48,7 @@ const CreateProposal = () => {
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [pendingAutoSave, setPendingAutoSave] = useState(false);
   const initialLoadRef = useRef(true);
+  const isCreatingInitialRef = useRef(false);
   const [availableEquipment, setAvailableEquipment] = useState<EquipmentWithDetails[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentWithDetails[]>([]);
   const [equipmentToAdd, setEquipmentToAdd] = useState<string>("");
@@ -120,11 +121,24 @@ const CreateProposal = () => {
 
   // Create initial proposal
   const createInitialProposal = async () => {
+    // Prevenir múltiples creaciones
+    if (isCreatingInitialRef.current || proposalId) {
+      return proposalId;
+    }
+    
+    isCreatingInitialRef.current = true;
+    
     try {
-      if (!user?.id) return;
+      if (!user?.id) {
+        isCreatingInitialRef.current = false;
+        return null;
+      }
 
       const { data: slugData, error: slugError } = await supabase.rpc("generate_proposal_slug");
-      if (slugError) throw slugError;
+      if (slugError) {
+        isCreatingInitialRef.current = false;
+        throw slugError;
+      }
 
       const proposalData = {
         offer_id: "",
@@ -156,8 +170,10 @@ const CreateProposal = () => {
         description: "Autoguardado activado - Tus cambios se guardarán automáticamente",
       });
 
+      isCreatingInitialRef.current = false;
       return data.id;
     } catch (error: any) {
+      isCreatingInitialRef.current = false;
       handleSupabaseError(error, "Error al crear la propuesta inicial");
       return null;
     }
@@ -355,7 +371,8 @@ const CreateProposal = () => {
   // Initialize proposal (create or load)
   useEffect(() => {
     const initializeProposal = async () => {
-      if (!user || initialLoadRef.current === false) return;
+      // Prevenir múltiples ejecuciones
+      if (!user || initialLoadRef.current === false || proposalId || isCreatingInitialRef.current) return;
       
       if (params.id) {
         // Edit mode: Load existing proposal
@@ -369,6 +386,7 @@ const CreateProposal = () => {
     };
 
     void initializeProposal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, params.id]);
 
   // Autosave with debounce (800ms)
