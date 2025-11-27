@@ -18,6 +18,33 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+// Función helper para formatear una fecha usando zona horaria local
+// Evita problemas de conversión UTC que pueden mostrar fechas incorrectas
+const formatDateLocal = (dateString: string | null): string => {
+  if (!dateString) return "Sin fecha";
+  
+  // Si ya es formato YYYY-MM-DD, parsearlo directamente
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const [year, month, day] = dateString.split("-");
+    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    return date.toLocaleDateString("es-CO", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+  
+  // Si es una fecha completa con hora, crear Date y formatear usando zona horaria local
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Sin fecha";
+  
+  return date.toLocaleDateString("es-CO", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
 type MaintenanceReportListItem = {
   id: string;
   company: string | null;
@@ -176,13 +203,7 @@ const MaintenanceReports = () => {
     () =>
       reports.map((report) => ({
         ...report,
-        displayStartDate: report.start_date
-          ? new Date(report.start_date).toLocaleDateString("es-CO", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            })
-          : "Sin fecha",
+        displayStartDate: formatDateLocal(report.start_date),
       })),
     [reports],
   );

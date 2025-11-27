@@ -309,6 +309,8 @@ const MaintenanceReportWizard = () => {
   const activeUploadRef = useRef<{ task: UploadTask; controller: AbortController } | null>(null);
   const reportIdRef = useRef<string | null>(null);
   const formDataRef = useRef<MaintenanceReportForm>(defaultForm);
+  const initialFormDataRef = useRef<MaintenanceReportForm>(defaultForm);
+  const hasBeenModifiedRef = useRef(false);
 
   useEffect(() => {
     reportIdRef.current = reportId ?? null;
@@ -579,8 +581,13 @@ const MaintenanceReportWizard = () => {
     }
   }, [user, authLoading, navigate]);
 
+  const initializedRef = useRef(false);
+
   useEffect(() => {
     if (authLoading || !user) return;
+    
+    // Si ya se inicializó, no volver a inicializar (incluso si authLoading cambia)
+    if (initializedRef.current) return;
 
     const initialize = async () => {
       setLoading(true);
@@ -588,10 +595,14 @@ const MaintenanceReportWizard = () => {
         if (isEditMode && params.id) {
           await loadExistingReport(params.id);
         } else {
-          await createDraftReport();
+          // No crear el informe automáticamente, solo inicializar el estado
+          setFormData(defaultForm);
+          initialFormDataRef.current = defaultForm;
+          setCurrentStepIndex(0);
         }
       } finally {
         initialLoadRef.current = false;
+        initializedRef.current = true;
         setLoading(false);
       }
     };
@@ -600,6 +611,53 @@ const MaintenanceReportWizard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, isEditMode, params.id]);
 
+  // Detectar si hay cambios y crear el informe si es necesario
+  useEffect(() => {
+    if (initialLoadRef.current || isEditMode || reportId) return;
+    
+    // Comparar solo los campos relevantes, no todo el objeto (que incluye arrays/objetos anidados)
+    const hasChanges = 
+      formData.startDate !== initialFormDataRef.current.startDate ||
+      formData.endDate !== initialFormDataRef.current.endDate ||
+      formData.company !== initialFormDataRef.current.company ||
+      formData.address !== initialFormDataRef.current.address ||
+      formData.phone !== initialFormDataRef.current.phone ||
+      formData.contact !== initialFormDataRef.current.contact ||
+      formData.technicianName !== initialFormDataRef.current.technicianName ||
+      formData.equipment !== initialFormDataRef.current.equipment ||
+      formData.brand !== initialFormDataRef.current.brand ||
+      formData.model !== initialFormDataRef.current.model ||
+      formData.serial !== initialFormDataRef.current.serial ||
+      formData.capacity !== initialFormDataRef.current.capacity ||
+      formData.locationPg !== initialFormDataRef.current.locationPg ||
+      formData.voltage !== initialFormDataRef.current.voltage ||
+      formData.initialState !== initialFormDataRef.current.initialState ||
+      formData.recommendations !== initialFormDataRef.current.recommendations ||
+      formData.tests.voltage !== initialFormDataRef.current.tests.voltage ||
+      formData.tests.polipasto.subir.l1 !== initialFormDataRef.current.tests.polipasto.subir.l1 ||
+      formData.tests.polipasto.subir.l2 !== initialFormDataRef.current.tests.polipasto.subir.l2 ||
+      formData.tests.polipasto.subir.l3 !== initialFormDataRef.current.tests.polipasto.subir.l3 ||
+      formData.tests.polipasto.bajar.l1 !== initialFormDataRef.current.tests.polipasto.bajar.l1 ||
+      formData.tests.polipasto.bajar.l2 !== initialFormDataRef.current.tests.polipasto.bajar.l2 ||
+      formData.tests.polipasto.bajar.l3 !== initialFormDataRef.current.tests.polipasto.bajar.l3 ||
+      formData.checklist.some((item, idx) => 
+        item.status !== initialFormDataRef.current.checklist[idx]?.status ||
+        item.observation !== initialFormDataRef.current.checklist[idx]?.observation
+      ) ||
+      formData.photos.length !== initialFormDataRef.current.photos.length;
+    
+    if (hasChanges && !hasBeenModifiedRef.current) {
+      hasBeenModifiedRef.current = true;
+      // Crear el informe cuando se detecta el primer cambio con los datos actuales
+      createDraftReportWithData(formData).then((id) => {
+        if (id) {
+          setReportId(id);
+        }
+      });
+    }
+  }, [formData, isEditMode, reportId]);
+
+  // Autoguardado solo si ya existe el informe
   useEffect(() => {
     if (initialLoadRef.current || !reportId) return;
     setPendingAutoSave(true);
@@ -636,6 +694,32 @@ const MaintenanceReportWizard = () => {
         variant: "destructive",
       });
       navigate("/maintenance-reports");
+      return null;
+    }
+  };
+
+  const createDraftReportWithData = async (data: MaintenanceReportForm): Promise<string | null> => {
+    if (!user) return null;
+    try {
+      const payload = buildDbPayload(data, currentStepIndex, user.id);
+      const { data: result, error } = await supabase
+        .from("maintenance_reports")
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) throw error;
+      setReportId(result.id);
+      setLastSavedAt(new Date(result.updated_at));
+      return result.id;
+    } catch (error) {
+      console.error("Error creando borrador de informe:", error);
+      toast({
+        title: "Error",
+        description:
+          "No se pudo crear el informe de mantenimiento. Intenta nuevamente.",
+        variant: "destructive",
+      });
       return null;
     }
   };
@@ -725,8 +809,9 @@ const MaintenanceReportWizard = () => {
   const persistReport = useCallback(
     async (overrideData?: MaintenanceReportForm, options?: { silent?: boolean }) => {
       if (!reportId) return;
-      const dataToSave = overrideData ?? formData;
+      const dataToSave = overrideData ?? formDataRef.current;
       setIsSaving(true);
+      setPendingAutoSave(true);
       try {
         const { error, data } = await supabase
           .from("maintenance_reports")
@@ -743,25 +828,32 @@ const MaintenanceReportWizard = () => {
           setLastSavedAt(new Date());
         }
         setPendingAutoSave(false);
+        setIsSaving(false);
         if (!options?.silent) {
           console.info("Informe guardado correctamente.");
         }
       } catch (error) {
         console.error("Error guardando informe:", error);
+        setPendingAutoSave(false);
+        setIsSaving(false);
         toast({
           title: "Error al guardar",
           description:
             "No se pudo guardar el informe automáticamente. Revisa tu conexión e intenta nuevamente.",
           variant: "destructive",
         });
-      } finally {
-        setIsSaving(false);
       }
     },
-    [reportId, formData, currentStepIndex, toast],
+    [reportId, currentStepIndex, toast],
   );
 
   const handleSaveAndExit = async () => {
+    // Si no hay reportId, significa que no se modificó nada, solo salir
+    if (!reportId) {
+      navigate("/maintenance-reports");
+      return;
+    }
+    
     await persistReport(undefined, { silent: true });
     toast({
       title: "Cambios guardados",
@@ -833,7 +925,11 @@ const MaintenanceReportWizard = () => {
 
   const ensureReportExists = async () => {
     if (reportId) return reportId;
-    const newId = await createDraftReport();
+    hasBeenModifiedRef.current = true;
+    const newId = await createDraftReportWithData(formData);
+    if (newId) {
+      setReportId(newId);
+    }
     return newId;
   };
 
@@ -1456,12 +1552,18 @@ const MaintenanceReportWizard = () => {
     }
   };
 
-  if (loading || authLoading) {
+  // Solo mostrar loading en la carga inicial, no cuando authLoading cambia después
+  if (loading && initialLoadRef.current) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-industrial">
         <p className="text-muted-foreground">Preparando el asistente...</p>
       </div>
     );
+  }
+  
+  // Si no hay usuario y no está cargando, redirigir
+  if (!authLoading && !user) {
+    return null; // El useEffect de navegación se encargará de redirigir
   }
 
   return (
@@ -1477,7 +1579,7 @@ const MaintenanceReportWizard = () => {
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div>
-              <h1 className="text-3xl font-bold">Informe de Mantenimiento</h1>
+              <h1 className="text-3xl font-bold">Informe de Mantenimiento - Elevadores</h1>
               <p className="text-muted-foreground">
                 {isEditMode ? "Editando informe existente" : "Nuevo informe"}
               </p>
