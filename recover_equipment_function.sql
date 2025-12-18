@@ -66,3 +66,6 @@ SELECT * FROM recover_equipment_from_specs('DS-BANAPLAST-5562025');
 
 
 
+
+
+

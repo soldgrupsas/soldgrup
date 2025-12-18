@@ -19,3 +19,6 @@ COMMENT ON COLUMN public.equipment_details.equipment_id IS 'Reference to the equ
 
 
 
+
+
+

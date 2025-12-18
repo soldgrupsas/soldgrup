@@ -72,3 +72,6 @@ AND (equipment_specs->>'id')::uuid IN (
 
 
 
+
+
+

@@ -190,3 +190,6 @@ WHERE u.email = 'tecnicos@soldgrup.com';
 
 
 
+
+
+

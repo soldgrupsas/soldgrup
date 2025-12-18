@@ -32,3 +32,6 @@ SELECT
 FROM public.equipment_details;
 
 
+
+
+
