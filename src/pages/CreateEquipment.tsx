@@ -470,6 +470,28 @@ const CreateEquipment = () => {
 
       console.log("persistEquipment: Equipment data updated successfully");
 
+      // IMPORTANTE: Actualizar equipment_name en todas las propuestas que usan este equipo
+      // Esto asegura que las propuestas siempre muestren el nombre actualizado del equipo
+      try {
+        const { error: updateProposalsError } = await supabase
+          .from("equipment_details")
+          .update({ 
+            equipment_name: name,
+            equipment_specs: null // Limpiar equipment_specs para forzar uso de datos frescos
+          })
+          .eq("equipment_id", equipmentId);
+
+        if (updateProposalsError) {
+          console.warn("Error actualizando propuestas con el nuevo nombre del equipo:", updateProposalsError);
+          // No lanzar error, es una actualización secundaria
+        } else {
+          console.log("Propuestas actualizadas con el nuevo nombre del equipo");
+        }
+      } catch (updateProposalsErr) {
+        console.warn("Error al actualizar propuestas:", updateProposalsErr);
+        // No lanzar error, es una actualización secundaria
+      }
+
       // Delete removed images
       const currentImageIds = new Set(existingImages.map((img) => img.id));
       const removedImages = originalImages.filter((img) => !currentImageIds.has(img.id));
@@ -715,6 +737,25 @@ const CreateEquipment = () => {
           .eq("id", equipmentId);
 
         if (updateError) throw updateError;
+
+        // IMPORTANTE: Actualizar equipment_name en todas las propuestas que usan este equipo
+        try {
+          const { error: updateProposalsError } = await supabase
+            .from("equipment_details")
+            .update({ 
+              equipment_name: name,
+              equipment_specs: null // Limpiar equipment_specs para forzar uso de datos frescos
+            })
+            .eq("equipment_id", equipmentId);
+
+          if (updateProposalsError) {
+            console.warn("Error actualizando propuestas con el nuevo nombre del equipo:", updateProposalsError);
+            // No lanzar error, es una actualización secundaria
+          }
+        } catch (updateProposalsErr) {
+          console.warn("Error al actualizar propuestas:", updateProposalsErr);
+          // No lanzar error, es una actualización secundaria
+        }
 
         // Delete removed images in edit mode
         await deleteRemovedImages(equipmentId);

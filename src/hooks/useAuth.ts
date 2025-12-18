@@ -247,22 +247,24 @@ export const useAuth = () => {
 
   const signOut = async () => {
     try {
+      // Limpiar caché de permisos primero
       if (user?.id) {
         clearCachedPermissions(user.id);
       }
-      
-      // Clear all caches
       clearCachedPermissions();
       
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut();
-      
-      if (error) {
-        console.error("Error signing out:", error);
-        throw error;
+      // Limpiar todo el localStorage relacionado con Supabase/auth
+      try {
+        Object.keys(localStorage).forEach(key => {
+          if (key.includes('supabase') || key.includes('auth') || key.includes('sb-') || key.startsWith(PERMISSIONS_CACHE_KEY)) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (e) {
+        console.warn("Error limpiando localStorage:", e);
       }
       
-      // Clear state
+      // Limpiar estado local primero para evitar problemas de renderizado
       setUser(null);
       setSession(null);
       setIsAdmin(false);
@@ -270,9 +272,21 @@ export const useAuth = () => {
       setUserRole(null);
       setUserPermissions(new Set());
       setPermissionsLoading(false);
+      
+      // Intentar cerrar sesión en Supabase (pero no bloquear si falla)
+      try {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.warn("Error al cerrar sesión en Supabase (continuando de todas formas):", error);
+          // No lanzar el error, ya limpiamos el estado local
+        }
+      } catch (signOutError) {
+        console.warn("Excepción al cerrar sesión en Supabase (continuando de todas formas):", signOutError);
+        // No lanzar el error, ya limpiamos el estado local
+      }
     } catch (error) {
-      console.error("Error in signOut:", error);
-      // Even if there's an error, clear local state
+      console.error("Error inesperado en signOut:", error);
+      // Asegurarse de limpiar el estado incluso si hay un error
       setUser(null);
       setSession(null);
       setIsAdmin(false);
@@ -280,7 +294,20 @@ export const useAuth = () => {
       setUserRole(null);
       setUserPermissions(new Set());
       setPermissionsLoading(false);
-      throw error;
+      
+      // Limpiar localStorage como último recurso
+      try {
+        Object.keys(localStorage).forEach(key => {
+          if (key.includes('supabase') || key.includes('auth') || key.includes('sb-') || key.startsWith(PERMISSIONS_CACHE_KEY)) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (e) {
+        console.warn("Error limpiando localStorage en catch:", e);
+      }
+      
+      // No lanzar el error para que el usuario pueda continuar
+      // El estado ya está limpio
     }
   };
 

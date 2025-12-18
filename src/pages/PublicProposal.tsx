@@ -113,13 +113,83 @@ const PublicProposal = () => {
       });
 
       // Fetch equipment details
-      const { data: equipmentData, error: equipmentError } = await supabase
+      // Now we load equipment dynamically from the equipment table using equipment_id
+      const { data: equipmentDetails, error: equipmentError } = await supabase
         .from("equipment_details")
         .select("*")
         .eq("proposal_id", data.id);
 
       if (equipmentError) throw equipmentError;
-      setEquipment((equipmentData as any) || []);
+
+      if (equipmentDetails && equipmentDetails.length > 0) {
+        // Extract equipment IDs (support both new equipment_id field and legacy equipment_specs.id)
+        const equipmentIds = equipmentDetails
+          .map((eq: any) => eq.equipment_id || eq.equipment_specs?.id)
+          .filter((id: string | null | undefined) => id);
+
+        if (equipmentIds.length > 0) {
+          // Fetch current equipment data from equipment table
+          const { data: equipmentData, error: equipmentDataError } = await supabase
+            .from("equipment")
+            .select("id, name, description")
+            .in("id", equipmentIds);
+
+          if (equipmentDataError) throw equipmentDataError;
+
+          // Fetch images and tables for each equipment
+          const loadedEquipment = await Promise.all(
+            (equipmentData || []).map(async (eq) => {
+              const [imagesResult, tablesResult] = await Promise.all([
+                supabase
+                  .from("equipment_images")
+                  .select("image_url, image_order")
+                  .eq("equipment_id", eq.id)
+                  .order("image_order"),
+                supabase
+                  .from("equipment_tables")
+                  .select("title, table_data, table_order")
+                  .eq("equipment_id", eq.id)
+                  .order("table_order"),
+              ]);
+
+              return {
+                id: eq.id,
+                equipment_name: eq.name,
+                equipment_specs: {
+                  description: eq.description || "",
+                  images: (imagesResult.data || []).map((img: any) => ({
+                    image_url: img.image_url,
+                    image_order: img.image_order,
+                  })),
+                  tables: (tablesResult.data || []).map((tbl: any) => ({
+                    title: tbl.title,
+                    table_data: tbl.table_data,
+                    table_order: tbl.table_order,
+                  })),
+                },
+              };
+            })
+          );
+
+          setEquipment(loadedEquipment);
+        } else {
+          // Fallback: Use equipment_specs for backward compatibility with old data
+          const legacyEquipment = equipmentDetails
+            .filter((eq: any) => eq.equipment_specs)
+            .map((eq: any) => ({
+              id: eq.id,
+              equipment_name: eq.equipment_name,
+              equipment_specs: {
+                description: eq.equipment_specs.description || "",
+                images: eq.equipment_specs.images || [],
+                tables: eq.equipment_specs.tables || [],
+              },
+            }));
+          setEquipment(legacyEquipment);
+        }
+      } else {
+        setEquipment([]);
+      }
 
       // Fetch proposal items
       const { data: itemsData, error: itemsError } = await supabase

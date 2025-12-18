@@ -24,12 +24,7 @@ import { cn } from "@/lib/utils";
 const CHECKLIST_ITEMS = [
   "Motor de elevación",
   "Freno motor de elevación",
-  "Trolley",
-  "Motor trolley",
-  "Freno motor trolley",
-  "Guías de trolley",
-  "Ruedas trolley",
-  "Carros testeros",
+  // Trolley y sus componentes se agrupan en un paso especial
   "Estructura",
   "Gancho",
   "Cadena",
@@ -54,6 +49,18 @@ type ChecklistEntry = {
   name: string;
   status: ChecklistStatus;
   observation: string;
+};
+
+type TrolleyGroupEntry = {
+  id: string;
+  name: string;
+  status: ChecklistStatus;
+};
+
+type CarrosTesterosSubItem = {
+  id: string;
+  name: string;
+  status: ChecklistStatus;
 };
 
 type PhotoEntry = {
@@ -181,6 +188,19 @@ type MaintenanceReportForm = {
   voltage: string;
   initialState: string;
   checklist: ChecklistEntry[];
+  trolleyGroup: {
+    trolley: TrolleyGroupEntry;
+    motorTrolley: TrolleyGroupEntry;
+    frenoMotorTrolley: TrolleyGroupEntry;
+    guiasTrolley: TrolleyGroupEntry;
+    ruedasTrolley: TrolleyGroupEntry;
+    observation: string;
+  };
+  carrosTesteros: {
+    mainStatus: ChecklistStatus;
+    subItems: CarrosTesterosSubItem[];
+    observation: string;
+  };
   recommendations: string;
   tests: {
     voltage: string;
@@ -197,15 +217,50 @@ type StepDefinition = {
   title: string;
   subtitle?: string;
   checklistIndex?: number;
+  specialStep?: "trolley-group" | "carros-testeros";
+};
+
+// Función auxiliar para generar UUIDs de forma segura
+const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback para navegadores que no soportan crypto.randomUUID
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 };
 
 const buildDefaultChecklist = (): ChecklistEntry[] =>
   CHECKLIST_ITEMS.map((name, index) => ({
-    id: crypto.randomUUID(),
+    id: generateUUID(),
     name,
     status: null,
     observation: "",
   }));
+
+const buildDefaultTrolleyGroup = () => ({
+  trolley: { id: generateUUID(), name: "Trolley", status: null as ChecklistStatus },
+  motorTrolley: { id: generateUUID(), name: "Motor Trolley", status: null as ChecklistStatus },
+  frenoMotorTrolley: { id: generateUUID(), name: "Freno motor Trolley", status: null as ChecklistStatus },
+  guiasTrolley: { id: generateUUID(), name: "Guias de Trolley", status: null as ChecklistStatus },
+  ruedasTrolley: { id: generateUUID(), name: "Ruedas Trolley", status: null as ChecklistStatus },
+  observation: "",
+});
+
+const buildDefaultCarrosTesteros = () => ({
+  mainStatus: null as ChecklistStatus,
+  subItems: [
+    { id: generateUUID(), name: "Motorreductor", status: null as ChecklistStatus },
+    { id: generateUUID(), name: "Freno", status: null as ChecklistStatus },
+    { id: generateUUID(), name: "Ruedas", status: null as ChecklistStatus },
+    { id: generateUUID(), name: "Chumaceras", status: null as ChecklistStatus },
+    { id: generateUUID(), name: "Palanquilla", status: null as ChecklistStatus },
+  ],
+  observation: "",
+});
 
 const defaultForm: MaintenanceReportForm = {
   startDate: null,
@@ -224,6 +279,8 @@ const defaultForm: MaintenanceReportForm = {
   voltage: "",
   initialState: "",
   checklist: buildDefaultChecklist(),
+  trolleyGroup: buildDefaultTrolleyGroup(),
+  carrosTesteros: buildDefaultCarrosTesteros(),
   recommendations: "",
   tests: {
     voltage: "",
@@ -244,12 +301,25 @@ const steps: StepDefinition[] = [
   },
   { key: "basicInfo", title: "Información Básica" },
   { key: "initialState", title: "Estado Inicial" },
-  ...CHECKLIST_ITEMS.map((name, index) => ({
-    key: `checklist-${index}`,
-    title: "Lista de Chequeo",
-    subtitle: `${index + 1}. ${name}`,
-    checklistIndex: index,
-  })),
+  { key: "checklist-0", title: "Lista de Chequeo", subtitle: "1. Motor de elevación", checklistIndex: 0 },
+  { key: "checklist-1", title: "Lista de Chequeo", subtitle: "2. Freno motor de elevación", checklistIndex: 1 },
+  { key: "trolley-group", title: "Lista de Chequeo", subtitle: "3. Trolley y componentes", specialStep: "trolley-group" },
+  { key: "checklist-2", title: "Lista de Chequeo", subtitle: "4. Estructura", checklistIndex: 2 },
+  { key: "checklist-3", title: "Lista de Chequeo", subtitle: "5. Gancho", checklistIndex: 3 },
+  { key: "checklist-4", title: "Lista de Chequeo", subtitle: "6. Cadena", checklistIndex: 4 },
+  { key: "checklist-5", title: "Lista de Chequeo", subtitle: "7. Guaya", checklistIndex: 5 },
+  { key: "checklist-6", title: "Lista de Chequeo", subtitle: "8. Gabinete eléctrico", checklistIndex: 6 },
+  { key: "checklist-7", title: "Lista de Chequeo", subtitle: "9. Aceite", checklistIndex: 7 },
+  { key: "checklist-8", title: "Lista de Chequeo", subtitle: "10. Sistema de cables planos", checklistIndex: 8 },
+  { key: "checklist-9", title: "Lista de Chequeo", subtitle: "11. Topes mecánicos", checklistIndex: 9 },
+  { key: "checklist-10", title: "Lista de Chequeo", subtitle: "12. Botonera", checklistIndex: 10 },
+  { key: "checklist-11", title: "Lista de Chequeo", subtitle: "13. Pines de seguridad", checklistIndex: 11 },
+  { key: "checklist-12", title: "Lista de Chequeo", subtitle: "14. Polipasto", checklistIndex: 12 },
+  { key: "checklist-13", title: "Lista de Chequeo", subtitle: "15. Límite de elevación", checklistIndex: 13 },
+  { key: "checklist-14", title: "Lista de Chequeo", subtitle: "16. Limitador de carga", checklistIndex: 14 },
+  { key: "checklist-15", title: "Lista de Chequeo", subtitle: "17. Sistema de alimentación de línea blindada", checklistIndex: 15 },
+  { key: "checklist-16", title: "Lista de Chequeo", subtitle: "18. Carcazas", checklistIndex: 16 },
+  { key: "carros-testeros", title: "Lista de Chequeo", subtitle: "19. Carros testeros", specialStep: "carros-testeros" },
   { key: "recommendations", title: "Recomendaciones" },
   { key: "tests", title: "Pruebas sin carga" },
   { key: "photos", title: "Soporte Fotográfico" },
@@ -265,7 +335,18 @@ const MaintenanceReportWizard = () => {
   const { toast } = useToast();
   const { user, session, loading: authLoading } = useAuth();
 
-  const [formData, setFormData] = useState<MaintenanceReportForm>(defaultForm);
+  // Inicializar formData con una copia profunda de defaultForm para evitar mutaciones
+  const [formData, setFormData] = useState<MaintenanceReportForm>(() => {
+    // Asegurar que los campos de grupos estén siempre inicializados
+    return {
+      ...defaultForm,
+      trolleyGroup: defaultForm.trolleyGroup ? { ...defaultForm.trolleyGroup } : buildDefaultTrolleyGroup(),
+      carrosTesteros: defaultForm.carrosTesteros ? { 
+        ...defaultForm.carrosTesteros,
+        subItems: defaultForm.carrosTesteros.subItems ? [...defaultForm.carrosTesteros.subItems] : []
+      } : buildDefaultCarrosTesteros(),
+    };
+  });
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [reportId, setReportId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -277,6 +358,9 @@ const MaintenanceReportWizard = () => {
   const activeUploadRef = useRef<{ task: UploadTask; controller: AbortController } | null>(null);
   const reportIdRef = useRef<string | null>(null);
   const formDataRef = useRef<MaintenanceReportForm>(defaultForm);
+  const initializedRef = useRef(false);
+  const initialLoadRef = useRef(true);
+  const lastSavedFormDataRef = useRef<string>(""); // Para evitar autoguardados innecesarios
 
   useEffect(() => {
     reportIdRef.current = reportId ?? null;
@@ -322,6 +406,75 @@ const MaintenanceReportWizard = () => {
     },
     [],
   );
+
+  // Función para recargar fotos desde la base de datos - debe estar antes de handleUploadTask
+  const reloadPhotosFromDatabase = useCallback(async (reportIdToLoad: string) => {
+    try {
+      const { data: photosData, error: photosError } = await supabase
+        .from("maintenance_report_photos")
+        .select("id, storage_path, optimized_path, thumbnail_path, description")
+        .eq("report_id", reportIdToLoad)
+        .order("created_at", { ascending: true });
+
+      if (photosError) {
+        console.warn("Error cargando fotos desde la tabla:", photosError);
+        return;
+      }
+
+      if (photosData && photosData.length > 0) {
+        // Crear un Map para evitar duplicados
+        const photosMap = new Map<string, PhotoEntry>();
+        
+        photosData.forEach((photo) => {
+          const { data: optimizedPublic } = supabase.storage
+            .from(PHOTO_BUCKET)
+            .getPublicUrl(photo.optimized_path || photo.storage_path || "");
+          const { data: fallbackPublic } = supabase.storage
+            .from(PHOTO_BUCKET)
+            .getPublicUrl(photo.storage_path || "");
+          const photoUrl = optimizedPublic?.publicUrl || fallbackPublic?.publicUrl || null;
+
+          photosMap.set(photo.id, {
+            id: photo.id,
+            storagePath: photo.storage_path,
+            optimizedPath: photo.optimized_path || null,
+            thumbnailPath: photo.thumbnail_path || null,
+            url: photoUrl,
+            description: photo.description || "",
+          });
+        });
+
+        // Actualizar solo las fotos, manteniendo el resto del formData
+        setFormData((prev) => {
+          // Combinar fotos existentes (que no están en la BD) con las de la BD
+          const existingPhotoIds = new Set(photosMap.keys());
+          const newPhotos = Array.from(photosMap.values());
+          
+          // Mantener fotos que no están en la BD (fotos nuevas que aún no se han guardado)
+          const photosNotInDb = prev.photos.filter(p => !existingPhotoIds.has(p.id));
+          
+          // Combinar ambas listas, evitando duplicados
+          const allPhotos = [...photosNotInDb, ...newPhotos];
+          const uniquePhotos = Array.from(
+            new Map(allPhotos.map(p => [p.id, p])).values()
+          );
+          
+          return {
+            ...prev,
+            photos: uniquePhotos,
+          };
+        });
+      } else {
+        // Si no hay fotos en la BD, mantener las fotos locales que no tienen storagePath
+        setFormData((prev) => ({
+          ...prev,
+          photos: prev.photos.filter(p => !p.storagePath),
+        }));
+      }
+    } catch (error) {
+      console.error("Error recargando fotos desde la base de datos:", error);
+    }
+  }, []);
 
   const handleUploadTask = useCallback(
     async (task: UploadTask, controller: AbortController) => {
@@ -400,20 +553,44 @@ const MaintenanceReportWizard = () => {
       const { data: fallbackPublic } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath);
       const photoUrl = optimizedPublic?.publicUrl ?? fallbackPublic?.publicUrl ?? null;
 
-      setFormData((prev) => ({
-        ...prev,
-        photos: prev.photos.map((photo) =>
-          photo.id === task.photoId
-            ? {
-                ...photo,
-                storagePath,
-                optimizedPath,
-                thumbnailPath,
-                url: photoUrl,
-              }
-            : photo,
-        ),
-      }));
+      // Usar una función de actualización que evite re-renders innecesarios
+      setFormData((prev) => {
+        // Primero, eliminar cualquier duplicado por ID antes de actualizar
+        const uniquePhotos = prev.photos.filter((photo, index, self) =>
+          index === self.findIndex((p) => p.id === photo.id)
+        );
+        
+        // Verificar si la foto existe antes de actualizar
+        const photoIndex = uniquePhotos.findIndex(p => p.id === task.photoId);
+        if (photoIndex === -1) {
+          console.warn(`Foto con ID ${task.photoId} no encontrada en el estado, no se actualizará`);
+          return prev; // Retornar el mismo objeto para evitar re-render
+        }
+        
+        // Verificar si realmente hay cambios antes de actualizar
+        const existingPhoto = uniquePhotos[photoIndex];
+        if (existingPhoto.storagePath === storagePath && 
+            existingPhoto.optimizedPath === optimizedPath &&
+            existingPhoto.thumbnailPath === thumbnailPath &&
+            existingPhoto.url === photoUrl) {
+          return prev; // No hay cambios, retornar el mismo objeto
+        }
+        
+        // Actualizar solo la foto existente, creando un nuevo array solo si es necesario
+        const updatedPhotos = [...uniquePhotos];
+        updatedPhotos[photoIndex] = {
+          ...existingPhoto,
+          storagePath,
+          optimizedPath,
+          thumbnailPath,
+          url: photoUrl,
+        };
+        
+        return {
+          ...prev,
+          photos: updatedPhotos,
+        };
+      });
 
       updatePhotoUploadState(task.photoId, {
         status: "done",
@@ -421,13 +598,22 @@ const MaintenanceReportWizard = () => {
         message: undefined,
       });
 
+      // Recargar fotos desde la base de datos para asegurar sincronización
+      // Esto actualiza la vista sin necesidad de refrescar la página
+      if (activeReportId) {
+        await reloadPhotosFromDatabase(activeReportId);
+      }
+
       toast({
         title: "Foto cargada",
         description: "La fotografía se optimizó correctamente.",
       });
     },
-    [logPhotoMetric, session, toast, updatePhotoUploadState],
+    [logPhotoMetric, session, toast, updatePhotoUploadState, reloadPhotosFromDatabase],
   );
+
+  // Ref para evitar re-renders innecesarios del scheduleUploadProcessing
+  const scheduleUploadProcessingRef = useRef<() => void>(() => {});
 
   const scheduleUploadProcessing = useCallback(() => {
     if (activeUploadRef.current) return;
@@ -471,9 +657,15 @@ const MaintenanceReportWizard = () => {
       })
       .finally(() => {
         activeUploadRef.current = null;
-        setTimeout(() => scheduleUploadProcessing(), 250);
+        // Usar el ref en lugar de la función directamente para evitar dependencias
+        setTimeout(() => scheduleUploadProcessingRef.current(), 250);
       });
   }, [handleUploadTask, session, updatePhotoUploadState]);
+
+  // Actualizar el ref cuando cambie la función
+  useEffect(() => {
+    scheduleUploadProcessingRef.current = scheduleUploadProcessing;
+  }, [scheduleUploadProcessing]);
 
   useEffect(() => {
     return () => {
@@ -482,11 +674,17 @@ const MaintenanceReportWizard = () => {
     };
   }, []);
 
+  // Procesar la cola de uploads de forma controlada, sin causar re-renders
   useEffect(() => {
-    scheduleUploadProcessing();
-  }, [scheduleUploadProcessing]);
+    // Solo ejecutar una vez al montar, no en cada cambio de scheduleUploadProcessing
+    const intervalId = setInterval(() => {
+      if (uploadQueueRef.current.length > 0 && !activeUploadRef.current && session) {
+        scheduleUploadProcessingRef.current();
+      }
+    }, 500);
 
-  const initialLoadRef = useRef(true);
+    return () => clearInterval(intervalId);
+  }, [session]); // Solo depende de session, no de la función
 
   const compressImageFile = async (file: File): Promise<File> => {
     const MAX_DIMENSION = 1600;
@@ -548,9 +746,12 @@ const MaintenanceReportWizard = () => {
   }, [user, authLoading, navigate]);
 
   useEffect(() => {
-    if (authLoading || !user) return;
+    // Evitar que la inicialización se ejecute múltiples veces
+    if (authLoading || !user || initializedRef.current) return;
 
     const initialize = async () => {
+      // Marcar como inicializado ANTES de ejecutar para evitar ejecuciones paralelas
+      initializedRef.current = true;
       setLoading(true);
       try {
         if (isEditMode && params.id) {
@@ -568,35 +769,31 @@ const MaintenanceReportWizard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, isEditMode, params.id]);
 
-  useEffect(() => {
-    if (initialLoadRef.current || !reportId) return;
-    setPendingAutoSave(true);
-
-    const handler = setTimeout(() => {
-      void persistReport();
-    }, 800);
-
-    return () => clearTimeout(handler);
-  }, [formData, currentStepIndex, reportId]);
+  // Ref para almacenar persistReport y evitar dependencias circulares
+  const persistReportRef = useRef<((overrideData?: MaintenanceReportForm, options?: { silent?: boolean }) => Promise<void>) | null>(null);
 
   const createDraftReport = async (): Promise<string | null> => {
     if (!user) return null;
     try {
-      const payload = buildDbPayload(defaultForm, 0, user.id);
-      const { data, error } = await supabase
-        .from("maintenance_reports")
-        .insert(payload)
-        .select()
-        .single();
-
-      if (error) throw error;
-      setReportId(data.id);
-      setFormData(defaultForm);
-      setCurrentStepIndex(Math.max((data.current_step ?? 1) - 1, 0));
-      setLastSavedAt(new Date(data.updated_at));
-      return data.id;
+      // Crear una copia fresca del formulario por defecto con nuevos UUIDs
+      // NO crear el reporte en la base de datos todavía - solo se creará cuando haya cambios
+      const freshForm: MaintenanceReportForm = {
+        ...defaultForm,
+        checklist: buildDefaultChecklist(),
+        trolleyGroup: buildDefaultTrolleyGroup(),
+        carrosTesteros: buildDefaultCarrosTesteros(),
+        photos: [],
+      };
+      
+      // NO insertar en la base de datos todavía
+      // El reporte se creará cuando el usuario haga el primer cambio
+      setReportId(null); // No hay reportId hasta que se haga el primer cambio
+      setFormData(freshForm);
+      setCurrentStepIndex(0);
+      setLastSavedAt(null); // No hay fecha de guardado porque no se ha guardado
+      return null; // Retornar null porque no se creó ningún reporte todavía
     } catch (error) {
-      console.error("Error creando borrador de informe:", error);
+      console.error("Error inicializando formulario:", error);
       toast({
         title: "Error",
         description:
@@ -618,19 +815,123 @@ const MaintenanceReportWizard = () => {
 
       if (error) throw error;
 
+      const loadedData = typeof data.data === "object" && data.data !== null
+        ? (data.data as Partial<MaintenanceReportForm>)
+        : {};
+      
+      // Función para normalizar nombres antiguos a los nuevos - SIEMPRE normaliza
+      const normalizeTrolleyNames = (group: any) => {
+        if (!group || typeof group !== 'object') return defaultForm.trolleyGroup;
+        
+        const normalized: any = { ...group };
+        
+        // Normalizar nombres - SIEMPRE forzar los nombres correctos
+        normalized.trolley = normalized.trolley ? { ...normalized.trolley, name: "Trolley" } : defaultForm.trolleyGroup.trolley;
+        normalized.motorTrolley = normalized.motorTrolley ? { ...normalized.motorTrolley, name: "Motor Trolley" } : defaultForm.trolleyGroup.motorTrolley;
+        normalized.frenoMotorTrolley = normalized.frenoMotorTrolley ? { ...normalized.frenoMotorTrolley, name: "Freno motor Trolley" } : defaultForm.trolleyGroup.frenoMotorTrolley;
+        normalized.guiasTrolley = normalized.guiasTrolley ? { ...normalized.guiasTrolley, name: "Guias de Trolley" } : defaultForm.trolleyGroup.guiasTrolley;
+        normalized.ruedasTrolley = normalized.ruedasTrolley ? { ...normalized.ruedasTrolley, name: "Ruedas Trolley" } : defaultForm.trolleyGroup.ruedasTrolley;
+        
+        // Asegurar que observation existe
+        if (!normalized.observation) {
+          normalized.observation = "";
+        }
+        
+        return normalized;
+      };
+      
+      // Validar y construir trolleyGroup - SIEMPRE normalizar
+      let trolleyGroup = defaultForm.trolleyGroup;
+      if (loadedData.trolleyGroup && typeof loadedData.trolleyGroup === 'object') {
+        trolleyGroup = normalizeTrolleyNames(loadedData.trolleyGroup);
+      }
+      
+      // Validar y construir carrosTesteros con valores por defecto si faltan
+      // Normalizar nombres si vienen incorrectos (ej: "Carros de prueba" -> "Carros testeros")
+      let carrosTesteros = loadedData.carrosTesteros && 
+        typeof loadedData.carrosTesteros === 'object' &&
+        Array.isArray(loadedData.carrosTesteros.subItems)
+        ? loadedData.carrosTesteros
+        : defaultForm.carrosTesteros;
+      
+      // Asegurar que carrosTesteros siempre tenga la estructura correcta
+      if (!carrosTesteros || !Array.isArray(carrosTesteros.subItems)) {
+        carrosTesteros = defaultForm.carrosTesteros;
+      }
+      
       const parsedData: MaintenanceReportForm = {
         ...defaultForm,
-        ...(typeof data.data === "object" && data.data !== null
-          ? (data.data as MaintenanceReportForm)
-          : {}),
+        ...loadedData,
+        // Asegurar que los nuevos campos de grupos existan y estén bien formados con nombres normalizados
+        trolleyGroup,
+        carrosTesteros,
       };
+      
+      // Guardar los datos normalizados de vuelta a la base de datos para actualizar nombres antiguos
+      if (trolleyGroup && loadedData.trolleyGroup) {
+        // Verificar si hubo cambios en los nombres
+        const needsUpdate = 
+          (loadedData.trolleyGroup.trolley?.name !== trolleyGroup.trolley.name) ||
+          (loadedData.trolleyGroup.motorTrolley?.name !== trolleyGroup.motorTrolley.name) ||
+          (loadedData.trolleyGroup.frenoMotorTrolley?.name !== trolleyGroup.frenoMotorTrolley.name) ||
+          (loadedData.trolleyGroup.guiasTrolley?.name !== trolleyGroup.guiasTrolley.name) ||
+          (loadedData.trolleyGroup.ruedasTrolley?.name !== trolleyGroup.ruedasTrolley.name);
+        
+        if (needsUpdate) {
+          // Actualizar en la base de datos de forma asíncrona (no bloquear la carga)
+          setTimeout(async () => {
+            try {
+              await supabase
+                .from("maintenance_reports")
+                .update({ data: parsedData })
+                .eq("id", data.id);
+            } catch (error) {
+              console.warn("No se pudieron actualizar los nombres normalizados:", error);
+            }
+          }, 1000);
+        }
+      }
 
+      const stepIndex = Math.max((data.current_step ?? 1) - 1, 0);
       setReportId(data.id);
-      setFormData(parsedData);
-      setCurrentStepIndex(Math.max((data.current_step ?? 1) - 1, 0));
+      
+      // FORZAR normalización de nombres antes de establecer el estado
+      const finalParsedData: MaintenanceReportForm = {
+        ...parsedData,
+        trolleyGroup: {
+          ...parsedData.trolleyGroup,
+          trolley: { ...parsedData.trolleyGroup.trolley, name: "Trolley" },
+          motorTrolley: { ...parsedData.trolleyGroup.motorTrolley, name: "Motor Trolley" },
+          frenoMotorTrolley: { ...parsedData.trolleyGroup.frenoMotorTrolley, name: "Freno motor Trolley" },
+          guiasTrolley: { ...parsedData.trolleyGroup.guiasTrolley, name: "Guias de Trolley" },
+          ruedasTrolley: { ...parsedData.trolleyGroup.ruedasTrolley, name: "Ruedas Trolley" },
+        },
+        carrosTesteros: parsedData.carrosTesteros && Array.isArray(parsedData.carrosTesteros.subItems)
+          ? {
+              ...parsedData.carrosTesteros,
+              subItems: parsedData.carrosTesteros.subItems.map((item, index) => {
+                const correctNames = ["Motorreductor", "Freno", "Ruedas", "Chumaceras", "Palanquilla"];
+                return { ...item, name: correctNames[index] || item.name };
+              }),
+            }
+          : parsedData.carrosTesteros,
+      };
+      
+      setFormData(finalParsedData);
+      setCurrentStepIndex(stepIndex);
       if (data.updated_at) {
         setLastSavedAt(new Date(data.updated_at));
       }
+
+      // Inicializar lastSavedFormDataRef para evitar guardados innecesarios al cargar
+      const formDataForComparison = {
+        ...finalParsedData,
+        photos: finalParsedData.photos.map(p => ({ id: p.id, description: p.description })),
+      };
+      lastSavedFormDataRef.current = JSON.stringify(formDataForComparison) + stepIndex;
+
+      // Cargar fotos desde la tabla después de cargar el reporte
+      await reloadPhotosFromDatabase(data.id);
     } catch (error) {
       console.error("Error cargando informe de mantenimiento:", error);
       toast({
@@ -647,6 +948,18 @@ const MaintenanceReportWizard = () => {
     stepIndex: number,
     userId?: string,
   ) => {
+    // Log para verificar que trolleyGroup y carrosTesteros se están guardando
+    console.log('[MaintenanceReportWizard] Saving report with trolleyGroup:', !!data.trolleyGroup);
+    console.log('[MaintenanceReportWizard] Saving report with carrosTesteros:', !!data.carrosTesteros);
+    if (data.trolleyGroup) {
+      console.log('[MaintenanceReportWizard] trolleyGroup.trolley.status:', data.trolleyGroup.trolley?.status);
+      console.log('[MaintenanceReportWizard] trolleyGroup.motorTrolley.status:', data.trolleyGroup.motorTrolley?.status);
+    }
+    if (data.carrosTesteros) {
+      console.log('[MaintenanceReportWizard] carrosTesteros.mainStatus:', data.carrosTesteros.mainStatus);
+      console.log('[MaintenanceReportWizard] carrosTesteros.subItems count:', data.carrosTesteros.subItems?.length ?? 0);
+    }
+    
     const payload = {
       data,
       current_step: stepIndex + 1,
@@ -678,24 +991,47 @@ const MaintenanceReportWizard = () => {
 
   const persistReport = useCallback(
     async (overrideData?: MaintenanceReportForm, options?: { silent?: boolean }) => {
-      if (!reportId) return;
-      const dataToSave = overrideData ?? formData;
+      if (!user) return;
+      
+      // Usar formDataRef.current en lugar de formData para evitar dependencias innecesarias
+      const dataToSave = overrideData ?? formDataRef.current;
       setIsSaving(true);
       try {
-        const { error, data } = await supabase
-          .from("maintenance_reports")
-          .update(buildDbPayload(dataToSave, currentStepIndex))
-          .eq("id", reportId)
-          .select("updated_at")
-          .single();
+        if (!reportId) {
+          // Si no hay reportId, crear el reporte por primera vez
+          const payload = buildDbPayload(dataToSave, currentStepIndex, user.id);
+          const { data, error } = await supabase
+            .from("maintenance_reports")
+            .insert(payload)
+            .select()
+            .single();
 
-        if (error) throw error;
-
-        if (data?.updated_at) {
-          setLastSavedAt(new Date(data.updated_at));
+          if (error) throw error;
+          
+          setReportId(data.id);
+          if (data.updated_at) {
+            setLastSavedAt(new Date(data.updated_at));
+          } else {
+            setLastSavedAt(new Date());
+          }
         } else {
-          setLastSavedAt(new Date());
+          // Si ya existe reportId, actualizar el reporte existente
+          const { error, data } = await supabase
+            .from("maintenance_reports")
+            .update(buildDbPayload(dataToSave, currentStepIndex))
+            .eq("id", reportId)
+            .select("updated_at")
+            .single();
+
+          if (error) throw error;
+
+          if (data?.updated_at) {
+            setLastSavedAt(new Date(data.updated_at));
+          } else {
+            setLastSavedAt(new Date());
+          }
         }
+        
         setPendingAutoSave(false);
         if (!options?.silent) {
           console.info("Informe guardado correctamente.");
@@ -712,15 +1048,155 @@ const MaintenanceReportWizard = () => {
         setIsSaving(false);
       }
     },
-    [reportId, formData, currentStepIndex, toast],
+    [reportId, currentStepIndex, user, toast],
   );
 
+  // Actualizar el ref cuando cambie persistReport
+  useEffect(() => {
+    persistReportRef.current = persistReport;
+  }, [persistReport]);
+
+  // useEffect para normalizar nombres del trolley y carros testeros - SIEMPRE ejecutar después de la carga inicial
+  useEffect(() => {
+    if (initialLoadRef.current) return;
+    
+    // Usar un ref para evitar actualizaciones innecesarias
+    const currentTrolleyName = formData.trolleyGroup?.trolley?.name;
+    const currentMotorName = formData.trolleyGroup?.motorTrolley?.name;
+    const currentFrenoName = formData.trolleyGroup?.frenoMotorTrolley?.name;
+    const currentGuiasName = formData.trolleyGroup?.guiasTrolley?.name;
+    const currentRuedasName = formData.trolleyGroup?.ruedasTrolley?.name;
+    
+    // Verificar si algún nombre es incorrecto
+    const hasIncorrectNames = 
+      (currentTrolleyName && currentTrolleyName !== "Trolley") ||
+      (currentMotorName && currentMotorName !== "Motor Trolley") ||
+      (currentFrenoName && currentFrenoName !== "Freno motor Trolley") ||
+      (currentGuiasName && currentGuiasName !== "Guias de Trolley") ||
+      (currentRuedasName && currentRuedasName !== "Ruedas Trolley");
+    
+    if (hasIncorrectNames && formData.trolleyGroup) {
+      setFormData((prev) => ({
+        ...prev,
+        trolleyGroup: {
+          ...prev.trolleyGroup,
+          trolley: { ...prev.trolleyGroup.trolley, name: "Trolley" },
+          motorTrolley: { ...prev.trolleyGroup.motorTrolley, name: "Motor Trolley" },
+          frenoMotorTrolley: { ...prev.trolleyGroup.frenoMotorTrolley, name: "Freno motor Trolley" },
+          guiasTrolley: { ...prev.trolleyGroup.guiasTrolley, name: "Guias de Trolley" },
+          ruedasTrolley: { ...prev.trolleyGroup.ruedasTrolley, name: "Ruedas Trolley" },
+        },
+      }));
+    }
+    
+    // Normalizar nombres de carros testeros
+    if (formData.carrosTesteros && Array.isArray(formData.carrosTesteros.subItems)) {
+      const correctCarrosNames = ["Motorreductor", "Freno", "Ruedas", "Chumaceras", "Palanquilla"];
+      const hasIncorrectCarrosNames = formData.carrosTesteros.subItems.some((item, index) => {
+        const correctName = correctCarrosNames[index];
+        return correctName && item.name !== correctName;
+      });
+      
+      if (hasIncorrectCarrosNames) {
+        setFormData((prev) => ({
+          ...prev,
+          carrosTesteros: {
+            ...prev.carrosTesteros,
+            subItems: prev.carrosTesteros.subItems.map((item, index) => ({
+              ...item,
+              name: correctCarrosNames[index] || item.name,
+            })),
+          },
+        }));
+      }
+    }
+  }, [formData.trolleyGroup, formData.carrosTesteros]);
+
+  // useEffect para autoguardado - debe estar después de que persistReport esté definido
+  useEffect(() => {
+    if (initialLoadRef.current) return;
+    
+    // Serializar formData para comparar cambios (excluyendo fotos que se guardan por separado)
+    const formDataForComparison = {
+      ...formData,
+      photos: formData.photos.map(p => ({ id: p.id, description: p.description })), // Solo comparar ID y descripción
+    };
+    const serialized = JSON.stringify(formDataForComparison) + currentStepIndex;
+    
+    // Solo guardar si realmente hay cambios
+    if (serialized === lastSavedFormDataRef.current) {
+      return;
+    }
+    
+    // Verificar si el formulario está en su estado inicial (sin cambios)
+    const isInitialState = 
+      !formData.company &&
+      !formData.technicianName &&
+      !formData.equipment &&
+      !formData.startDate &&
+      formData.checklist.every(item => item.status === null && !item.observation) &&
+      formData.trolleyGroup.trolley.status === null &&
+      formData.carrosTesteros.mainStatus === null &&
+      formData.carrosTesteros.subItems.every(item => item.status === null) &&
+      !formData.recommendations &&
+      formData.photos.length === 0;
+    
+    // Si está en estado inicial y no hay reportId, no guardar
+    if (isInitialState && !reportId) {
+      return;
+    }
+    
+    lastSavedFormDataRef.current = serialized;
+    setPendingAutoSave(true);
+
+    const handler = setTimeout(() => {
+      // Usar el ref para evitar dependencias circulares
+      if (persistReportRef.current) {
+        void persistReportRef.current();
+      }
+    }, 3000);
+
+    return () => clearTimeout(handler);
+  }, [formData, currentStepIndex, reportId]);
+
   const handleSaveAndExit = async () => {
-    await persistReport(undefined, { silent: true });
-    toast({
-      title: "Cambios guardados",
-      description: "Puedes continuar más tarde desde la lista de informes.",
-    });
+    // Si no hay reportId, verificar si hay cambios para guardar
+    if (!reportId) {
+      // Verificar si el formulario tiene cambios
+      const hasChanges = 
+        formData.company ||
+        formData.technicianName ||
+        formData.equipment ||
+        formData.startDate ||
+        formData.checklist.some(item => item.status !== null || item.observation) ||
+        formData.trolleyGroup.trolley.status !== null ||
+        formData.carrosTesteros.mainStatus !== null ||
+        formData.carrosTesteros.subItems.some(item => item.status !== null) ||
+        formData.recommendations ||
+        formData.photos.length > 0;
+      
+      if (hasChanges) {
+        // Si hay cambios, guardar por primera vez
+        await persistReport(undefined, { silent: true });
+        toast({
+          title: "Cambios guardados",
+          description: "Puedes continuar más tarde desde la lista de informes.",
+        });
+      } else {
+        // Si no hay cambios, simplemente salir sin guardar
+        toast({
+          title: "Sin cambios",
+          description: "No se guardó ningún informe porque no se realizaron cambios.",
+        });
+      }
+    } else {
+      // Si ya existe reportId, guardar normalmente
+      await persistReport(undefined, { silent: true });
+      toast({
+        title: "Cambios guardados",
+        description: "Puedes continuar más tarde desde la lista de informes.",
+      });
+    }
     navigate("/maintenance-reports");
   };
 
@@ -771,12 +1247,19 @@ const MaintenanceReportWizard = () => {
   };
 
   const handlePhotoDescriptionChange = (photoId: string, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      photos: prev.photos.map((photo) =>
-        photo.id === photoId ? { ...photo, description: value } : photo,
-      ),
-    }));
+    setFormData((prev) => {
+      // Eliminar duplicados antes de actualizar
+      const uniquePhotos = prev.photos.filter((photo, index, self) =>
+        index === self.findIndex((p) => p.id === photo.id)
+      );
+      
+      return {
+        ...prev,
+        photos: uniquePhotos.map((photo) =>
+          photo.id === photoId ? { ...photo, description: value } : photo,
+        ),
+      };
+    });
     if (reportId) {
       void supabase
         .from("maintenance_report_photos")
@@ -792,21 +1275,31 @@ const MaintenanceReportWizard = () => {
   };
 
   const handleAddPhoto = async () => {
-    const id = crypto.randomUUID();
-    setFormData((prev) => ({
-      ...prev,
-      photos: [
-        ...prev.photos,
-        {
-          id,
-          storagePath: null,
-          optimizedPath: null,
-          thumbnailPath: null,
-          url: null,
-          description: "",
-        },
-      ],
-    }));
+    const id = generateUUID();
+    setFormData((prev) => {
+      // Verificar que no exista ya una foto con este ID (aunque es muy improbable con UUID)
+      // También verificar que no haya fotos duplicadas sin ID válido
+      const existingIds = new Set(prev.photos.map(p => p.id));
+      if (existingIds.has(id)) {
+        console.warn("Intento de agregar foto con ID duplicado, ignorando");
+        return prev;
+      }
+      
+      return {
+        ...prev,
+        photos: [
+          ...prev.photos,
+          {
+            id,
+            storagePath: null,
+            optimizedPath: null,
+            thumbnailPath: null,
+            url: null,
+            description: "",
+          },
+        ],
+      };
+    });
   };
 
   const handlePhotoFileUpload = async (photoId: string, fileList: FileList | null) => {
@@ -836,20 +1329,34 @@ const MaintenanceReportWizard = () => {
 
     const originalFile = fileList[0];
 
-    setFormData((prev) => ({
-      ...prev,
-      photos: prev.photos.map((photo) =>
-        photo.id === photoId
-          ? {
-              ...photo,
-              url: null,
-              storagePath: null,
-              optimizedPath: null,
-              thumbnailPath: null,
-            }
-          : photo,
-      ),
-    }));
+    setFormData((prev) => {
+      // Eliminar duplicados antes de actualizar
+      const uniquePhotos = prev.photos.filter((photo, index, self) =>
+        index === self.findIndex((p) => p.id === photo.id)
+      );
+      
+      // Verificar que la foto existe antes de actualizar
+      const photoExists = uniquePhotos.some(p => p.id === photoId);
+      if (!photoExists) {
+        console.warn(`Foto con ID ${photoId} no encontrada, no se actualizará`);
+        return prev;
+      }
+      
+      return {
+        ...prev,
+        photos: uniquePhotos.map((photo) =>
+          photo.id === photoId
+            ? {
+                ...photo,
+                url: null,
+                storagePath: null,
+                optimizedPath: null,
+                thumbnailPath: null,
+              }
+            : photo,
+        ),
+      };
+    });
     if (originalFile.size > LARGE_FILE_THRESHOLD) {
       updatePhotoUploadState(photoId, {
         status: "preparing",
@@ -881,7 +1388,8 @@ const MaintenanceReportWizard = () => {
       attempts: 0,
       message: undefined,
     });
-    scheduleUploadProcessing();
+    // Usar el ref para evitar re-renders innecesarios
+    scheduleUploadProcessingRef.current();
   };
 
   const handleRemovePhoto = async (photo: PhotoEntry) => {
@@ -987,6 +1495,331 @@ const MaintenanceReportWizard = () => {
             onChange={(event) =>
               updateChecklistEntry(index, { observation: event.target.value })
             }
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderTrolleyGroup = () => {
+    const { trolleyGroup } = formData;
+    
+    // Validación defensiva - usar valores por defecto si no existen
+    const safeTrolleyGroup = trolleyGroup && trolleyGroup.trolley 
+      ? trolleyGroup 
+      : defaultForm.trolleyGroup;
+    
+    // Normalizar nombres solo para mostrar (sin modificar estado durante render)
+    const displayGroup = {
+      ...safeTrolleyGroup,
+      trolley: { ...safeTrolleyGroup.trolley, name: "Trolley" },
+      motorTrolley: { ...safeTrolleyGroup.motorTrolley, name: "Motor Trolley" },
+      frenoMotorTrolley: { ...safeTrolleyGroup.frenoMotorTrolley, name: "Freno motor Trolley" },
+      guiasTrolley: { ...safeTrolleyGroup.guiasTrolley, name: "Guias de Trolley" },
+      ruedasTrolley: { ...safeTrolleyGroup.ruedasTrolley, name: "Ruedas Trolley" },
+    };
+    
+    const isTrolleyNA = displayGroup.trolley.status === "na";
+    
+    const updateTrolleyItem = (key: "trolley" | "motorTrolley" | "frenoMotorTrolley" | "guiasTrolley" | "ruedasTrolley", updates: Partial<TrolleyGroupEntry>) => {
+      // Mapear nombres correctos según la clave
+      const correctNames: Record<typeof key, string> = {
+        trolley: "Trolley",
+        motorTrolley: "Motor Trolley",
+        frenoMotorTrolley: "Freno motor Trolley",
+        guiasTrolley: "Guias de Trolley",
+        ruedasTrolley: "Ruedas Trolley",
+      };
+      
+      setFormData((prev) => ({
+        ...prev,
+        trolleyGroup: {
+          ...prev.trolleyGroup,
+          [key]: { 
+            ...prev.trolleyGroup[key], 
+            ...updates,
+            name: correctNames[key], // Siempre usar el nombre correcto
+          },
+        },
+      }));
+    };
+
+    const updateTrolleyObservation = (value: string) => {
+      setFormData((prev) => ({
+        ...prev,
+        trolleyGroup: {
+          ...prev.trolleyGroup,
+          observation: value,
+        },
+      }));
+    };
+
+    const renderTrolleyItem = (key: "trolley" | "motorTrolley" | "frenoMotorTrolley" | "guiasTrolley" | "ruedasTrolley", item: TrolleyGroupEntry) => {
+      const isDisabled = key !== "trolley" && isTrolleyNA;
+      
+      // Mapear nombres correctos según la clave
+      const correctNames: Record<typeof key, string> = {
+        trolley: "Trolley",
+        motorTrolley: "Motor Trolley",
+        frenoMotorTrolley: "Freno motor Trolley",
+        guiasTrolley: "Guias de Trolley",
+        ruedasTrolley: "Ruedas Trolley",
+      };
+      
+      const displayName = correctNames[key];
+      
+      return (
+        <div key={item.id} className="space-y-3">
+          <h4 className="font-semibold text-lg">{displayName}</h4>
+          <RadioGroup
+            value={item.status ?? ""}
+            onValueChange={(value: ChecklistStatus) => {
+              updateTrolleyItem(key, { status: value });
+              // Si se selecciona N/A en Trolley, limpiar otros estados
+              if (key === "trolley" && value === "na") {
+                setFormData((prev) => ({
+                  ...prev,
+                  trolleyGroup: {
+                    ...prev.trolleyGroup,
+                    motorTrolley: { ...prev.trolleyGroup.motorTrolley, status: null },
+                    frenoMotorTrolley: { ...prev.trolleyGroup.frenoMotorTrolley, status: null },
+                    guiasTrolley: { ...prev.trolleyGroup.guiasTrolley, status: null },
+                    ruedasTrolley: { ...prev.trolleyGroup.ruedasTrolley, status: null },
+                  },
+                }));
+              }
+            }}
+            className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+          >
+            <Label
+              htmlFor={`trolley-${key}-good`}
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                item.status === "good" && "border-green-500 bg-green-500/10",
+                isDisabled && "opacity-50 cursor-not-allowed",
+              )}
+            >
+              <RadioGroupItem value="good" id={`trolley-${key}-good`} disabled={isDisabled} />
+              Buen estado
+            </Label>
+            <Label
+              htmlFor={`trolley-${key}-bad`}
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                item.status === "bad" && "border-destructive bg-destructive/10",
+                isDisabled && "opacity-50 cursor-not-allowed",
+              )}
+            >
+              <RadioGroupItem value="bad" id={`trolley-${key}-bad`} disabled={isDisabled} />
+              Mal estado
+            </Label>
+            <Label
+              htmlFor={`trolley-${key}-na`}
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                item.status === "na" && "border-blue-500 bg-blue-500/10",
+                isDisabled && "opacity-50 cursor-not-allowed",
+              )}
+            >
+              <RadioGroupItem value="na" id={`trolley-${key}-na`} disabled={isDisabled} />
+              N/A
+            </Label>
+          </RadioGroup>
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-6">
+        <p className="text-muted-foreground">
+          Revise cada componente del Trolley y seleccione su estado. Si el Trolley completo es N/A, los demás componentes se deshabilitarán automáticamente.
+        </p>
+        
+        {renderTrolleyItem("trolley", displayGroup.trolley)}
+        {renderTrolleyItem("motorTrolley", displayGroup.motorTrolley)}
+        {renderTrolleyItem("frenoMotorTrolley", displayGroup.frenoMotorTrolley)}
+        {renderTrolleyItem("guiasTrolley", displayGroup.guiasTrolley)}
+        {renderTrolleyItem("ruedasTrolley", displayGroup.ruedasTrolley)}
+
+        <div className="space-y-2">
+          <Label htmlFor="trolley-observation">Observaciones generales del Trolley</Label>
+          <Textarea
+            id="trolley-observation"
+            rows={5}
+            placeholder="Escriba observaciones relevantes sobre el Trolley y sus componentes."
+            value={displayGroup.observation}
+            onChange={(event) => updateTrolleyObservation(event.target.value)}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderCarrosTesteros = () => {
+    const { carrosTesteros } = formData;
+    
+    // Validación defensiva - usar valores por defecto si no existen
+    const safeCarrosTesteros = carrosTesteros && Array.isArray(carrosTesteros.subItems)
+      ? carrosTesteros
+      : defaultForm.carrosTesteros;
+    
+    // Normalizar nombres solo para mostrar (sin modificar estado durante render)
+    const correctNames = ["Motorreductor", "Freno", "Ruedas", "Chumaceras", "Palanquilla"];
+    const displayCarrosTesteros = {
+      ...safeCarrosTesteros,
+      subItems: safeCarrosTesteros.subItems.map((item, index) => ({
+        ...item,
+        name: correctNames[index] || item.name,
+      })),
+    };
+    
+    const isMainNA = displayCarrosTesteros.mainStatus === "na";
+
+    const updateMainStatus = (status: ChecklistStatus) => {
+      setFormData((prev) => {
+        const newCarrosTesteros = {
+          ...prev.carrosTesteros,
+          mainStatus: status,
+        };
+        // Si se selecciona N/A, limpiar todos los sub-items
+        if (status === "na") {
+          newCarrosTesteros.subItems = prev.carrosTesteros.subItems.map((item) => ({
+            ...item,
+            status: null,
+          }));
+        }
+        return {
+          ...prev,
+          carrosTesteros: newCarrosTesteros,
+        };
+      });
+    };
+
+    const updateSubItem = (index: number, status: ChecklistStatus) => {
+      setFormData((prev) => ({
+        ...prev,
+        carrosTesteros: {
+          ...prev.carrosTesteros,
+          subItems: prev.carrosTesteros.subItems.map((item, i) =>
+            i === index ? { ...item, status } : item
+          ),
+        },
+      }));
+    };
+
+    const updateObservation = (value: string) => {
+      setFormData((prev) => ({
+        ...prev,
+        carrosTesteros: {
+          ...prev.carrosTesteros,
+          observation: value,
+        },
+      }));
+    };
+
+    return (
+      <div className="space-y-6">
+        <p className="text-muted-foreground">
+          Revise el estado general de los Carros testeros y cada uno de sus componentes. Si los Carros testeros son N/A, los componentes se deshabilitarán automáticamente.
+        </p>
+
+        <div className="space-y-4">
+          <h4 className="font-semibold text-lg">Carros testeros (Estado general)</h4>
+          <RadioGroup
+            value={displayCarrosTesteros.mainStatus ?? ""}
+            onValueChange={(value: ChecklistStatus) => updateMainStatus(value)}
+            className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+          >
+            <Label
+              htmlFor="carros-main-good"
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                displayCarrosTesteros.mainStatus === "good" && "border-green-500 bg-green-500/10",
+              )}
+            >
+              <RadioGroupItem value="good" id="carros-main-good" />
+              Buen estado
+            </Label>
+            <Label
+              htmlFor="carros-main-bad"
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                displayCarrosTesteros.mainStatus === "bad" && "border-destructive bg-destructive/10",
+              )}
+            >
+              <RadioGroupItem value="bad" id="carros-main-bad" />
+              Mal estado
+            </Label>
+            <Label
+              htmlFor="carros-main-na"
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                displayCarrosTesteros.mainStatus === "na" && "border-blue-500 bg-blue-500/10",
+              )}
+            >
+              <RadioGroupItem value="na" id="carros-main-na" />
+              N/A
+            </Label>
+          </RadioGroup>
+        </div>
+
+        <div className="space-y-4">
+          <h4 className="font-semibold text-lg">Componentes de Carros testeros</h4>
+          {displayCarrosTesteros.subItems.map((item, index) => (
+            <div key={item.id} className="space-y-3">
+              <h5 className="font-medium">{item.name}</h5>
+              <RadioGroup
+                value={item.status ?? ""}
+                onValueChange={(value: ChecklistStatus) => updateSubItem(index, value)}
+                className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+                disabled={isMainNA}
+              >
+                <Label
+                  htmlFor={`carros-${index}-good`}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                    item.status === "good" && "border-green-500 bg-green-500/10",
+                    isMainNA && "opacity-50 cursor-not-allowed",
+                  )}
+                >
+                  <RadioGroupItem value="good" id={`carros-${index}-good`} disabled={isMainNA} />
+                  Buen estado
+                </Label>
+                <Label
+                  htmlFor={`carros-${index}-bad`}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                    item.status === "bad" && "border-destructive bg-destructive/10",
+                    isMainNA && "opacity-50 cursor-not-allowed",
+                  )}
+                >
+                  <RadioGroupItem value="bad" id={`carros-${index}-bad`} disabled={isMainNA} />
+                  Mal estado
+                </Label>
+                <Label
+                  htmlFor={`carros-${index}-na`}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                    item.status === "na" && "border-blue-500 bg-blue-500/10",
+                    isMainNA && "opacity-50 cursor-not-allowed",
+                  )}
+                >
+                  <RadioGroupItem value="na" id={`carros-${index}-na`} disabled={isMainNA} />
+                  N/A
+                </Label>
+              </RadioGroup>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="carros-observation">Observaciones generales de Carros testeros</Label>
+          <Textarea
+            id="carros-observation"
+            rows={5}
+            placeholder="Escriba observaciones relevantes sobre los Carros testeros y sus componentes."
+            value={displayCarrosTesteros.observation}
+            onChange={(event) => updateObservation(event.target.value)}
           />
         </div>
       </div>
@@ -1273,19 +2106,29 @@ const MaintenanceReportWizard = () => {
             </p>
 
             <div className="space-y-4">
-              {formData.photos.map((photo) => {
-                const inputId = `photo-upload-${photo.id}`;
-                const uploadState = photoUploads[photo.id];
-                const isBusy = uploadState
-                  ? ["preparing", "queued", "uploading", "processing"].includes(uploadState.status)
-                  : false;
-                const buttonLabel = uploadState && uploadState.status !== "idle" && uploadState.status !== "done"
-                  ? uploadButtonCopy[uploadState.status]
-                  : photo.url
-                  ? "Reemplazar"
-                  : "Subir foto";
-                return (
-                  <Card key={photo.id} className="p-4 space-y-4">
+              {(() => {
+                // Eliminar duplicados antes de renderizar usando un Map para mantener el orden
+                const uniquePhotosMap = new Map<string, PhotoEntry>();
+                formData.photos.forEach((photo) => {
+                  if (photo.id && !uniquePhotosMap.has(photo.id)) {
+                    uniquePhotosMap.set(photo.id, photo);
+                  }
+                });
+                const uniquePhotos = Array.from(uniquePhotosMap.values());
+                
+                return uniquePhotos.map((photo) => {
+                  const inputId = `photo-upload-${photo.id}`;
+                  const uploadState = photoUploads[photo.id];
+                  const isBusy = uploadState
+                    ? ["preparing", "queued", "uploading", "processing"].includes(uploadState.status)
+                    : false;
+                  const buttonLabel = uploadState && uploadState.status !== "idle" && uploadState.status !== "done"
+                    ? uploadButtonCopy[uploadState.status]
+                    : photo.url
+                    ? "Reemplazar"
+                    : "Subir foto";
+                  return (
+                    <Card key={photo.id} className="p-4 space-y-4">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex items-center gap-3">
                         {photo.url ? (
@@ -1375,8 +2218,9 @@ const MaintenanceReportWizard = () => {
                       </div>
                     )}
                   </Card>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
 
             <Button type="button" variant="outline" onClick={handleAddPhoto}>
@@ -1403,10 +2247,31 @@ const MaintenanceReportWizard = () => {
           </div>
         );
       default:
-        if (currentStep.checklistIndex !== undefined) {
-          return renderChecklistStep(currentStep.checklistIndex);
+        try {
+          if (currentStep.specialStep === "trolley-group") {
+            return renderTrolleyGroup();
+          }
+          if (currentStep.specialStep === "carros-testeros") {
+            return renderCarrosTesteros();
+          }
+          if (currentStep.checklistIndex !== undefined) {
+            return renderChecklistStep(currentStep.checklistIndex);
+          }
+          return null;
+        } catch (error) {
+          console.error("Error renderizando paso:", error, currentStep);
+          return (
+            <div className="space-y-4">
+              <p className="text-destructive">
+                Error al renderizar este paso. Por favor, recarga la página.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {error instanceof Error ? error.message : String(error)}
+              </p>
+              <Button onClick={() => window.location.reload()}>Recargar página</Button>
+            </div>
+          );
         }
-        return null;
     }
   };
 

@@ -47,3 +47,29 @@ END $$;
 -- JOIN public.profiles p ON p.id = ur.user_id
 -- WHERE p.email = 'tecnicos@soldgrup.com'; -- Cambiar si usas otro email
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

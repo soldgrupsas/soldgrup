@@ -2,9 +2,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import Index from "./pages/Index";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import CreateProposal from "./pages/CreateProposal";
@@ -18,17 +18,33 @@ import AdminPanel from "./pages/admin/AdminPanel";
 import AdminRoles from "./pages/admin/AdminRoles";
 import MaintenanceReports from "./pages/MaintenanceReports";
 import MaintenanceReportWizard from "./pages/MaintenanceReportWizard";
+import MaintenanceReportTypeSelector from "./pages/MaintenanceReportTypeSelector";
+import ElevatorMaintenanceReportWizard from "./pages/ElevatorMaintenanceReportWizard";
+import GeneralMaintenanceReport from "./pages/GeneralMaintenanceReport";
+import BridgeCraneMaintenanceReport from "./pages/BridgeCraneMaintenanceReport";
+import TimeControl from "./pages/TimeControl";
 
-const queryClient = new QueryClient();
+// Crear queryClient FUERA del componente para evitar recreación en cada render
+// Esto previene que QueryClientProvider se remonte y cause duplicación de la UI
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      retry: 1,
+    },
+  },
+});
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+          <Route path="/" element={<Navigate to="/auth" replace />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/view/:slug" element={<PublicProposal />} />
           {/* Protected routes */}
@@ -44,14 +60,19 @@ const App = () => (
           <Route path="/equipment/create" element={<ProtectedRoute><CreateEquipment /></ProtectedRoute>} />
           <Route path="/equipment/edit/:id" element={<ProtectedRoute><CreateEquipment /></ProtectedRoute>} />
           <Route path="/maintenance-reports" element={<ProtectedRoute><MaintenanceReports /></ProtectedRoute>} />
-          <Route path="/maintenance-reports/new" element={<ProtectedRoute><MaintenanceReportWizard /></ProtectedRoute>} />
-          <Route path="/maintenance-reports/:id/edit" element={<ProtectedRoute><MaintenanceReportWizard /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/new" element={<ProtectedRoute><MaintenanceReportTypeSelector /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/new/puentes-grua" element={<ProtectedRoute><BridgeCraneMaintenanceReport /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/new/elevadores" element={<ProtectedRoute><ElevatorMaintenanceReportWizard /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/new/mantenimientos-generales" element={<ProtectedRoute><GeneralMaintenanceReport /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/:id/edit" element={<ProtectedRoute><ElevatorMaintenanceReportWizard /></ProtectedRoute>} />
+          <Route path="/time-control" element={<ProtectedRoute><TimeControl /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

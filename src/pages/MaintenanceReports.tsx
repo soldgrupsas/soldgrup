@@ -174,16 +174,30 @@ const MaintenanceReports = () => {
 
   const formattedReports = useMemo(
     () =>
-      reports.map((report) => ({
-        ...report,
-        displayStartDate: report.start_date
-          ? new Date(report.start_date).toLocaleDateString("es-CO", {
+      reports.map((report) => {
+        // Convertir fecha de string YYYY-MM-DD a Date usando zona horaria local
+        // para evitar que se reste un día por problemas de timezone
+        let displayStartDate = "Sin fecha";
+        if (report.start_date) {
+          // Extraer año, mes y día del string
+          const dateMatch = String(report.start_date).match(/^(\d{4})-(\d{2})-(\d{2})/);
+          if (dateMatch) {
+            const [, year, month, day] = dateMatch;
+            // Crear Date usando zona horaria local (no UTC)
+            const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+            displayStartDate = dateObj.toLocaleDateString("es-CO", {
               year: "numeric",
               month: "short",
               day: "numeric",
-            })
-          : "Sin fecha",
-      })),
+            });
+          }
+        }
+        
+        return {
+          ...report,
+          displayStartDate,
+        };
+      }),
     [reports],
   );
 

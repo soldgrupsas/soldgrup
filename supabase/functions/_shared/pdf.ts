@@ -68,31 +68,236 @@ const mutedColor = rgb(0.42, 0.45, 0.50); // #6b7280
 
 const backgroundImageUrl = 'https://hpzfmcdmywofxioayiff.supabase.co/storage/v1/object/public/assets/Fondo%20PDF.jpg?download=1';
 
+// Función global de normalización ULTRA AGRESIVA que se aplica ANTES de cualquier procesamiento
+// Esta función es la ÚNICA fuente de verdad para normalización y debe ser IMPOSIBLE que escape un carácter problemático
+// ESPECÍFICAMENTE diseñada para eliminar emojis como 📱 (0x1f4f1) y 📞 (0x1f4de)
+const ULTRA_NORMALIZE = (text: any): string => {
+  if (text === null || text === undefined) return '';
+  if (typeof text !== 'string') {
+    try {
+      text = String(text);
+    } catch {
+      return '';
+    }
+  }
+  if (!text) return '';
+  
+  let str = String(text);
+  
+  // MÉTODO 1: Eliminar TODOS los pares sustitutos (emojis) usando regex MÚLTIPLES VECES
+  // Los emojis se representan como dos caracteres en JavaScript (surrogate pairs)
+  // High surrogate: 0xD800-0xDBFF, Low surrogate: 0xDC00-0xDFFF
+  // Hacer esto 5 veces para asegurar que no quede NADA
+  for (let i = 0; i < 5; i++) {
+    // Eliminar pares sustitutos completos (emojis como 📱 0x1f4f1, 📞 0x1f4de, etc.)
+    str = str.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '');
+    // Eliminar cualquier surrogate suelto
+    str = str.replace(/[\uD800-\uDFFF]/g, '');
+  }
+  
+  // MÉTODO 1.5: Eliminación específica de emojis problemáticos conocidos usando su código Unicode
+  // Convertir el código Unicode del emoji a su representación de par sustituto y eliminarlo
+  // 📱 = U+1F4F1 = \uD83D\uDCF1
+  // 📞 = U+1F4DE = \uD83D\uDCDE
+  str = str.replace(/\uD83D\uDCF1/g, ''); // 📱 Mobile phone with arrows
+  str = str.replace(/\uD83D\uDCDE/g, ''); // 📞 Telephone receiver
+  str = str.replace(/\uD83D\uDCF2/g, ''); // 📲 Mobile phone with arrow
+  str = str.replace(/\uD83D\uDCE9/g, ''); // 📩 Envelope with arrow
+  str = str.replace(/\uD83D\uDCE7/g, ''); // 📧 E-mail
+  str = str.replace(/\uD83D\uDCE8/g, ''); // 📨 Incoming envelope
+  // Eliminar cualquier otro emoji común que pueda aparecer
+  str = str.replace(/[\uD83C-\uD83E][\uDC00-\uDFFF]/g, ''); // Rango amplio de emojis
+  // Eliminar TODOS los emojis posibles (rango completo de surrogates)
+  str = str.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ''); // Cualquier par sustituto
+  str = str.replace(/[\uD800-\uDFFF]/g, ''); // Cualquier surrogate suelto
+  
+  // MÉTODO 2: Reemplazar caracteres problemáticos conocidos (múltiples variantes)
+  // IMPORTANTE: Hacer esto ANTES de cualquier otro procesamiento
+  str = str
+    .replace(/\u2713/g, 'v')  // CHECK MARK (U+2713) -> v (√ checkmark)
+    .replace(/\u2714/g, 'v')  // HEAVY CHECK MARK -> v
+    .replace(/\u2705/g, 'v')  // WHITE HEAVY CHECK MARK -> v
+    .replace(/\u2611/g, 'v')  // BALLOT BOX WITH CHECK -> v
+    .replace(/\u2612/g, 'x')  // BALLOT BOX WITH X -> x
+    .replace(/\u2717/g, 'x')  // BALLOT X -> x
+    .replace(/\u2718/g, 'x')  // HEAVY BALLOT X -> x
+    .replace(/\u221A/g, 'sqrt') // SQUARE ROOT (√) -> sqrt
+    .replace(/\u221B/g, 'cbrt') // CUBE ROOT -> cbrt
+    .replace(/\u221C/g, '4rt') // FOURTH ROOT -> 4rt
+    // Eliminar cualquier variante del símbolo √ que pueda existir
+    .replace(/√/g, 'sqrt') // Símbolo raíz cuadrada directo
+    .replace(/\u221A/g, 'sqrt') // SQUARE ROOT Unicode
+    .replace(/\u221B/g, 'cbrt') // CUBE ROOT
+    .replace(/\u221C/g, '4rt'); // FOURTH ROOT
+  
+  // MÉTODO 3: Eliminar TODOS los caracteres fuera de WinAnsi usando regex MÚLTIPLES VECES
+  // Hacer esto 5 veces para asegurar que no quede nada
+  // IMPORTANTE: Eliminar específicamente √ y otros caracteres problemáticos primero
+  for (let i = 0; i < 5; i++) {
+    // Eliminar símbolos matemáticos problemáticos específicamente
+    str = str.replace(/[√∛∜]/g, ''); // Eliminar símbolos de raíz
+    str = str.replace(/[^\x00-\x7F\xA0-\xFF]/g, ''); // Eliminar todo fuera de ASCII y Latin-1
+    str = str.replace(/[\x81\x8D\x8F\x90\x9D]/g, ''); // Eliminar controles problemáticos
+  }
+  
+  // MÉTODO 4: Verificación final carácter por carácter (GARANTÍA ABSOLUTA)
+  // Este es el paso final que garantiza que SOLO caracteres WinAnsi válidos pasen
+  let result = '';
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    
+    // PRIMERO: Verificar si es un surrogate (nunca debería llegar aquí después de MÉTODO 1, pero por seguridad)
+    if (code >= 0xD800 && code <= 0xDFFF) {
+      // Es un surrogate, saltarlo completamente
+      continue;
+    }
+    
+    // SEGUNDO: Eliminar caracteres problemáticos específicos (√, checkmarks, etc.)
+    if (code === 0x2713 || code === 0x2714 || code === 0x2705 || // Checkmarks
+        code === 0x2611 || code === 0x2612 || // Ballot boxes
+        code === 0x2717 || code === 0x2718 || // X marks
+        code === 0x221A || code === 0x221B || code === 0x221C) { // Root symbols
+      // Reemplazar con caracteres seguros
+      if (code === 0x221A || code === 0x221B || code === 0x221C) {
+        result += 'sqrt';
+      } else if (code === 0x2713 || code === 0x2714 || code === 0x2705 || code === 0x2611) {
+        result += 'v';
+      } else {
+        result += 'x';
+      }
+      continue;
+    }
+    
+    // TERCERO: Solo permitir caracteres WinAnsi válidos
+    if (code <= 127) {
+      // ASCII completo (0-127)
+      result += str[i];
+    } else if (code >= 160 && code <= 255 && 
+               code !== 0x81 && code !== 0x8D && code !== 0x8F && 
+               code !== 0x90 && code !== 0x9D) {
+      // Latin-1 válido (160-255, excluyendo controles problemáticos)
+      result += str[i];
+    }
+    // Cualquier otro carácter se IGNORA (no se agrega a result)
+  }
+  
+  // MÉTODO 5: Verificación final de seguridad (por si acaso algo escapó)
+  // Convertir a array de códigos y filtrar, eliminando CUALQUIER cosa fuera de WinAnsi
+  const finalCheck = result.split('').filter((char) => {
+    const code = char.charCodeAt(0);
+    // Eliminar cualquier surrogate que haya escapado
+    if (code >= 0xD800 && code <= 0xDFFF) {
+      return false;
+    }
+    // Solo permitir WinAnsi válido
+    return code <= 127 || (code >= 160 && code <= 255 && 
+           code !== 0x81 && code !== 0x8D && code !== 0x8F && 
+           code !== 0x90 && code !== 0x9D);
+  }).join('');
+  
+  return finalCheck;
+};
+
 export async function createProposalPDF({
   proposal,
   items,
   equipment,
   images,
 }: CreateProposalPDFParams): Promise<Uint8Array> {
+  // Normalizar TODOS los datos de entrada ANTES de crear el PDF
+  const normalizeData = (data: any): any => {
+    if (data === null || data === undefined) return data;
+    if (typeof data === 'string') {
+      return ULTRA_NORMALIZE(data);
+    }
+    if (typeof data === 'object') {
+      if (Array.isArray(data)) {
+        return data.map(normalizeData);
+      }
+      const normalized: any = {};
+      for (const key in data) {
+        normalized[key] = normalizeData(data[key]);
+      }
+      return normalized;
+    }
+    return data;
+  };
+
+  const normalizedProposal = normalizeData(proposal);
+  const normalizedItems = normalizeData(items);
+  const normalizedEquipment = normalizeData(equipment);
+  const normalizedImages = normalizeData(images);
+
   const pdfDoc = await PDFDocument.create();
   const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-  const embeddedImages = await loadProposalImages(pdfDoc, images);
+  const embeddedImages = await loadProposalImages(pdfDoc, normalizedImages);
   const backgroundImage = await loadBackgroundImage(pdfDoc);
 
   await generatePDFContent({
     pdfDoc,
     helvetica,
     helveticaBold,
-    proposal,
-    items,
-    equipment,
+    proposal: normalizedProposal,
+    items: normalizedItems,
+    equipment: normalizedEquipment,
     images: embeddedImages,
     backgroundImage,
   });
 
-  const pdfBytes = await pdfDoc.save();
+  // Intentar guardar el PDF con protección adicional
+  let pdfBytes: Uint8Array;
+  try {
+    pdfBytes = await pdfDoc.save();
+  } catch (error: any) {
+    // Si falla por error de codificación, intentar una última vez con datos completamente normalizados
+    console.warn('Error al guardar PDF, reintentando con normalización adicional:', error);
+    
+    // Re-normalizar todos los datos de forma aún más agresiva
+    const ultraNormalizeData = (data: any): any => {
+      if (data === null || data === undefined) return data;
+      if (typeof data === 'string') {
+        // Convertir a ASCII puro como último recurso
+        return ULTRA_NORMALIZE(data).split('').map((char: string) => {
+          const code = char.charCodeAt(0);
+          return code <= 127 ? char : '?';
+        }).join('');
+      }
+      if (typeof data === 'object') {
+        if (Array.isArray(data)) {
+          return data.map(ultraNormalizeData);
+        }
+        const normalized: any = {};
+        for (const key in data) {
+          normalized[key] = ultraNormalizeData(data[key]);
+        }
+        return normalized;
+      }
+      return data;
+    };
+
+    // Crear un nuevo PDF con datos ultra-normalizados
+    const newPdfDoc = await PDFDocument.create();
+    const newHelveticaBold = await newPdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const newHelvetica = await newPdfDoc.embedFont(StandardFonts.Helvetica);
+    const newEmbeddedImages = await loadProposalImages(newPdfDoc, ultraNormalizeData(normalizedImages));
+    const newBackgroundImage = await loadBackgroundImage(newPdfDoc);
+
+    await generatePDFContent({
+      pdfDoc: newPdfDoc,
+      helvetica: newHelvetica,
+      helveticaBold: newHelveticaBold,
+      proposal: ultraNormalizeData(normalizedProposal),
+      items: ultraNormalizeData(normalizedItems),
+      equipment: ultraNormalizeData(normalizedEquipment),
+      images: newEmbeddedImages,
+      backgroundImage: newBackgroundImage,
+    });
+
+    pdfBytes = await newPdfDoc.save();
+  }
+
   return pdfBytes;
 }
 
@@ -122,7 +327,7 @@ async function loadProposalImages(pdfDoc: PDFDocument, images: ImageRecord[]): P
         image: pdfImage,
         width: pdfImage.width,
         height: pdfImage.height,
-        caption: image.image_caption,
+        caption: image.image_caption ? ULTRA_NORMALIZE(image.image_caption) : null,
       });
     } catch (error) {
       console.error(`Error incorporando imagen ${image.image_url}:`, error);
@@ -153,8 +358,127 @@ async function generatePDFContent({
   images,
   backgroundImage,
 }: GenerateContentParams) {
-  const arial = helvetica;
-  const arialBold = helveticaBold;
+  // Función de normalización temprana para limpiar todos los datos de entrada
+  const earlyNormalize = (value: any): any => {
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') {
+      return ULTRA_NORMALIZE(value);
+    }
+    if (typeof value === 'object') {
+      if (Array.isArray(value)) {
+        return value.map(earlyNormalize);
+      }
+      const normalized: any = {};
+      for (const key in value) {
+        normalized[key] = earlyNormalize(value[key]);
+      }
+      return normalized;
+    }
+    return value;
+  };
+
+  // Normalizar todos los datos de entrada ANTES de procesarlos
+  const normalizedProposal = earlyNormalize(proposal);
+  const normalizedItems = earlyNormalize(items);
+  const normalizedEquipment = earlyNormalize(equipment);
+  
+  // Envolver las fuentes para interceptar widthOfTextAtSize
+  // Función para envolver el objeto font y interceptar todas las llamadas a widthOfTextAtSize
+  // Esta es la ÚLTIMA línea de defensa para cálculos de ancho - debe ser IMPOSIBLE que escape un carácter problemático
+  const wrapFont = (font: any): any => {
+    const originalWidthOfTextAtSize = font.widthOfTextAtSize.bind(font);
+    
+    // Interceptar widthOfTextAtSize y normalizar el texto automáticamente usando ULTRA_NORMALIZE
+    font.widthOfTextAtSize = (text: string | number | any, size: number) => {
+      // PASO 0: Convertir a string
+      let textStr = '';
+      if (text === null || text === undefined) {
+        textStr = '';
+      } else if (typeof text === 'number') {
+        textStr = String(text);
+      } else if (typeof text !== 'string') {
+        try {
+          textStr = String(text);
+        } catch {
+          textStr = '';
+        }
+      } else {
+        textStr = text;
+      }
+      
+      // PASO 1: Normalizar con ULTRA_NORMALIZE (ya muy agresiva)
+      let normalized = ULTRA_NORMALIZE(textStr);
+      
+      // PASO 2: Eliminación específica y múltiple de 0x2713 (CHECK MARK)
+      for (let i = 0; i < 5; i++) {
+        normalized = normalized
+          .replace(/\u2713/g, 'v')  // CHECK MARK -> v
+          .replace(/\u2714/g, 'v')  // HEAVY CHECK MARK -> v
+          .replace(/\u2705/g, 'v')  // WHITE HEAVY CHECK MARK -> v
+          .replace(/\u2611/g, 'v')  // BALLOT BOX WITH CHECK -> v
+          .replace(/\u221A/g, 'sqrt') // SQUARE ROOT -> sqrt
+          .replace(/√/g, 'sqrt'); // Símbolo raíz cuadrada directo
+      }
+      
+      // PASO 3: Verificación final carácter por carácter
+      let finalText = '';
+      for (let i = 0; i < normalized.length; i++) {
+        const code = normalized.charCodeAt(i);
+        // Eliminar específicamente 0x2713 y otros caracteres problemáticos
+        if (code === 0x2713 || code === 0x2714 || code === 0x2705 || 
+            code === 0x2611 || code === 0x221A || code === 0x221B || code === 0x221C) {
+          if (code === 0x221A || code === 0x221B || code === 0x221C) {
+            finalText += 'sqrt';
+          } else {
+            finalText += 'v';
+          }
+        } else if (code <= 127 || (code >= 160 && code <= 255 && 
+                   code !== 0x81 && code !== 0x8D && code !== 0x8F && 
+                   code !== 0x90 && code !== 0x9D)) {
+          finalText += normalized[i];
+        }
+        // Cualquier otro carácter se ignora
+      }
+      
+      // PASO 4: Intentar calcular el ancho
+      try {
+        return originalWidthOfTextAtSize(finalText, size);
+      } catch (error: any) {
+        // Si falla, el problema podría ser un carácter que no capturamos
+        // Convertir a ASCII puro como fallback
+        const asciiOnly = finalText.split('').map((char: string) => {
+          const code = char.charCodeAt(0);
+          // Eliminar específicamente 0x2713
+          if (code === 0x2713 || code === 0x2714 || code === 0x2705 || code === 0x2611) {
+            return 'v';
+          }
+          return code <= 127 ? char : '?';
+        }).join('');
+        
+        try {
+          return originalWidthOfTextAtSize(asciiOnly, size);
+        } catch (error2: any) {
+          // Si aún falla, retornar 0 para evitar crashear
+          console.error('Error crítico calculando ancho de texto después de múltiples intentos:', {
+            originalText: text?.substring(0, 50),
+            normalized: normalized?.substring(0, 50),
+            asciiOnly: asciiOnly?.substring(0, 50),
+            error: error?.message || error,
+            error2: error2?.message || error2
+          });
+          // Retornar 0 para evitar crashear el PDF
+          return 0;
+        }
+      }
+    };
+    
+    return font;
+  };
+
+  const arial = wrapFont(helvetica);
+  const arialBold = wrapFont(helveticaBold);
+  const helveticaWrapped = wrapFont(helvetica);
+  const helveticaBoldWrapped = wrapFont(helveticaBold);
   const equipmentImageCache = new Map<string, PDFImage>();
 
   const embedImageFromUrl = async (url: string): Promise<PDFImage | null> => {
@@ -192,18 +516,99 @@ async function generatePDFContent({
     }
   };
 
+  // Normaliza texto para WinAnsi encoding (reemplaza caracteres Unicode no soportados)
+  // DEBE estar definida antes de stripHTML y wrapText
+  const normalizeForWinAnsi = (text: string): string => {
+    // Usar la función ULTRA_NORMALIZE para máxima seguridad
+    return ULTRA_NORMALIZE(text);
+  };
+
+  // Función wrapper para drawText que siempre normaliza el texto
+  const safeDrawText = (page: any, text: string, options: any) => {
+    // El page ya está envuelto, así que drawText normaliza automáticamente
+    // Pero aún así normalizamos aquí por seguridad usando ULTRA_NORMALIZE
+    const normalizedText = ULTRA_NORMALIZE(text || '');
+    page.drawText(normalizedText, options);
+  };
+
+  // Función wrapper para widthOfTextAtSize que siempre normaliza el texto
+  const safeWidthOfTextAtSize = (font: any, text: string, size: number): number => {
+    if (!text) return 0;
+    // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
+    // Pero aún así normalizamos aquí por seguridad usando ULTRA_NORMALIZE
+    const normalizedText = ULTRA_NORMALIZE(text);
+    return font.widthOfTextAtSize(normalizedText, size);
+  };
+
   const stripHTML = (html: string) => {
     if (!html) return '';
-    return html
+    let stripped = html
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<\/p>/gi, '\n\n')
       .replace(/<[^>]+>/g, '')
       .replace(/&nbsp;/g, ' ')
       .trim();
+    
+    // PRIMERO: Reemplazar entidades HTML problemáticas conocidas ANTES de decodificar
+    // Esto evita que caracteres como √ (0x2713) o emojis se decodifiquen y causen problemas
+    stripped = stripped
+      .replace(/&#x2713;/gi, 'v')  // CHECK MARK -> v
+      .replace(/&#10003;/gi, 'v')  // CHECK MARK (decimal) -> v
+      .replace(/&#x2714;/gi, 'v')  // HEAVY CHECK MARK -> v
+      .replace(/&#10004;/gi, 'v')  // HEAVY CHECK MARK (decimal) -> v
+      .replace(/&#x2705;/gi, 'v')  // WHITE HEAVY CHECK MARK -> v
+      .replace(/&#9989;/gi, 'v')   // WHITE HEAVY CHECK MARK (decimal) -> v
+      .replace(/&#x2611;/gi, 'v')  // BALLOT BOX WITH CHECK -> v
+      .replace(/&#9745;/gi, 'v')   // BALLOT BOX WITH CHECK (decimal) -> v
+      .replace(/&#x221A;/gi, 'sqrt') // SQUARE ROOT -> sqrt
+      .replace(/&#8730;/gi, 'sqrt')  // SQUARE ROOT (decimal) -> sqrt
+      // Eliminar emojis comunes codificados como entidades HTML (si existen)
+      .replace(/&#x1f4de;/gi, '')   // 📞 (phone emoji) -> eliminar
+      .replace(/&#128222;/gi, '')   // 📞 (phone emoji decimal) -> eliminar
+      .replace(/&#x1f4f1;/gi, '')   // 📱 (mobile phone) -> eliminar
+      .replace(/&#128241;/gi, '');  // 📱 (mobile phone decimal) -> eliminar
+    
+    // SEGUNDO: Decodificar entidades HTML numéricas (hex y decimal) restantes
+    // PERO solo si el código es seguro (dentro de WinAnsi)
+    stripped = stripped
+      .replace(/&#x([0-9A-Fa-f]+);/g, (match, hex) => {
+        const code = parseInt(hex, 16);
+        // Solo decodificar si está en el rango WinAnsi seguro
+        if (code <= 127 || (code >= 160 && code <= 255 && 
+            code !== 0x81 && code !== 0x8D && code !== 0x8F && 
+            code !== 0x90 && code !== 0x9D)) {
+          return String.fromCharCode(code);
+        }
+        // Si está fuera del rango seguro, eliminar la entidad
+        return '';
+      })
+      .replace(/&#(\d+);/g, (match, dec) => {
+        const code = parseInt(dec, 10);
+        // Solo decodificar si está en el rango WinAnsi seguro
+        if (code <= 127 || (code >= 160 && code <= 255 && 
+            code !== 0x81 && code !== 0x8D && code !== 0x8F && 
+            code !== 0x90 && code !== 0x9D)) {
+          return String.fromCharCode(code);
+        }
+        // Si está fuera del rango seguro, eliminar la entidad
+        return '';
+      });
+    
+    // TERCERO: Decodificar entidades HTML comunes
+    stripped = stripped
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+    
+    // CUARTO: Normalizar después de limpiar HTML para manejar cualquier carácter especial restante
+    return normalizeForWinAnsi(stripped);
   };
 
   const wrapText = (text: string, font: any, size: number, maxWidth: number) => {
-    const sanitized = text.replace(/\s+/g, ' ').trim();
+    const normalized = normalizeForWinAnsi(text);
+    const sanitized = normalized.replace(/\s+/g, ' ').trim();
     if (!sanitized) return [];
 
     const words = sanitized.split(' ');
@@ -212,6 +617,7 @@ async function generatePDFContent({
 
     for (const word of words) {
       const candidate = currentLine ? `${currentLine} ${word}` : word;
+      // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
       const candidateWidth = font.widthOfTextAtSize(candidate, size);
 
       if (candidateWidth <= maxWidth) {
@@ -224,6 +630,7 @@ async function generatePDFContent({
       }
 
       let splitWord = word;
+      // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
       while (font.widthOfTextAtSize(splitWord, size) > maxWidth && splitWord.length > 1) {
         let sliceIndex = splitWord.length - 1;
         while (sliceIndex > 1 && font.widthOfTextAtSize(splitWord.slice(0, sliceIndex), size) > maxWidth) {
@@ -275,7 +682,8 @@ async function generatePDFContent({
   }) => {
     if (!text) return y;
 
-    const rawLines = text.split('\n');
+    const normalizedText = normalizeForWinAnsi(text);
+    const rawLines = normalizedText.split('\n');
     let remainingY = y;
     const allLines: string[] = [];
     const actualLineHeight = lineHeight ?? size * lineHeightMultiplier;
@@ -297,24 +705,27 @@ async function generatePDFContent({
     const lines = typeof maxLines === 'number' ? allLines.slice(0, maxLines) : allLines;
 
     const drawJustifiedLine = (line: string, baselineY: number) => {
-      const words = line.split(' ');
+      const normalizedLine = normalizeForWinAnsi(line);
+      const words = normalizedLine.split(' ');
       if (words.length <= 1) {
-        page.drawText(line, { x, y: baselineY, size, font, color });
+        safeDrawText(page, normalizedLine, { x, y: baselineY, size, font, color });
         return;
       }
 
+      // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
       const wordsWidth = words.reduce((sum, word) => sum + font.widthOfTextAtSize(word, size), 0);
       const extraSpace = maxWidth - wordsWidth;
       if (extraSpace <= 0) {
-        page.drawText(line, { x, y: baselineY, size, font, color });
+        safeDrawText(page, normalizedLine, { x, y: baselineY, size, font, color });
         return;
       }
 
       const gapWidth = extraSpace / (words.length - 1);
       let cursorX = x;
       for (let i = 0; i < words.length; i++) {
-        const word = words[i];
-        page.drawText(word, { x: cursorX, y: baselineY, size, font, color });
+        const word = normalizeForWinAnsi(words[i]); // Asegurar normalización de cada palabra
+        safeDrawText(page, word, { x: cursorX, y: baselineY, size, font, color });
+        // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
         cursorX += font.widthOfTextAtSize(word, size);
         if (i < words.length - 1) {
           cursorX += gapWidth;
@@ -333,18 +744,20 @@ async function generatePDFContent({
       }
 
       const isLastLine = idx === lines.length - 1;
-      const textWidth = font.widthOfTextAtSize(line, size);
+      const normalizedLine = normalizeForWinAnsi(line);
+      // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
+      const textWidth = font.widthOfTextAtSize(normalizedLine, size);
 
       if (alignment === 'right') {
         const offsetX = x + Math.max(0, maxWidth - textWidth);
-        page.drawText(line, { x: offsetX, y: remainingY, size, font, color });
+        safeDrawText(page, normalizedLine, { x: offsetX, y: remainingY, size, font, color });
       } else if (alignment === 'center') {
         const offsetX = x + Math.max(0, (maxWidth - textWidth) / 2);
-        page.drawText(line, { x: offsetX, y: remainingY, size, font, color });
+        safeDrawText(page, normalizedLine, { x: offsetX, y: remainingY, size, font, color });
       } else if (alignment === 'justify' && !isLastLine) {
         drawJustifiedLine(line, remainingY);
       } else {
-        page.drawText(line, { x, y: remainingY, size, font, color });
+        safeDrawText(page, normalizedLine, { x, y: remainingY, size, font, color });
       }
 
       remainingY -= actualLineHeight;
@@ -354,18 +767,18 @@ async function generatePDFContent({
   };
 
   const addFooter = (page: any, pageNum: number, totalPages: number) => {
-    page.drawText('Soldgrup - La fuerza de su industria | www.soldgrup.com', {
+    safeDrawText(page, normalizeForWinAnsi('Soldgrup - La fuerza de su industria | www.soldgrup.com'), {
       x: margin,
       y: 40,
       size: 8,
-      font: helvetica,
+      font: helveticaWrapped,
       color: mutedColor,
     });
-    page.drawText(`Página ${pageNum} de ${totalPages}`, {
+    safeDrawText(page, normalizeForWinAnsi(`Página ${pageNum} de ${totalPages}`), {
       x: pageWidth / 2 - 30,
       y: 25,
       size: 8,
-      font: helvetica,
+      font: helveticaWrapped,
       color: mutedColor,
     });
   };
@@ -389,10 +802,140 @@ async function generatePDFContent({
     });
   };
 
+  // Función para envolver el objeto page y interceptar todas las llamadas a drawText
+  // Esta es la ÚLTIMA línea de defensa - debe ser IMPOSIBLE que escape un carácter problemático
+  const wrapPage = (page: any): any => {
+    const originalDrawText = page.drawText.bind(page);
+    
+    // Interceptar drawText y normalizar el texto automáticamente usando ULTRA_NORMALIZE
+    page.drawText = (text: string | number | any, options: any) => {
+      // PASO 0: Convertir a string si no lo es
+      let textStr = '';
+      if (text === null || text === undefined) {
+        textStr = '';
+      } else if (typeof text === 'number') {
+        textStr = String(text);
+      } else if (typeof text !== 'string') {
+        try {
+          textStr = String(text);
+        } catch {
+          textStr = '';
+        }
+      } else {
+        textStr = text;
+      }
+      
+      // PASO 1: Normalizar con ULTRA_NORMALIZE (ya muy agresiva)
+      let normalized = ULTRA_NORMALIZE(textStr);
+      
+      // PASO 2: Verificación adicional - eliminar específicamente 0x2713 (CHECK MARK)
+      // Hacer esto múltiples veces para asegurar
+      for (let i = 0; i < 3; i++) {
+        normalized = normalized
+          .replace(/\u2713/g, 'v')  // CHECK MARK -> v
+          .replace(/\u2714/g, 'v')  // HEAVY CHECK MARK -> v
+          .replace(/\u2705/g, 'v')  // WHITE HEAVY CHECK MARK -> v
+          .replace(/\u2611/g, 'v')  // BALLOT BOX WITH CHECK -> v
+          .replace(/\u221A/g, 'sqrt') // SQUARE ROOT -> sqrt
+          .replace(/√/g, 'sqrt'); // Símbolo raíz cuadrada directo
+      }
+      
+      // PASO 3: Verificación final carácter por carácter
+      let finalText = '';
+      for (let i = 0; i < normalized.length; i++) {
+        const code = normalized.charCodeAt(i);
+        // Eliminar específicamente 0x2713 y otros caracteres problemáticos
+        if (code === 0x2713 || code === 0x2714 || code === 0x2705 || 
+            code === 0x2611 || code === 0x221A || code === 0x221B || code === 0x221C) {
+          if (code === 0x221A || code === 0x221B || code === 0x221C) {
+            finalText += 'sqrt';
+          } else {
+            finalText += 'v';
+          }
+        } else if (code <= 127 || (code >= 160 && code <= 255 && 
+                   code !== 0x81 && code !== 0x8D && code !== 0x8F && 
+                   code !== 0x90 && code !== 0x9D)) {
+          finalText += normalized[i];
+        }
+        // Cualquier otro carácter se ignora
+      }
+      
+      // PASO 4: Intentar dibujar con el texto final normalizado
+      try {
+        return originalDrawText(finalText, options);
+      } catch (error: any) {
+        // Si aún falla, convertir a ASCII puro como último recurso
+        const asciiOnly = finalText.split('').map((char: string) => {
+          const code = char.charCodeAt(0);
+          return code <= 127 ? char : '?';
+        }).join('');
+        
+        try {
+          return originalDrawText(asciiOnly, options);
+        } catch (error2: any) {
+          // Si aún falla, intentar con string vacío
+          try {
+            return originalDrawText('', options);
+          } catch {
+            // Si TODO falla, al menos no crashear - retornar sin dibujar
+            console.error('Error crítico dibujando texto después de múltiples intentos:', {
+              originalText: text?.substring(0, 50),
+              normalized: normalized?.substring(0, 50),
+              asciiOnly: asciiOnly?.substring(0, 50),
+              error: error?.message || error,
+              error2: error2?.message || error2
+            });
+            // Retornar sin dibujar nada para evitar crashear el PDF
+            return;
+          }
+        }
+      }
+    };
+    
+    return page;
+  };
+
+  // También envolver los fonts para interceptar widthOfTextAtSize
+  const wrapFont = (font: any): any => {
+    const originalWidthOfTextAtSize = font.widthOfTextAtSize?.bind(font);
+    if (originalWidthOfTextAtSize) {
+      font.widthOfTextAtSize = (text: string | number | any, size: number) => {
+        let textStr = '';
+        if (text === null || text === undefined) {
+          textStr = '';
+        } else if (typeof text === 'number') {
+          textStr = String(text);
+        } else if (typeof text !== 'string') {
+          try {
+            textStr = String(text);
+          } catch {
+            textStr = '';
+          }
+        } else {
+          textStr = text;
+        }
+        
+        // Normalizar el texto antes de calcular el ancho
+        const normalized = ULTRA_NORMALIZE(textStr);
+        // Eliminar específicamente 0x2713
+        const cleaned = normalized
+          .replace(/\u2713/g, 'v')
+          .replace(/\u2714/g, 'v')
+          .replace(/\u2705/g, 'v')
+          .replace(/\u2611/g, 'v')
+          .replace(/\u221A/g, 'sqrt')
+          .replace(/√/g, 'sqrt');
+        
+        return originalWidthOfTextAtSize(cleaned, size);
+      };
+    }
+    return font;
+  };
+
   const createPage = () => {
     const page = pdfDoc.addPage([pageWidth, pageHeight]);
     drawBackground(page);
-    return page;
+    return wrapPage(page); // Envolver la página para interceptar drawText
   };
 
   let page = createPage();
@@ -406,9 +949,10 @@ async function generatePDFContent({
     y -= lineHeight * count;
   };
 
-  const proposalId = proposal.offer_id || 'N/A';
+  const proposalId = normalizeForWinAnsi(normalizedProposal.offer_id || 'N/A');
+  // El font ya está envuelto, así que widthOfTextAtSize normaliza automáticamente
   const proposalIdWidth = arialBold.widthOfTextAtSize(proposalId, baseSize);
-  page.drawText(proposalId, {
+  safeDrawText(page, proposalId, {
     x: pageWidth - margin - proposalIdWidth,
     y,
     size: baseSize,
@@ -417,12 +961,12 @@ async function generatePDFContent({
   });
   y -= lineHeight;
 
-  const date = proposal.presentation_date ? new Date(proposal.presentation_date) : null;
+  const date = normalizedProposal.presentation_date ? new Date(normalizedProposal.presentation_date) : null;
   const dateStr = date
-    ? date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })
+    ? normalizeForWinAnsi(date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }))
     : '';
-  const cityLine = dateStr ? `Pereira, ${dateStr}` : 'Pereira,';
-  page.drawText(cityLine, {
+  const cityLine = normalizeForWinAnsi(dateStr ? `Pereira, ${dateStr}` : 'Pereira,');
+  safeDrawText(page, cityLine, {
     x: margin,
     y,
     size: baseSize,
@@ -433,7 +977,7 @@ async function generatePDFContent({
 
   addBlankLines(4);
 
-  page.drawText('Señores.', {
+  safeDrawText(page, normalizeForWinAnsi('Señores.'), {
     x: margin,
     y,
     size: baseSize,
@@ -442,9 +986,9 @@ async function generatePDFContent({
   });
   y -= lineHeight;
 
-  const clientName = proposal.client || '';
+  const clientName = normalizeForWinAnsi(normalizedProposal.client || '');
   if (clientName) {
-    page.drawText(clientName, {
+    safeDrawText(page, clientName, {
       x: margin,
       y,
       size: baseSize,
@@ -456,7 +1000,7 @@ async function generatePDFContent({
 
   addBlankLines(4);
 
-  const referenceText = stripHTML(proposal.reference ?? '');
+  const referenceText = stripHTML(normalizedProposal.reference ?? '');
   if (referenceText) {
     y = drawParagraph({
       page,
@@ -471,7 +1015,7 @@ async function generatePDFContent({
       lineHeightMultiplier: 1,
     });
   } else {
-    page.drawText('Referencia:', {
+    safeDrawText(page, normalizeForWinAnsi('Referencia:'), {
       x: margin,
       y,
       size: baseSize,
@@ -500,7 +1044,7 @@ async function generatePDFContent({
 
   addBlankLines(2);
 
-  page.drawText('Cordialmente,', {
+  safeDrawText(page, normalizeForWinAnsi('Cordialmente,'), {
     x: margin,
     y,
     size: baseSize,
@@ -511,7 +1055,7 @@ async function generatePDFContent({
 
   addBlankLines(3);
 
-  const soldgrupContact = stripHTML(proposal.soldgrup_contact ?? '');
+  const soldgrupContact = stripHTML(normalizedProposal.soldgrup_contact ?? '');
   if (soldgrupContact) {
     y = drawParagraph({
       page,
@@ -527,15 +1071,15 @@ async function generatePDFContent({
   }
 
   // PAGE 3+: Commercial Offer
-  if (items.length > 0) {
+  if (normalizedItems.length > 0) {
     page = createPage();
     y = pageHeight - margin - 40;
 
-    page.drawText('OFERTA COMERCIAL', {
+    safeDrawText(page, normalizeForWinAnsi('OFERTA COMERCIAL'), {
       x: margin,
       y: y,
       size: 18,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: primaryColor,
     });
     y -= 40;
@@ -552,39 +1096,39 @@ async function generatePDFContent({
       color: primaryColor,
     });
 
-    page.drawText('Item', { x: startX + 5, y: y - 17, size: 10, font: helveticaBold, color: rgb(1, 1, 1) });
-    page.drawText('Descripción', {
+    safeDrawText(page, normalizeForWinAnsi('Item'), { x: startX + 5, y: y - 17, size: 10, font: helveticaBold, color: rgb(1, 1, 1) });
+    safeDrawText(page, normalizeForWinAnsi('Descripción'), {
       x: startX + colWidths[0] + 5,
       y: y - 17,
       size: 10,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: rgb(1, 1, 1),
     });
-    page.drawText('Cant.', {
+    safeDrawText(page, normalizeForWinAnsi('Cant.'), {
       x: startX + colWidths[0] + colWidths[1] + 5,
       y: y - 17,
       size: 10,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: rgb(1, 1, 1),
     });
-    page.drawText('P. Unit.', {
+    safeDrawText(page, normalizeForWinAnsi('P. Unit.'), {
       x: startX + colWidths[0] + colWidths[1] + colWidths[2] + 5,
       y: y - 17,
       size: 10,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: rgb(1, 1, 1),
     });
-    page.drawText('P. Total', {
+    safeDrawText(page, normalizeForWinAnsi('P. Total'), {
       x: startX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + 5,
       y: y - 17,
       size: 10,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: rgb(1, 1, 1),
     });
 
     y -= headerHeight;
 
-    for (const item of items) {
+    for (const item of normalizedItems) {
       const desc = stripHTML(item.description ?? '');
       const descriptionLines = wrapText(desc, helvetica, 8, colWidths[1] - 10);
       const rowHeight = Math.max(30, descriptionLines.length * 12 + 8);
@@ -592,11 +1136,11 @@ async function generatePDFContent({
       if (y - rowHeight < 100) {
         page = createPage();
         y = pageHeight - margin;
-        page.drawText('OFERTA COMERCIAL', {
+        safeDrawText(page, normalizeForWinAnsi('OFERTA COMERCIAL'), {
           x: margin,
           y: y,
           size: 18,
-          font: helveticaBold,
+          font: helveticaBoldWrapped,
           color: primaryColor,
         });
         y -= 40;
@@ -609,33 +1153,33 @@ async function generatePDFContent({
           color: primaryColor,
         });
 
-        page.drawText('Item', { x: startX + 5, y: y - 17, size: 10, font: helveticaBold, color: rgb(1, 1, 1) });
-        page.drawText('Descripción', {
+        safeDrawText(page, normalizeForWinAnsi('Item'), { x: startX + 5, y: y - 17, size: 10, font: helveticaBold, color: rgb(1, 1, 1) });
+        safeDrawText(page, normalizeForWinAnsi('Descripción'), {
           x: startX + colWidths[0] + 5,
           y: y - 17,
           size: 10,
-          font: helveticaBold,
+          font: helveticaBoldWrapped,
           color: rgb(1, 1, 1),
         });
-        page.drawText('Cant.', {
+        safeDrawText(page, normalizeForWinAnsi('Cant.'), {
           x: startX + colWidths[0] + colWidths[1] + 5,
           y: y - 17,
           size: 10,
-          font: helveticaBold,
+          font: helveticaBoldWrapped,
           color: rgb(1, 1, 1),
         });
-        page.drawText('P. Unit.', {
+        safeDrawText(page, normalizeForWinAnsi('P. Unit.'), {
           x: startX + colWidths[0] + colWidths[1] + colWidths[2] + 5,
           y: y - 17,
           size: 10,
-          font: helveticaBold,
+          font: helveticaBoldWrapped,
           color: rgb(1, 1, 1),
         });
-        page.drawText('P. Total', {
+        safeDrawText(page, normalizeForWinAnsi('P. Total'), {
           x: startX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + 5,
           y: y - 17,
           size: 10,
-          font: helveticaBold,
+          font: helveticaBoldWrapped,
           color: rgb(1, 1, 1),
         });
 
@@ -651,11 +1195,11 @@ async function generatePDFContent({
         borderWidth: 1,
       });
 
-      page.drawText(String(item.item_number ?? ''), {
+      safeDrawText(page,normalizeForWinAnsi(String(item.item_number ?? '')), {
         x: startX + 5,
         y: y - 17,
         size: 9,
-        font: helvetica,
+        font: helveticaWrapped,
         color: textColor,
       });
 
@@ -670,11 +1214,11 @@ async function generatePDFContent({
 
       let descriptionY = y - 14;
       for (const line of descriptionLines) {
-        page.drawText(line, {
+        safeDrawText(page,normalizeForWinAnsi(line), {
           x: startX + colWidths[0] + 5,
           y: descriptionY,
           size: 8,
-          font: helvetica,
+          font: helveticaWrapped,
           color: textColor,
         });
         descriptionY -= 12;
@@ -689,11 +1233,11 @@ async function generatePDFContent({
         borderWidth: 1,
       });
 
-      page.drawText(`${item.quantity ?? ''} ${item.unit ?? ''}`.trim(), {
+      safeDrawText(page,normalizeForWinAnsi(`${item.quantity ?? ''} ${item.unit ?? ''}`.trim()), {
         x: startX + colWidths[0] + colWidths[1] + 5,
         y: y - 17,
         size: 9,
-        font: helvetica,
+        font: helveticaWrapped,
         color: textColor,
       });
 
@@ -706,11 +1250,13 @@ async function generatePDFContent({
         borderWidth: 1,
       });
 
-      page.drawText(`$${Number(item.unit_price ?? 0).toLocaleString('es-CO')}`, {
+      // Normalizar el resultado de toLocaleString ya que puede generar caracteres especiales
+      const unitPriceFormatted = normalizeForWinAnsi(`$${Number(item.unit_price ?? 0).toLocaleString('es-CO')}`);
+      safeDrawText(page, unitPriceFormatted, {
         x: startX + colWidths[0] + colWidths[1] + colWidths[2] + 5,
         y: y - 17,
         size: 9,
-        font: helvetica,
+        font: helveticaWrapped,
         color: textColor,
       });
 
@@ -723,48 +1269,50 @@ async function generatePDFContent({
         borderWidth: 1,
       });
 
-      page.drawText(`$${Number(item.total_price ?? 0).toLocaleString('es-CO')}`, {
+      // Normalizar el resultado de toLocaleString ya que puede generar caracteres especiales
+      const totalPriceFormatted = normalizeForWinAnsi(`$${Number(item.total_price ?? 0).toLocaleString('es-CO')}`);
+      safeDrawText(page, totalPriceFormatted, {
         x: startX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + 5,
         y: y - 17,
         size: 9,
-        font: helvetica,
+        font: helveticaWrapped,
         color: textColor,
       });
 
       y -= rowHeight;
     }
 
-    const total = items.reduce((sum, item) => sum + Number(item.total_price ?? 0), 0);
+    const total = normalizedItems.reduce((sum, item) => sum + Number(item.total_price ?? 0), 0);
     y -= 20;
 
-    page.drawText('Valor total Antes de IVA:', {
+    safeDrawText(page,normalizeForWinAnsi('Valor total Antes de IVA:'), {
       x: startX + 250,
       y,
       size: 11,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: textColor,
     });
-    page.drawText(`$${total.toLocaleString('es-CO')}`, {
+    safeDrawText(page,normalizeForWinAnsi(`$${total.toLocaleString('es-CO')}`), {
       x: startX + 410,
       y,
       size: 12,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: primaryColor,
     });
   }
 
-  if (proposal.observations) {
+  if (normalizedProposal.observations) {
     page = createPage();
     y = pageHeight - margin - 40;
 
-    page.drawText('Observaciones', { x: margin, y, size: 18, font: helveticaBold, color: primaryColor });
+    safeDrawText(page,normalizeForWinAnsi('Observaciones'), { x: margin, y, size: 18, font: helveticaBold, color: primaryColor });
     y -= 40;
 
-    const obsText = stripHTML(proposal.observations);
+    const obsText = stripHTML(normalizedProposal.observations);
     const obsLines = obsText.split('\n').slice(0, 30);
     for (const line of obsLines) {
       if (y < 100) break;
-      page.drawText(line.substring(0, 80), { x: margin, y, size: 10, font: helvetica, color: textColor });
+      safeDrawText(page,normalizeForWinAnsi(line.substring(0, 80)), { x: margin, y, size: 10, font: helvetica, color: textColor });
       y -= 15;
     }
   }
@@ -779,11 +1327,11 @@ async function generatePDFContent({
       rowHeight = 0;
       page = createPage();
       y = pageHeight - margin - 40;
-      page.drawText('Galería de Imágenes', {
+      safeDrawText(page,normalizeForWinAnsi('Galería de Imágenes'), {
         x: margin,
         y,
         size: 18,
-        font: helveticaBold,
+        font: helveticaBoldWrapped,
         color: primaryColor,
       });
       y -= 40;
@@ -819,11 +1367,13 @@ async function generatePDFContent({
       });
 
       if (embeddedImage.caption) {
-        page.drawText(embeddedImage.caption.substring(0, 80), {
+        // Normalizar el caption ANTES de dibujarlo (doble normalización por seguridad)
+        const normalizedCaption = ULTRA_NORMALIZE(embeddedImage.caption.substring(0, 80));
+        safeDrawText(page, normalizedCaption, {
           x,
           y: y - imgHeight - 12,
           size: 9,
-          font: helvetica,
+          font: helveticaWrapped,
           color: mutedColor,
         });
       }
@@ -832,20 +1382,20 @@ async function generatePDFContent({
     }
   }
 
-  if (proposal.technical_specs_table && proposal.technical_specs_table.length > 0) {
+  if (normalizedProposal.technical_specs_table && normalizedProposal.technical_specs_table.length > 0) {
     page = createPage();
     y = pageHeight - margin - 40;
 
-    page.drawText('Especificaciones Técnicas', {
+    safeDrawText(page,normalizeForWinAnsi('Especificaciones Técnicas'), {
       x: margin,
       y,
       size: 18,
-      font: helveticaBold,
+      font: helveticaBoldWrapped,
       color: primaryColor,
     });
     y -= 40;
 
-    for (const row of proposal.technical_specs_table) {
+    for (const row of normalizedProposal.technical_specs_table) {
       if (y < 150) {
         page = createPage();
         y = pageHeight - margin;
@@ -866,20 +1416,20 @@ async function generatePDFContent({
         const font = idx === 0 ? helveticaBold : helvetica;
         const color = idx === 0 ? primaryColor : textColor;
 
-        page.drawText((cell || '').substring(0, 35), { x: x + 5, y: y - 18, size: 9, font, color });
+        safeDrawText(page,normalizeForWinAnsi((cell || '').substring(0, 35)), { x: x + 5, y: y - 18, size: 9, font, color });
       });
 
       y -= 30;
     }
   }
 
-  for (const eq of equipment) {
-    const titleText = eq.equipment_name ?? 'Equipo';
+  for (const eq of normalizedEquipment) {
+    const titleText = normalizeForWinAnsi(eq.equipment_name ?? 'Equipo');
 
     const startEquipmentPage = () => {
       page = createPage();
       y = pageHeight - margin - 40;
-      page.drawText(titleText, { x: margin, y, size: 16, font: helveticaBold, color: primaryColor });
+      safeDrawText(page,titleText, { x: margin, y, size: 16, font: helveticaBold, color: primaryColor });
       y -= 40;
     };
 
@@ -892,16 +1442,18 @@ async function generatePDFContent({
     startEquipmentPage();
 
     if (eq.equipment_specs?.description) {
-      const descLines = eq.equipment_specs.description.split('\n');
+      // Normalizar la descripción del equipo, incluyendo HTML si existe
+      const normalizedDesc = stripHTML(eq.equipment_specs.description);
+      const descLines = normalizedDesc.split('\n');
       for (const rawLine of descLines) {
-        const line = rawLine.trim();
+        const line = normalizeForWinAnsi(rawLine.trim());
         if (!line) {
           ensureEquipmentSpace(15);
           y -= 15;
           continue;
         }
         ensureEquipmentSpace(15);
-        page.drawText(line.substring(0, 90), { x: margin, y, size: 10, font: helvetica, color: textColor });
+        safeDrawText(page, line.substring(0, 90), { x: margin, y, size: 10, font: helvetica, color: textColor });
         y -= 15;
       }
       y -= 20;
@@ -928,7 +1480,7 @@ async function generatePDFContent({
 
       const drawImagesHeader = () => {
         ensureEquipmentSpace(20);
-        page.drawText('Imágenes', { x: margin, y, size: 12, font: helveticaBold, color: textColor });
+        safeDrawText(page,normalizeForWinAnsi('Imágenes'), { x: margin, y, size: 12, font: helveticaBold, color: textColor });
         y -= 25;
       };
 
@@ -968,11 +1520,11 @@ async function generatePDFContent({
         });
 
         if (imgData.caption) {
-          page.drawText(imgData.caption.substring(0, 80), {
+          safeDrawText(page,normalizeForWinAnsi(imgData.caption.substring(0, 80)), {
             x,
             y: y - imgHeight - 12,
             size: 9,
-            font: helvetica,
+            font: helveticaWrapped,
             color: mutedColor,
           });
         }
@@ -987,19 +1539,21 @@ async function generatePDFContent({
     if (eq.equipment_specs?.tables) {
       for (const table of eq.equipment_specs.tables) {
         ensureEquipmentSpace(60);
-        page.drawText(table.title, { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
+        safeDrawText(page,normalizeForWinAnsi(table.title), { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
         y -= 30;
 
         if (Array.isArray(table.table_data)) {
           for (const row of table.table_data) {
             if (y < margin + 80) {
               startEquipmentPage();
-              page.drawText(table.title, { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
+              safeDrawText(page,normalizeForWinAnsi(table.title), { x: margin, y, size: 12, font: helveticaBold, color: primaryColor });
               y -= 30;
             }
 
             const cellWidth = 250;
-            row.forEach((cell: string, idx: number) => {
+            // Normalize each cell to remove problematic characters
+            const normalizedRow = row.map((cell: string) => normalizeForWinAnsi(String(cell || '')));
+            normalizedRow.forEach((cell: string, idx: number) => {
               const x = margin + idx * cellWidth;
               page.drawRectangle({
                 x,
@@ -1010,11 +1564,11 @@ async function generatePDFContent({
                 borderWidth: 1,
               });
 
-              page.drawText((cell || '').substring(0, 35), {
+              safeDrawText(page,normalizeForWinAnsi((cell || '').substring(0, 35)), {
                 x: x + 5,
                 y: y - 16,
                 size: 9,
-                font: helvetica,
+                font: helveticaWrapped,
                 color: textColor,
               });
             });
@@ -1028,18 +1582,18 @@ async function generatePDFContent({
     }
   }
 
-  if (proposal.offer_details) {
+  if (normalizedProposal.offer_details) {
     page = createPage();
     y = pageHeight - margin - 40;
 
-    page.drawText('Detalles de la Oferta', { x: margin, y, size: 18, font: helveticaBold, color: primaryColor });
+    safeDrawText(page,normalizeForWinAnsi('Detalles de la Oferta'), { x: margin, y, size: 18, font: helveticaBold, color: primaryColor });
     y -= 40;
 
-    const detailsText = stripHTML(proposal.offer_details);
+    const detailsText = stripHTML(normalizedProposal.offer_details);
     const detailsLines = detailsText.split('\n').slice(0, 30);
     for (const line of detailsLines) {
       if (y < 100) break;
-      page.drawText(line.substring(0, 80), { x: margin, y, size: 10, font: helvetica, color: textColor });
+      safeDrawText(page,normalizeForWinAnsi(line.substring(0, 80)), { x: margin, y, size: 10, font: helvetica, color: textColor });
       y -= 15;
     }
   }

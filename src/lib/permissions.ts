@@ -4,6 +4,7 @@ export const MODULES = {
   DASHBOARD: 'dashboard',
   EQUIPMENT: 'equipment',
   MAINTENANCE_REPORTS: 'maintenance-reports',
+  TIME_CONTROL: 'time-control',
 } as const;
 
 export type ModuleKey = typeof MODULES[keyof typeof MODULES];
@@ -14,6 +15,7 @@ export const MODULE_PATHS: Record<ModuleKey, string> = {
   [MODULES.DASHBOARD]: '/dashboard',
   [MODULES.EQUIPMENT]: '/equipment',
   [MODULES.MAINTENANCE_REPORTS]: '/maintenance-reports',
+  [MODULES.TIME_CONTROL]: '/time-control',
 } as const;
 
 // Module display names
@@ -22,6 +24,7 @@ export const MODULE_NAMES: Record<ModuleKey, string> = {
   [MODULES.DASHBOARD]: 'Propuestas Comerciales',
   [MODULES.EQUIPMENT]: 'Equipos',
   [MODULES.MAINTENANCE_REPORTS]: 'Informes de Mantenimiento',
+  [MODULES.TIME_CONTROL]: 'Control entrada/salida',
 } as const;
 
 /**
@@ -32,6 +35,7 @@ export const getModuleFromPath = (pathname: string): ModuleKey | null => {
   if (pathname.startsWith('/dashboard')) return MODULES.DASHBOARD;
   if (pathname.startsWith('/equipment')) return MODULES.EQUIPMENT;
   if (pathname.startsWith('/maintenance-reports')) return MODULES.MAINTENANCE_REPORTS;
+  if (pathname.startsWith('/time-control')) return MODULES.TIME_CONTROL;
   return null;
 };
 

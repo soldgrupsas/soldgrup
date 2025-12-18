@@ -74,11 +74,12 @@ const checklistItems = [
   'Motor de elevación',
   'Freno motor de elevación',
   'Trolley',
-  'Motor trolley',
-  'Freno motor trolley',
-  'Guías de trolley',
-  'Ruedas trolley',
+  'Motor Trolley',
+  'Freno motor Trolley',
+  'Guias de Trolley',
+  'Ruedas Trolley',
   'Carros testeros',
+  'Motorreductor',
   'Estructura',
   'Gancho',
   'Cadena',
@@ -1093,9 +1094,61 @@ function drawWrappedText(
 }
 
 function normalizeChecklist(entries: ChecklistEntry[]): ChecklistEntry[] {
-  const byName = new Map(entries.map((entry) => [entry.name.trim().toLowerCase(), entry]));
+  // Si todos los entries tienen índices definidos, preservar todos (incluyendo sub-items dinámicos)
+  // Esto permite incluir items adicionales como los sub-items de carros testeros
+  if (entries.length > 0 && entries.every(e => e.index !== undefined)) {
+    // Ordenar por índice y mantener todos los items, incluyendo sub-items dinámicos
+    return entries
+      .map(entry => ({
+        index: entry.index ?? 0,
+        name: entry.name,
+        status: entry.status ?? null,
+        observation: entry.observation ?? '',
+      }))
+      .sort((a, b) => a.index - b.index);
+  }
+  
+  // Función auxiliar para normalizar nombres (remover acentos y convertir a minúsculas)
+  // Igual que en generate-maintenance-report-pdf/index.ts
+  const normalizeName = (str: string): string => {
+    return str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  };
+
+  // Fallback al comportamiento original para items sin índices
+  // Usar normalización mejorada para que coincida mejor con nombres que pueden tener variaciones
+  const byName = new Map<string, ChecklistEntry>();
+  entries.forEach((entry) => {
+    if (entry && entry.name) {
+      const normalized = normalizeName(entry.name);
+      // Si ya existe, mantener el que tenga datos (status u observation)
+      if (byName.has(normalized)) {
+        const existing = byName.get(normalized)!;
+        if ((!existing.status && entry.status) || (!existing.observation && entry.observation)) {
+          byName.set(normalized, entry);
+        }
+      } else {
+        byName.set(normalized, entry);
+      }
+    }
+  });
+
   return checklistItems.map((name, index) => {
-    const entry = byName.get(name.trim().toLowerCase());
+    const normalizedName = normalizeName(name);
+    const entry = byName.get(normalizedName);
+    
+    // Log específico para Motorreductor para debugging
+    if (normalizedName.includes('motorreductor')) {
+      console.log('[maintenance-pdf-shared] normalizeChecklist - Motorreductor:', {
+        nameFromChecklist: name,
+        normalizedName: normalizedName,
+        entryFound: !!entry,
+        entryName: entry?.name,
+        entryStatus: entry?.status,
+        hasObservation: !!entry?.observation,
+        allMapKeys: Array.from(byName.keys()).filter(k => k.includes('motor') && k.includes('reductor'))
+      });
+    }
+    
     return {
       index,
       name,

@@ -73,6 +73,7 @@ export type Database = {
       equipment_details: {
         Row: {
           created_at: string | null
+          equipment_id: string | null
           equipment_name: string
           equipment_specs: Json | null
           id: string
@@ -80,6 +81,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          equipment_id?: string | null
           equipment_name: string
           equipment_specs?: Json | null
           id?: string
@@ -87,6 +89,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          equipment_id?: string | null
           equipment_name?: string
           equipment_specs?: Json | null
           id?: string
@@ -98,6 +101,13 @@ export type Database = {
             columns: ["proposal_id"]
             isOneToOne: false
             referencedRelation: "proposals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "equipment_details_equipment_id_fkey"
+            columns: ["equipment_id"]
+            isOneToOne: false
+            referencedRelation: "equipment"
             referencedColumns: ["id"]
           },
         ]

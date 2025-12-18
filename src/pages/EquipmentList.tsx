@@ -69,13 +69,26 @@ const EquipmentList = () => {
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
+      // IMPORTANTE: Primero eliminar las referencias en equipment_details
+      // Esto asegura que las propuestas no queden con referencias huérfanas
+      const { error: deleteDetailsError } = await supabase
+        .from("equipment_details")
+        .delete()
+        .eq("equipment_id", id);
+
+      if (deleteDetailsError) {
+        console.warn("Error eliminando referencias en propuestas:", deleteDetailsError);
+        // Continuar de todas formas, la foreign key puede manejar esto
+      }
+
+      // Ahora eliminar el equipo
       const { error } = await supabase.from("equipment").delete().eq("id", id);
       if (error) throw error;
 
       setEquipment((prev) => prev.filter((item) => item.id !== id));
       toast({
         title: "Equipo eliminado",
-        description: "El equipo fue eliminado correctamente.",
+        description: "El equipo fue eliminado correctamente de todas las propuestas.",
       });
     } catch (error) {
       console.error("Error deleting equipment:", error);

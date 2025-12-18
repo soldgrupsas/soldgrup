@@ -81,14 +81,15 @@ const Dashboard = () => {
   const handleSignOut = async () => {
     try {
       await signOut();
+      // Redirigir siempre, incluso si hay un error (el estado ya está limpio)
       navigate("/auth");
+      // Forzar recarga para asegurar que todo esté limpio
+      window.location.href = "/auth";
     } catch (error) {
       console.error("Error al cerrar sesión:", error);
-      toast({
-        title: "Error",
-        description: "No se pudo cerrar sesión. Por favor, intenta de nuevo.",
-        variant: "destructive",
-      });
+      // Redirigir de todas formas, el estado ya está limpio
+      navigate("/auth");
+      window.location.href = "/auth";
     }
   };
 
@@ -115,7 +116,26 @@ const Dashboard = () => {
 
       if (error) {
         console.error('Error invocando generate-proposal-pdf:', error);
-        throw new Error(error.message || 'Error al generar el PDF');
+        let errorMessage = error.message || 'Error al generar el PDF';
+        
+        // Intentar leer el cuerpo de error si está disponible
+        try {
+          if (error.context) {
+            const response = error.context;
+            const contentType = response?.headers?.get?.('Content-Type') ?? '';
+            if (contentType.includes('application/json')) {
+              const body = await response.json();
+              errorMessage = body?.error || errorMessage;
+              if (body?.details) {
+                console.error('Detalles del error:', body.details);
+              }
+            }
+          }
+        } catch (parseError) {
+          console.warn('No se pudo leer el cuerpo de error de la función', parseError);
+        }
+        
+        throw new Error(errorMessage);
       }
 
       if (!data) {

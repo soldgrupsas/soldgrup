@@ -16,15 +16,9 @@ const Auth = () => {
   const [password, setPassword] = useState("");
 
   useEffect(() => {
-    // Check if user is already logged in
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        navigate("/home");
-      }
-    });
-
-    // Listen for auth changes
+    // Listen for auth changes - only redirect when user explicitly signs in
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Solo redirigir cuando el usuario inicia sesión explícitamente, no si ya hay una sesión
       if (session && event === "SIGNED_IN") {
         navigate("/home");
       }

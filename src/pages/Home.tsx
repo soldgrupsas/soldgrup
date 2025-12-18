@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useModuleAccess } from "@/hooks/useModuleAccess";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FileText, Settings, ClipboardList, LogOut, Loader2 } from "lucide-react";
+import { FileText, Settings, ClipboardList, LogOut, Loader2, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { MODULES } from "@/lib/permissions";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +16,7 @@ const Home = () => {
   
   // Check module access
   const hasDashboardAccess = useModuleAccess(MODULES.DASHBOARD);
+  const hasTimeControlAccess = useModuleAccess(MODULES.TIME_CONTROL);
   const hasEquipmentAccess = useModuleAccess(MODULES.EQUIPMENT);
   const hasMaintenanceAccess = useModuleAccess(MODULES.MAINTENANCE_REPORTS);
 
@@ -28,14 +29,15 @@ const Home = () => {
   const handleSignOut = async () => {
     try {
       await signOut();
+      // Redirigir siempre, incluso si hay un error (el estado ya está limpio)
       navigate("/auth");
+      // Forzar recarga para asegurar que todo esté limpio
+      window.location.href = "/auth";
     } catch (error) {
       console.error("Error al cerrar sesión:", error);
-      toast({
-        title: "Error",
-        description: "No se pudo cerrar sesión. Por favor, intenta de nuevo.",
-        variant: "destructive",
-      });
+      // Redirigir de todas formas, el estado ya está limpio
+      navigate("/auth");
+      window.location.href = "/auth";
     }
   };
 
@@ -70,6 +72,18 @@ const Home = () => {
       });
     }
     
+    if (hasTimeControlAccess) {
+      items.push({
+        title: "Control entrada/salida",
+        description: "Control de horarios de entrada y salida de trabajadores",
+        icon: Clock,
+        path: "/time-control",
+        color: "from-blue-500/20 to-blue-500/5",
+        moduleKey: MODULES.TIME_CONTROL,
+        disabled: true, // TEMPORAL: Bloqueado para lanzamiento
+      });
+    }
+    
     if (hasEquipmentAccess) {
       items.push({
         title: "Equipos",
@@ -93,7 +107,7 @@ const Home = () => {
     }
     
     return items;
-  }, [hasDashboardAccess, hasEquipmentAccess, hasMaintenanceAccess]);
+  }, [hasDashboardAccess, hasTimeControlAccess, hasEquipmentAccess, hasMaintenanceAccess]);
 
   // Fase 3 & 6: Renderizado progresivo - Solo bloquear por loading inicial, no por permissionsLoading
   if (loading) {
@@ -180,14 +194,23 @@ WHERE user_id = (
             {menuItems.map((item) => (
               <Card
                 key={item.title}
-                className="p-8 hover:shadow-elegant transition-all duration-300 cursor-pointer hover:scale-105"
-                onClick={() => navigate(item.path)}
+                className={`p-8 transition-all duration-300 ${
+                  item.disabled 
+                    ? "opacity-60 cursor-not-allowed" 
+                    : "hover:shadow-elegant cursor-pointer hover:scale-105"
+                }`}
+                onClick={() => !item.disabled && navigate(item.path)}
               >
                 <div className={`bg-gradient-to-br ${item.color} rounded-lg p-4 w-fit mb-4`}>
                   <item.icon className="h-8 w-8" />
                 </div>
                 <h3 className="text-2xl font-bold mb-2">{item.title}</h3>
                 <p className="text-muted-foreground mb-4">{item.description}</p>
+                {item.disabled && (
+                  <div className="mt-4 p-3 bg-muted rounded-lg text-center">
+                    <p className="text-sm font-semibold text-muted-foreground">Próximamente</p>
+                  </div>
+                )}
               </Card>
             ))}
           </div>

@@ -8,10 +8,24 @@ export const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ey
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
+// Función para limpiar tokens inválidos del localStorage
+export const clearInvalidAuthTokens = () => {
+  try {
+    // Limpiar todas las claves relacionadas con Supabase auth
+    Object.keys(localStorage).forEach(key => {
+      if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
+        localStorage.removeItem(key);
+      }
+    });
+  } catch (e) {
+    console.warn("Error limpiando tokens inválidos:", e);
+  }
+};
+
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: localStorage,
     persistSession: true,
-    autoRefreshToken: true,
+    autoRefreshToken: false, // Deshabilitado temporalmente para evitar bucles
   }
 });

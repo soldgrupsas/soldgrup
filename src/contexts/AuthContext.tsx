@@ -76,6 +76,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const refreshTimeoutRef = useRef<number>();
   const isInitialLoadRef = useRef(true);
+  const refreshTokenInvalidRef = useRef(false); // Bandera para evitar bucles de refresh token inválido
+  const isRefreshingRef = useRef(false); // Bandera para evitar múltiples refreshes simultáneos
 
   const clearRefreshTimer = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -159,7 +161,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const loadUserPermissionsOptimized = useCallback(
     async (userId: string, role: string | null, isAdminRole: boolean): Promise<Set<ModuleKey>> => {
       if (isAdminRole) {
-        return new Set(["admin", "dashboard", "equipment", "maintenance-reports"] as ModuleKey[]);
+        return new Set(["admin", "dashboard", "equipment", "maintenance-reports", "time-control"] as ModuleKey[]);
       }
 
       if (!role) {
@@ -259,25 +261,74 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!delay) return;
 
       refreshTimeoutRef.current = window.setTimeout(async () => {
+        // NO intentar refrescar si ya sabemos que el token es inválido
+        if (refreshTokenInvalidRef.current) {
+          console.warn("Token inválido detectado previamente, saltando refresh programado");
+          return;
+        }
+
+        // Evitar múltiples refreshes simultáneos
+        if (isRefreshingRef.current) {
+          return;
+        }
+
         try {
+          isRefreshingRef.current = true;
           const { data, error } = await supabase.auth.refreshSession();
+          isRefreshingRef.current = false;
+
           if (error) {
-            console.error("Error refreshing session:", error);
-            if (error.message?.toLowerCase().includes("refresh token")) {
-              await supabase.auth.signOut();
+            // Si es un error de refresh token, marcar como inválido y cerrar sesión
+            if (error.message?.toLowerCase().includes("refresh token") || 
+                error.message?.toLowerCase().includes("invalid refresh token") ||
+                error.name === "AuthApiError") {
+              refreshTokenInvalidRef.current = true;
+              console.warn("Refresh token inválido detectado durante scheduleRefresh, limpiando tokens");
+              // Limpiar todos los tokens de localStorage
+              try {
+                Object.keys(localStorage).forEach(key => {
+                  if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
+                    localStorage.removeItem(key);
+                  }
+                });
+              } catch (e) {
+                console.warn("Error limpiando localStorage:", e);
+              }
+              try {
+                await supabase.auth.signOut();
+                await handleSessionChange(null, { silent: true });
+              } catch (signOutError) {
+                console.warn("Error al cerrar sesión:", signOutError);
+              }
+              return;
             }
+            console.error("Error refreshing session:", error);
             return;
           }
 
           if (data.session) {
+            // Si el refresh fue exitoso, resetear la bandera
+            refreshTokenInvalidRef.current = false;
+            // Actualizar el estado directamente aquí para evitar que onAuthStateChange cause un bucle
+            // onAuthStateChange se disparará con TOKEN_REFRESHED, pero ya habremos actualizado el estado
             setSession(data.session);
             setUser(data.session.user ?? null);
             if (data.session.user) {
               await loadUserData(data.session.user.id, { silent: true });
             }
+            // Programar el siguiente refresh
             scheduleRefresh(data.session);
           }
         } catch (err) {
+          isRefreshingRef.current = false;
+          // Si hay una excepción relacionada con refresh token, marcar como inválido
+          if (err && typeof err === 'object' && 'message' in err) {
+            const errorMessage = String((err as any).message || '');
+            if (errorMessage.toLowerCase().includes("refresh token") || 
+                errorMessage.toLowerCase().includes("invalid")) {
+              refreshTokenInvalidRef.current = true;
+            }
+          }
           console.error("Unexpected error refreshing session:", err);
         }
       }, delay);
@@ -303,14 +354,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     let isMounted = true;
 
-    const handleSessionChange = async (newSession: Session | null, options?: LoadOptions) => {
+    const handleSessionChange = async (newSession: Session | null, options?: LoadOptions & { skipScheduleRefresh?: boolean }) => {
       const silent = options?.silent ?? !isInitialLoadRef.current;
+      const skipScheduleRefresh = options?.skipScheduleRefresh ?? false;
       setSession(newSession);
       setUser(newSession?.user ?? null);
 
       if (newSession?.user) {
         await loadUserData(newSession.user.id, { silent });
-        scheduleRefresh(newSession);
+        // Solo programar refresh si no se indica que se debe saltar
+        // Esto evita bucles cuando el refresh viene de scheduleRefresh mismo
+        if (!skipScheduleRefresh) {
+          scheduleRefresh(newSession);
+        }
       } else {
         setIsAdmin(false);
         setUserRole(null);
@@ -329,10 +385,47 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const initializeSession = async () => {
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
+        if (error && (error.message?.includes("Refresh Token") || error.message?.includes("JWT"))) {
+          console.warn("Refresh token inválido durante inicialización, limpiando y cerrando sesión");
+          refreshTokenInvalidRef.current = true;
+          // Limpiar TODOS los tokens de localStorage relacionados con Supabase
+          try {
+            Object.keys(localStorage).forEach(key => {
+              if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
+                localStorage.removeItem(key);
+              }
+            });
+          } catch (e) {
+            console.warn("Error limpiando localStorage:", e);
+          }
+          await supabase.auth.signOut();
+          await handleSessionChange(null, { silent: true });
+          return;
+        }
         await handleSessionChange(data.session);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error initializing session:", error);
+        // Si es un error de autenticación, cerrar sesión silenciosamente
+        if (error?.message?.includes("Refresh Token") || error?.message?.includes("JWT") || error?.name === "AuthApiError") {
+          refreshTokenInvalidRef.current = true;
+          // Limpiar TODOS los tokens de localStorage relacionados con Supabase
+          try {
+            Object.keys(localStorage).forEach(key => {
+              if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
+                localStorage.removeItem(key);
+              }
+            });
+          } catch (e) {
+            console.warn("Error limpiando localStorage:", e);
+          }
+          try {
+            await supabase.auth.signOut();
+            await handleSessionChange(null, { silent: true });
+          } catch (signOutError) {
+            console.warn("Error al cerrar sesión:", signOutError);
+          }
+        }
         setLoading(false);
       }
     };
@@ -340,30 +433,75 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     initializeSession();
 
     const handleWindowFocus = async () => {
+      // NO intentar refrescar si ya sabemos que el token es inválido
+      if (refreshTokenInvalidRef.current) {
+        return;
+      }
+
       try {
+        // Solo intentar refrescar si hay una sesión activa
+        const { data: currentSession } = await supabase.auth.getSession();
+        if (!currentSession?.session) {
+          return; // No hay sesión, no intentar refrescar
+        }
+
+        // Evitar múltiples refreshes simultáneos
+        if (isRefreshingRef.current) {
+          return;
+        }
+
+        isRefreshingRef.current = true;
         const { data, error } = await supabase.auth.refreshSession();
+        isRefreshingRef.current = false;
+
         if (error) {
-          console.error("Error refreshing session on focus:", error);
-          if (error.message?.toLowerCase().includes("refresh token")) {
-            await supabase.auth.signOut();
-            await handleSessionChange(null, { silent: true });
+          // Si es un error de refresh token inválido, marcar la bandera y cerrar sesión
+          if (error.message?.toLowerCase().includes("refresh token") || 
+              error.message?.toLowerCase().includes("invalid refresh token") ||
+              error.name === "AuthApiError") {
+            refreshTokenInvalidRef.current = true;
+            console.warn("Refresh token inválido detectado, limpiando tokens y cerrando sesión");
+            // Limpiar TODOS los tokens de localStorage relacionados con Supabase
+            try {
+              Object.keys(localStorage).forEach(key => {
+                if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
+                  localStorage.removeItem(key);
+                }
+              });
+            } catch (e) {
+              console.warn("Error limpiando localStorage:", e);
+            }
+            try {
+              await supabase.auth.signOut();
+              await handleSessionChange(null, { silent: true });
+            } catch (signOutError) {
+              // Ignorar errores al cerrar sesión
+              console.warn("Error al cerrar sesión:", signOutError);
+            }
             return;
           }
+          console.error("Error refreshing session on focus:", error);
+          return; // No continuar si hay error
         }
 
         if (data?.session) {
+          // Si el refresh fue exitoso, resetear la bandera
+          refreshTokenInvalidRef.current = false;
           await handleSessionChange(data.session, { silent: true });
           return;
         }
       } catch (error) {
-        console.error("Error refreshing session on focus:", error);
-      }
-
-      try {
-        const { data } = await supabase.auth.getSession();
-        await handleSessionChange(data.session, { silent: true });
-      } catch (error) {
-        console.error("Error getting session on focus:", error);
+        isRefreshingRef.current = false;
+        // Si hay una excepción relacionada con refresh token, marcar como inválido
+        if (error && typeof error === 'object' && 'message' in error) {
+          const errorMessage = String((error as any).message || '');
+          if (errorMessage.toLowerCase().includes("refresh token") || 
+              errorMessage.toLowerCase().includes("invalid")) {
+            refreshTokenInvalidRef.current = true;
+          }
+        }
+        // Ignorar errores silenciosamente para no romper el renderizado
+        console.warn("Error en handleWindowFocus:", error);
       }
     };
 
@@ -378,8 +516,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
-      await handleSessionChange(currentSession);
+    } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      // Si el token es inválido y recibimos un evento de refresh, ignorarlo
+      if (refreshTokenInvalidRef.current && (event === "TOKEN_REFRESHED" || event === "SIGNED_OUT")) {
+        return;
+      }
+
+      // Si recibimos un evento de SIGNED_OUT o TOKEN_REFRESHED sin sesión, marcar token como inválido
+      if ((event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") && !currentSession) {
+        refreshTokenInvalidRef.current = true;
+      }
+
+      // Si recibimos un SIGNED_IN exitoso, resetear la bandera
+      if (event === "SIGNED_IN" && currentSession) {
+        refreshTokenInvalidRef.current = false;
+      }
+      
+      // Si el evento es TOKEN_REFRESHED, saltar scheduleRefresh porque ya fue programado por scheduleRefresh mismo
+      // Esto evita bucles infinitos
+      const skipScheduleRefresh = event === "TOKEN_REFRESHED";
+      await handleSessionChange(currentSession, { skipScheduleRefresh });
     });
 
     return () => {
@@ -392,20 +548,44 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [clearCachedPermissions, clearRefreshTimer, loadUserData, scheduleRefresh]);
 
   const signOut = useCallback(async () => {
+    // Limpiar caché de permisos primero
     if (user?.id) {
       clearCachedPermissions(user.id);
     }
+    
+    // Limpiar todo el localStorage relacionado con Supabase/auth
     try {
-      await supabase.auth.signOut();
-    } finally {
-      setUser(null);
-      setSession(null);
-      setIsAdmin(false);
-      setIsAdminLoading(false);
-      setUserRole(null);
-      setUserPermissions(new Set());
-      setPermissionsLoading(false);
-      clearRefreshTimer();
+      Object.keys(localStorage).forEach(key => {
+        if (key.includes('supabase') || key.includes('auth') || key.includes('sb-') || key.includes(PERMISSIONS_CACHE_KEY)) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (e) {
+      console.warn("Error limpiando localStorage:", e);
+    }
+    
+    // Limpiar estado local primero para evitar problemas de renderizado
+    setUser(null);
+    setSession(null);
+    setIsAdmin(false);
+    setIsAdminLoading(false);
+    setUserRole(null);
+    setUserPermissions(new Set());
+    setPermissionsLoading(false);
+    clearRefreshTimer();
+    refreshTokenInvalidRef.current = false;
+    isRefreshingRef.current = false;
+    
+    // Intentar cerrar sesión en Supabase (pero no bloquear si falla)
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.warn("Error al cerrar sesión en Supabase (continuando de todas formas):", error);
+        // No lanzar el error, ya limpiamos el estado local
+      }
+    } catch (signOutError) {
+      console.warn("Excepción al cerrar sesión en Supabase (continuando de todas formas):", signOutError);
+      // No lanzar el error, ya limpiamos el estado local
     }
   }, [clearCachedPermissions, clearRefreshTimer, user?.id]);
 
