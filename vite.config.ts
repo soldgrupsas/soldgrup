@@ -3,10 +3,9 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
 export default defineConfig({
-  base: "/", // dominio propio
+  base: "/soldgrup/", // NOMBRE EXACTO DEL REPO
   build: {
-    outDir: "docs",   //  IMPORTANTE
-    emptyOutDir: true
+    outDir: "docs", //  GitHub Pages
   },
   plugins: [react()],
   resolve: {
@@ -15,5 +14,3 @@ export default defineConfig({
     },
   },
 });
-
-
