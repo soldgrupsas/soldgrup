@@ -93,12 +93,12 @@ const Auth = () => {
   ));
 
   // Generar estrellas
-  const stars = Array.from({ length: 30 }, (_, i) => (
+  const stars = Array.from({ length: 25 }, (_, i) => (
     <Star
       key={`star-${i}`}
       delay={Math.random() * 2}
-      left={`${Math.random() * 100}`}
-      top={`${Math.random() * 100}`}
+      left={`${5 + Math.random() * 90}`}
+      top={`${5 + Math.random() * 85}`}
     />
   ));
 
