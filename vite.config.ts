@@ -1,19 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import { componentTagger } from "lovable-tagger";
 
-export default defineConfig({
-  base: "/", // dominio propio
-  build: {
-    outDir: "docs",   //  IMPORTANTE
-    emptyOutDir: true
+export default defineConfig(({ mode }) => ({
+  base: "/soldgrup/",   // ESTO ES CLAVE
+  server: {
+    host: "::",
+    port: 8080,
   },
-  plugins: [react()],
+  plugins: [
+    react(),
+    mode === "development" && componentTagger()
+  ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
-});
-
-
+}));
