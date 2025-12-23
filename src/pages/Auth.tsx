@@ -129,11 +129,11 @@ const Auth = () => {
         
         <div className="flex justify-center items-center gap-2 mb-2">
           <span className="text-2xl">🎅</span>
-          <img
-            src={soldgrupLogo}
-            alt="Soldgrup - La fuerza de su industria"
+        <img
+          src={soldgrupLogo}
+          alt="Soldgrup - La fuerza de su industria"
             className="h-20 w-auto"
-          />
+        />
           <span className="text-2xl">🎄</span>
         </div>
         
