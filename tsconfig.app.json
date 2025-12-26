@@ -26,5 +26,11 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "**/*_backup_*.tsx",
+    "**/*_backup_*.ts",
+    "TimeControl_backup_*.tsx",
+    "node_modules"
+  ]
 }

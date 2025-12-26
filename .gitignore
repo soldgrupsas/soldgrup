@@ -23,3 +23,10 @@ bun.lockb
 *.njsproj
 *.sln
 *.sw?
+
+# Backup files
+*_backup_*.tsx
+*_backup_*.ts
+*_backup_*.js
+*_backup_*.jsx
+TimeControl_backup_*.tsx

@@ -1,0 +1,16 @@
+# Archivos de backup que pueden tener problemas de codificación UTF-8
+*_backup_*.tsx
+*_backup_*.ts
+*_backup_*.js
+*_backup_*.jsx
+TimeControl_backup_*.tsx
+
+# Otros archivos que no necesitan estar en el build
+.git
+.gitignore
+*.md
+!README.md
+node_modules
+.env.local
+.env.*.local
+
