@@ -58,11 +58,11 @@ const Auth = () => {
     <div className="min-h-screen flex items-center justify-center px-4 bg-gradient-industrial">
       <Card className="w-full max-w-md p-8 space-y-6">
         <div className="flex justify-center items-center mb-2">
-          <img
-            src={soldgrupLogo}
-            alt="Soldgrup - La fuerza de su industria"
+        <img
+          src={soldgrupLogo}
+          alt="Soldgrup - La fuerza de su industria"
             className="h-20 w-auto"
-          />
+        />
         </div>
         
         <h1 className="text-3xl font-bold text-center">
