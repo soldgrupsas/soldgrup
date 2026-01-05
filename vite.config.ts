@@ -4,10 +4,13 @@ import path from "path";
 
 export default defineConfig(({ mode }) => {
   // Determinar el base según el entorno
-  // Si VITE_APP_BASE está definido, usarlo (para Coolify)
-  // Si no, usar "/soldgrup/" para GitHub Pages en producción
-  // Desarrollo siempre usa "/"
-  const base = process.env.VITE_APP_BASE || (mode === "production" ? "/soldgrup/" : "/");
+  // Prioridad:
+  // 1. VITE_APP_BASE (si está definido, para Coolify o configuración manual)
+  // 2. COOLIFY_URL o COOLIFY_FQDN (si está definido, Coolify con dominio personalizado = "/")
+  // 3. Producción sin Coolify = "/soldgrup/" (GitHub Pages)
+  // 4. Desarrollo = "/"
+  const base = process.env.VITE_APP_BASE || 
+               (process.env.COOLIFY_URL || process.env.COOLIFY_FQDN ? "/" : (mode === "production" ? "/soldgrup/" : "/"));
   
   console.log(`Building with base: ${base}, mode: ${mode}, VITE_APP_BASE: ${process.env.VITE_APP_BASE}`);
   
