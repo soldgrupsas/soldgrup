@@ -37,7 +37,8 @@ const queryClient = new QueryClient({
 });
 
 // Obtener la ruta base desde la configuración de Vite
-const baseUrl = import.meta.env.BASE_URL;
+// En producción con GitHub Pages, usar "/soldgrup/", en desarrollo usar "/"
+const baseUrl = import.meta.env.BASE_URL || (import.meta.env.PROD ? "/soldgrup/" : "/");
 
 const App = () => (
   <ErrorBoundary>
