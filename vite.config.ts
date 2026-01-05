@@ -6,11 +6,12 @@ export default defineConfig(({ mode }) => {
   // Determinar el base según el entorno
   // Prioridad:
   // 1. VITE_APP_BASE (si está definido, para Coolify o configuración manual)
-  // 2. COOLIFY_URL o COOLIFY_FQDN (si está definido, Coolify con dominio personalizado = "/")
+  // 2. Si está en Coolify (detectado por variables COOLIFY_*), usar "/"
   // 3. Producción sin Coolify = "/soldgrup/" (GitHub Pages)
   // 4. Desarrollo = "/"
+  // Nota: En Coolify, asegúrate de configurar VITE_APP_BASE=/ o usar build:coolify
   const base = process.env.VITE_APP_BASE || 
-               (process.env.COOLIFY_URL || process.env.COOLIFY_FQDN ? "/" : (mode === "production" ? "/soldgrup/" : "/"));
+               (process.env.COOLIFY_URL || process.env.COOLIFY_FQDN || process.env.COOLIFY_BRANCH ? "/" : (mode === "production" ? "/soldgrup/" : "/"));
   
   console.log(`Building with base: ${base}, mode: ${mode}, VITE_APP_BASE: ${process.env.VITE_APP_BASE}`);
   
