@@ -70,6 +70,7 @@ const textColor = rgb(0.2, 0.2, 0.2);
 const mutedColor = rgb(0.5, 0.5, 0.5);
 const borderColor = rgb(0.7, 0.7, 0.7);
 
+// Items base para elevadores (se actualizará dinámicamente según el tipo de equipo)
 const checklistItems = [
   'Motor de elevación',
   'Freno motor de elevación',
@@ -81,6 +82,7 @@ const checklistItems = [
   'Carros testeros',
   'Motorreductor',
   'Estructura',
+  'Tornillo',
   'Gancho',
   'Cadena',
   'Guaya',
@@ -1094,68 +1096,34 @@ function drawWrappedText(
 }
 
 function normalizeChecklist(entries: ChecklistEntry[]): ChecklistEntry[] {
-  // Si todos los entries tienen índices definidos, preservar todos (incluyendo sub-items dinámicos)
-  // Esto permite incluir items adicionales como los sub-items de carros testeros
-  if (entries.length > 0 && entries.every(e => e.index !== undefined)) {
-    // Ordenar por índice y mantener todos los items, incluyendo sub-items dinámicos
-    return entries
-      .map(entry => ({
-        index: entry.index ?? 0,
-        name: entry.name,
-        status: entry.status ?? null,
-        observation: entry.observation ?? '',
-      }))
-      .sort((a, b) => a.index - b.index);
+  // SIMPLIFICACIÓN TOTAL: Retornar TODOS los items tal como vienen, solo ordenarlos por índice
+  // NO FILTRAR NADA, NO USAR checklistItems como referencia
+  
+  console.log('[maintenance-pdf-shared] normalizeChecklist - Entrada:', entries.length, 'items');
+  
+  if (entries.length === 0) {
+    return [];
   }
   
-  // Función auxiliar para normalizar nombres (remover acentos y convertir a minúsculas)
-  // Igual que en generate-maintenance-report-pdf/index.ts
-  const normalizeName = (str: string): string => {
-    return str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-  };
-
-  // Fallback al comportamiento original para items sin índices
-  // Usar normalización mejorada para que coincida mejor con nombres que pueden tener variaciones
-  const byName = new Map<string, ChecklistEntry>();
-  entries.forEach((entry) => {
-    if (entry && entry.name) {
-      const normalized = normalizeName(entry.name);
-      // Si ya existe, mantener el que tenga datos (status u observation)
-      if (byName.has(normalized)) {
-        const existing = byName.get(normalized)!;
-        if ((!existing.status && entry.status) || (!existing.observation && entry.observation)) {
-          byName.set(normalized, entry);
-        }
-      } else {
-        byName.set(normalized, entry);
-      }
-    }
+  // Ordenar por índice si tienen, sino mantener el orden original
+  const sorted = [...entries].sort((a, b) => {
+    const aIndex = a.index !== undefined && a.index !== null ? a.index : 999999;
+    const bIndex = b.index !== undefined && b.index !== null ? b.index : 999999;
+    return aIndex - bIndex;
   });
-
-  return checklistItems.map((name, index) => {
-    const normalizedName = normalizeName(name);
-    const entry = byName.get(normalizedName);
-    
-    // Log específico para Motorreductor para debugging
-    if (normalizedName.includes('motorreductor')) {
-      console.log('[maintenance-pdf-shared] normalizeChecklist - Motorreductor:', {
-        nameFromChecklist: name,
-        normalizedName: normalizedName,
-        entryFound: !!entry,
-        entryName: entry?.name,
-        entryStatus: entry?.status,
-        hasObservation: !!entry?.observation,
-        allMapKeys: Array.from(byName.keys()).filter(k => k.includes('motor') && k.includes('reductor'))
-      });
-    }
-    
-    return {
-      index,
-      name,
-      status: entry?.status ?? null,
-      observation: entry?.observation ?? '',
-    };
-  });
+  
+  // Re-indexar para asegurar índices consecutivos
+  const reindexed = sorted.map((item, idx) => ({
+    index: idx,
+    name: item.name,
+    status: item.status ?? null,
+    observation: item.observation ?? '',
+  }));
+  
+  console.log('[maintenance-pdf-shared] normalizeChecklist - Salida:', reindexed.length, 'items');
+  console.log('[maintenance-pdf-shared] Items:', reindexed.map(i => `${i.index}: ${i.name}`).join(', '));
+  
+  return reindexed;
 }
 
 function formatDate(value?: string | null): string | undefined {

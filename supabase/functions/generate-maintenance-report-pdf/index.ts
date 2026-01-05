@@ -9,7 +9,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const checklistFallback = [
+// Items base para elevadores
+const ELEVATOR_CHECKLIST_ITEMS = [
   'Motor de elevación',
   'Freno motor de elevación',
   'Trolley',
@@ -18,7 +19,9 @@ const checklistFallback = [
   'Guias de Trolley',
   'Ruedas Trolley',
   'Carros testeros',
+  'Motorreductor',
   'Estructura',
+  'Tornillo',
   'Gancho',
   'Cadena',
   'Guaya',
@@ -34,6 +37,25 @@ const checklistFallback = [
   'Sistema de alimentación de línea blindada',
   'Carcazas',
 ];
+
+// Items adicionales para puentes grúa
+// TODO: Agregar aquí los items específicos que necesites para puentes grúa
+const BRIDGE_CRANE_ADDITIONAL_ITEMS = [
+  // Ejemplo: 'Sistema de iluminación',
+  // Ejemplo: 'Carril de desplazamiento',
+  // Agregar más items según necesidad
+];
+
+// Función para obtener los items según el tipo de equipo
+const getChecklistItems = (equipmentType?: string): string[] => {
+  if (equipmentType === 'puentes-grua') {
+    return [...ELEVATOR_CHECKLIST_ITEMS, ...BRIDGE_CRANE_ADDITIONAL_ITEMS];
+  }
+  return ELEVATOR_CHECKLIST_ITEMS;
+};
+
+// Mantener checklistFallback para compatibilidad (se actualizará dinámicamente)
+const checklistFallback = ELEVATOR_CHECKLIST_ITEMS;
 
 const inferContentTypeByPath = (path: string): string => {
   const lower = path.toLowerCase();
@@ -191,11 +213,35 @@ Deno.serve(async (req) => {
     const reportData = (report.data ?? {}) as Record<string, any>;
     
     // Log completo del reportData para debugging
-    console.log('[maintenance-pdf] Full reportData structure:', JSON.stringify(reportData, null, 2));
+    console.log('[maintenance-pdf] ========== ESTRUCTURA DE DATOS ==========');
     console.log('[maintenance-pdf] reportData keys:', Object.keys(reportData));
+    console.log('[maintenance-pdf] reportData.checklist existe?', Array.isArray(reportData.checklist));
+    console.log('[maintenance-pdf] reportData.checklist length:', Array.isArray(reportData.checklist) ? reportData.checklist.length : 'N/A');
     
     // También verificar si los datos están anidados en reportData.data
     const nestedData = (reportData.data && typeof reportData.data === 'object') ? reportData.data as Record<string, any> : null;
+    if (nestedData) {
+      console.log('[maintenance-pdf] nestedData existe');
+      console.log('[maintenance-pdf] nestedData.checklist existe?', Array.isArray(nestedData.checklist));
+      console.log('[maintenance-pdf] nestedData.checklist length:', Array.isArray(nestedData.checklist) ? nestedData.checklist.length : 'N/A');
+    }
+    
+    // Verificar también reportData.data.checklist
+    if (reportData.data && typeof reportData.data === 'object') {
+      const dataData = reportData.data as Record<string, any>;
+      console.log('[maintenance-pdf] reportData.data.checklist existe?', Array.isArray(dataData.checklist));
+      console.log('[maintenance-pdf] reportData.data.checklist length:', Array.isArray(dataData.checklist) ? dataData.checklist.length : 'N/A');
+    }
+    
+    console.log('[maintenance-pdf] =========================================');
+    
+    // Detectar el tipo de equipo para usar la lista correcta de items
+    // Puede estar en reportData.equipmentType o inferirse de la ruta/contexto
+    // Por ahora, detectar desde reportData.equipmentType si existe
+    const equipmentType = reportData.equipmentType || nestedData?.equipmentType || undefined;
+    const dynamicChecklistFallback = getChecklistItems(equipmentType);
+    console.log('[maintenance-pdf] Equipment type detected:', equipmentType);
+    console.log('[maintenance-pdf] Using checklist with', dynamicChecklistFallback.length, 'items');
     
     const reportPhotosArray = Array.isArray(reportData.photos) ? reportData.photos : [];
     const descriptionByStoragePath = new Map<string, string>();
@@ -346,20 +392,59 @@ Deno.serve(async (req) => {
         }
       : null;
 
-    let checklistEntriesRaw = Array.isArray(reportData.checklist)
-      ? reportData.checklist
-      : Array.isArray(nestedData?.checklist)
-      ? nestedData.checklist
-      : Array.isArray(reportData?.data?.checklist)
-      ? reportData.data.checklist
-      : [];
+    // Función auxiliar para normalizar nombres (remover acentos y convertir a minúsculas)
+    // Definirla ANTES de usarla
+    const normalizeName = (str: string): string => {
+      return str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    };
+    
+    // Intentar obtener el checklist de todas las ubicaciones posibles
+    let checklistEntriesRaw: any[] = [];
+    
+    if (Array.isArray(reportData.checklist) && reportData.checklist.length > 0) {
+      checklistEntriesRaw = reportData.checklist;
+      console.log('[maintenance-pdf] ✅ Checklist encontrado en reportData.checklist');
+    } else if (nestedData && Array.isArray(nestedData.checklist) && nestedData.checklist.length > 0) {
+      checklistEntriesRaw = nestedData.checklist;
+      console.log('[maintenance-pdf] ✅ Checklist encontrado en nestedData.checklist');
+    } else if (reportData.data && typeof reportData.data === 'object') {
+      const dataData = reportData.data as Record<string, any>;
+      if (Array.isArray(dataData.checklist) && dataData.checklist.length > 0) {
+        checklistEntriesRaw = dataData.checklist;
+        console.log('[maintenance-pdf] ✅ Checklist encontrado en reportData.data.checklist');
+      }
+    }
+    
+    if (checklistEntriesRaw.length === 0) {
+      console.log('[maintenance-pdf] ⚠️ No se encontró checklist en ninguna ubicación, usando array vacío');
+    }
+    
+    // Log específico para verificar "Motorreductor" en checklistEntriesRaw
+    console.log('[maintenance-pdf] ========== VERIFICANDO checklistEntriesRaw ==========');
+    console.log('[maintenance-pdf] Total items en checklistEntriesRaw:', checklistEntriesRaw.length);
+    const motorreductorInRaw = checklistEntriesRaw.find((entry: any) => 
+      entry && typeof entry.name === 'string' && 
+      normalizeName(entry.name) === normalizeName('Motorreductor')
+    );
+    if (motorreductorInRaw) {
+      console.log('[maintenance-pdf] ✅ "Motorreductor" encontrado en checklistEntriesRaw:');
+      console.log('[maintenance-pdf]   - name:', motorreductorInRaw.name);
+      console.log('[maintenance-pdf]   - status:', motorreductorInRaw.status);
+      console.log('[maintenance-pdf]   - observation:', motorreductorInRaw.observation);
+      console.log('[maintenance-pdf]   - id:', motorreductorInRaw.id);
+    } else {
+      console.log('[maintenance-pdf] ⚠️ "Motorreductor" NO encontrado en checklistEntriesRaw');
+      console.log('[maintenance-pdf] Items en checklistEntriesRaw:', checklistEntriesRaw.map((e: any) => e?.name || 'unknown').slice(0, 10));
+    }
+    console.log('[maintenance-pdf] ====================================================');
 
-    // Obtener datos del trolleyGroup y carrosTesteros ANTES de construir el mapa
+    // Obtener datos del trolleyGroup, carrosTesteros y motorreductor ANTES de construir el mapa
     const reportWithColumns = report as any;
     let trolleyGroup: any = null;
     let carrosTesteros: any = null;
+    let motorreductor: any = null;
     
-    // Buscar trolleyGroup y carrosTesteros
+    // Buscar trolleyGroup, carrosTesteros y motorreductor
     if (reportWithColumns.trolley_group && typeof reportWithColumns.trolley_group === 'object') {
       trolleyGroup = reportWithColumns.trolley_group;
     } else if (reportData.trolleyGroup && typeof reportData.trolleyGroup === 'object') {
@@ -410,12 +495,6 @@ Deno.serve(async (req) => {
       console.log('[maintenance-pdf] ✅ Items del trolley agregados al checklistEntriesRaw');
     }
     
-    // Función auxiliar para normalizar nombres (remover acentos y convertir a minúsculas)
-    // Definirla aquí para usarla antes de construir el mapa
-    const normalizeName = (str: string): string => {
-      return str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-    };
-    
     // Buscar carrosTesteros
     if (reportWithColumns.carros_testeros && typeof reportWithColumns.carros_testeros === 'object') {
       carrosTesteros = reportWithColumns.carros_testeros;
@@ -423,6 +502,15 @@ Deno.serve(async (req) => {
       carrosTesteros = reportData.carrosTesteros;
     } else if (nestedData?.carrosTesteros && typeof nestedData.carrosTesteros === 'object') {
       carrosTesteros = nestedData.carrosTesteros;
+    }
+    
+    // Buscar motorreductor
+    if (reportWithColumns.motorreductor && typeof reportWithColumns.motorreductor === 'object') {
+      motorreductor = reportWithColumns.motorreductor;
+    } else if (reportData.motorreductor && typeof reportData.motorreductor === 'object') {
+      motorreductor = reportData.motorreductor;
+    } else if (nestedData?.motorreductor && typeof nestedData.motorreductor === 'object') {
+      motorreductor = nestedData.motorreductor;
     }
     
     // AGREGAR item principal de carros testeros y sus sub-items al checklistEntriesRaw
@@ -495,597 +583,166 @@ Deno.serve(async (req) => {
     console.log('[maintenance-pdf] Total items en checklistEntriesRaw:', checklistEntriesRaw.length);
     
     (checklistEntriesRaw ?? []).forEach((entry: any, index: number) => {
-      const entryName = typeof entry?.name === 'string' ? entry.name : checklistFallback[index] ?? `Ítem ${index + 1}`;
+      // Usar dynamicChecklistFallback si está disponible, sino usar checklistFallback
+      const fallbackList = dynamicChecklistFallback || checklistFallback;
+      const entryName = typeof entry?.name === 'string' ? entry.name : fallbackList[index] ?? `Ítem ${index + 1}`;
       const key = normalizeName(entryName);
-      if (!key) return;
-      
-      // Para "Motorreductor" (sub-item de Carros testeros), verificar que no se agregue al mapa
-      // El sub-item tiene id que incluye "carros-testeros" o "carros" o "testeros"
-      const entryId = entry?.id || '';
-      const isMotorreductorSubItem = normalizeName(entryName) === normalizeName('Motorreductor') && 
-                                      (entryId.includes('carros-testeros') || entryId.includes('carros') || entryId.includes('testeros'));
-      
-      // Si es el sub-item de Motorreductor de Carros testeros, NO agregarlo al mapa
-      // (se buscará directamente en checklistEntriesRaw cuando se procesen los sub-items)
-      if (isMotorreductorSubItem) {
+      if (!key) {
+        console.log(`[maintenance-pdf] ⚠️ Saltando entry sin nombre válido en índice ${index}:`, entry);
         return;
       }
       
+      // Log específico para "Motorreductor" cuando se construye el mapa
+      if (key.includes('motorreductor') || entryName?.toLowerCase().includes('motorreductor')) {
+        console.log(`[maintenance-pdf] 🔍 Agregando "Motorreductor" al mapa:`);
+        console.log(`[maintenance-pdf]   - entry completo:`, JSON.stringify(entry, null, 2));
+        console.log(`[maintenance-pdf]   - entryName: "${entryName}"`);
+        console.log(`[maintenance-pdf]   - key normalizado: "${key}"`);
+        console.log(`[maintenance-pdf]   - status: ${entry?.status || 'null'} (tipo: ${typeof entry?.status})`);
+        console.log(`[maintenance-pdf]   - observation: ${entry?.observation ? 'yes' : 'no'} (tipo: ${typeof entry?.observation})`);
+        console.log(`[maintenance-pdf]   - id: ${entry?.id || 'sin id'}`);
+      }
+      
+      // NOTA: "Motorreductor" ya no es un sub-item de "Carros testeros", es un item independiente
+      // Por lo tanto, todos los items de "Motorreductor" se agregan al mapa normalmente
+      
       // Para todos los demás items (incluyendo el item independiente "Motorreductor"), agregar al mapa
       // USAR EXACTAMENTE LA MISMA LÓGICA que funciona para "Carros testeros" y otros items
-      // Si ya existe en el mapa, solo actualizar si el nuevo tiene datos (status u observation)
+      // Si ya existe en el mapa, actualizar con los datos más recientes (priorizar datos no nulos)
       if (checklistMap.has(key)) {
         const existing = checklistMap.get(key);
         const newStatus = entry?.status === 'good' ? 'good' : entry?.status === 'bad' ? 'bad' : entry?.status === 'na' ? 'na' : null;
         const newObservation = typeof entry?.observation === 'string' ? entry.observation : '';
         
-        // Solo actualizar si el nuevo tiene datos y el existente no
-        if ((!existing?.status && newStatus) || (!existing?.observation && newObservation)) {
+        // Actualizar si el nuevo tiene datos (priorizar datos nuevos sobre existentes)
+        // Para "Motorreductor", siempre usar los datos más recientes
+        const finalStatus = newStatus || existing?.status || null;
+        const finalObservation = newObservation || existing?.observation || '';
+        
           checklistMap.set(key, {
             index,
             name: entryName,
-            status: newStatus || existing?.status || null,
-            observation: newObservation || existing?.observation || '',
-          });
+          status: finalStatus,
+          observation: finalObservation,
+        });
+        
+        // Log específico para "Motorreductor" cuando se actualiza
+        if (key.includes('motorreductor')) {
+          console.log(`[maintenance-pdf] 🔄 "Motorreductor" actualizado en mapa:`);
+          console.log(`[maintenance-pdf]   - Status anterior: ${existing?.status || 'null'}, nuevo: ${newStatus || 'null'}, final: ${finalStatus || 'null'}`);
+          console.log(`[maintenance-pdf]   - Observation anterior: ${existing?.observation ? 'yes' : 'no'}, nuevo: ${newObservation ? 'yes' : 'no'}, final: ${finalObservation ? 'yes' : 'no'}`);
         }
       } else {
         // Agregar al mapa (igual que "Carros testeros")
+        const status = entry?.status === 'good' ? 'good' : entry?.status === 'bad' ? 'bad' : entry?.status === 'na' ? 'na' : null;
+        const observation = typeof entry?.observation === 'string' ? entry.observation : '';
+        
         checklistMap.set(key, {
           index,
           name: entryName,
-          status: entry?.status === 'good' ? 'good' : entry?.status === 'bad' ? 'bad' : entry?.status === 'na' ? 'na' : null,
-          observation: typeof entry?.observation === 'string' ? entry.observation : '',
+          status,
+          observation,
         });
         
+        // Log específico para "Motorreductor" cuando se agrega por primera vez
+        if (key.includes('motorreductor')) {
+          console.log(`[maintenance-pdf] ➕ "Motorreductor" agregado al mapa por primera vez:`);
+          console.log(`[maintenance-pdf]   - Status: ${status || 'null'}`);
+          console.log(`[maintenance-pdf]   - Observation: ${observation ? 'yes' : 'no'}`);
+        }
       }
     });
+    
+    // Verificar si "Motorreductor" está en el mapa después de construirlo
+    const motorreductorInMap = checklistMap.has(normalizeName('Motorreductor'));
+    console.log(`[maintenance-pdf] 🔍 "Motorreductor" en mapa después de construcción: ${motorreductorInMap}`);
+    if (motorreductorInMap) {
+      const motorreductorEntry = checklistMap.get(normalizeName('Motorreductor'));
+      console.log(`[maintenance-pdf]   - Entry:`, motorreductorEntry);
+    }
     
 
     // Los items del trolley y testero ya están en checklistEntriesRaw, 
     // así que el mapa ya los incluye automáticamente (igual que "Motor de elevación")
 
-    // Construir el checklist usando la misma lógica simple para todos los items
-    // Ahora todos los items (incluidos trolley y sub-items de carro testero) están en el checklistMap
+    // CONSTRUIR CHECKLIST DIRECTAMENTE DESDE checklistEntriesRaw (lo que el usuario guardó)
+    const fallbackList = dynamicChecklistFallback || checklistFallback;
     const checklist: MaintenanceReportPdfPayload['checklist'] = [];
-    let currentIndex = 0;
     
-    // Los sub-items de carros testeros ya están en checklistEntriesRaw y en el mapa
-    // Solo necesitamos buscarlos en el mapa cuando encontremos "Carros testeros"
+    // Crear un mapa de todos los items guardados por nombre normalizado
+    const savedItemsMap = new Map<string, any>();
+    checklistEntriesRaw.forEach((entry: any) => {
+      if (entry && typeof entry.name === 'string') {
+        const key = normalizeName(entry.name);
+        savedItemsMap.set(key, entry);
+      }
+    });
     
-    console.log('[maintenance-pdf] ========== INICIANDO CONSTRUCCIÓN DE CHECKLIST ==========');
-    console.log('[maintenance-pdf] Construyendo checklist desde checklistFallback con', checklistFallback.length, 'items base');
-    console.log('[maintenance-pdf] checklistMap tiene', checklistMap.size, 'entradas');
-    console.log('[maintenance-pdf] checklistFallback contiene "Carros testeros":', checklistFallback.includes('Carros testeros'));
-    
-    for (let i = 0; i < checklistFallback.length; i++) {
-      const name = checklistFallback[i];
+    // Iterar sobre fallbackList para mantener el orden correcto
+    for (let i = 0; i < fallbackList.length; i++) {
+      const name = fallbackList[i];
       const nameLower = normalizeName(name);
-      const entry = checklistMap.get(nameLower);
+      const savedItem = savedItemsMap.get(nameLower);
       
-      // Solo loguear cada 5 items para no saturar, pero SIEMPRE loguear "Carros testeros"
-      if (i % 5 === 0 || nameLower.includes('carros') || nameLower.includes('testeros')) {
-        console.log(`[maintenance-pdf] Procesando item ${i + 1}/${checklistFallback.length}: "${name}" - encontrado en mapa: ${!!entry}, status: ${entry?.status ?? 'null'}`);
-      }
-      
-      // Si es "Carros testeros", agregar los sub-items inmediatamente después
-      // Los sub-items ya están en el mapa (desde checklistEntriesRaw)
-      const isCarrosTesteros = (nameLower.includes('carros') && nameLower.includes('testeros')) || 
-                               (normalizeName('Carros testeros') === nameLower) ||
-                               (name === 'Carros testeros');
-      
-      if (isCarrosTesteros) {
-        // Agregar "Carros testeros" primero
+      if (nameLower.includes('carros') && nameLower.includes('testeros')) {
+        // Agregar "Carros testeros" principal
         checklist.push({
-          index: currentIndex,
+          index: checklist.length,
           name,
-          status: entry?.status ?? null,
-          observation: entry?.observation ?? '',
+          status: savedItem?.status === 'good' ? 'good' : savedItem?.status === 'bad' ? 'bad' : savedItem?.status === 'na' ? 'na' : null,
+          observation: typeof savedItem?.observation === 'string' ? savedItem.observation : '',
         });
-        currentIndex++;
         
-        console.log(`[maintenance-pdf] ✅ Encontrado "Carros testeros", agregando sub-items desde el mapa...`);
-        
-        // Buscar los sub-items directamente en checklistEntriesRaw (no en el mapa para evitar conflictos)
-        // Los sub-items de "Carros testeros" son: Motorreductor, Freno, Ruedas, Chumaceras, Palanquilla
-        const expectedSubItemNames = ['Motorreductor', 'Freno', 'Ruedas', 'Chumaceras', 'Palanquilla'];
-        expectedSubItemNames.forEach((subItemName) => {
-          // Buscar en checklistEntriesRaw el sub-item que tenga id relacionado con carros-testeros
-          let subItemEntry = null;
-          for (const rawEntry of checklistEntriesRaw) {
-            if (rawEntry && typeof rawEntry.name === 'string' && 
-                normalizeName(rawEntry.name) === normalizeName(subItemName)) {
-              const entryId = rawEntry.id || '';
-              // Verificar que sea el sub-item de Carros testeros (tiene id relacionado)
-              if (entryId.includes('carros-testeros') || entryId.includes('carros') || entryId.includes('testeros')) {
-                subItemEntry = rawEntry;
-                break;
-              }
-            }
-          }
+        // Agregar sub-items
+        const subItems = ['Freno', 'Ruedas', 'Chumaceras', 'Palanquilla'];
+        subItems.forEach((subName) => {
+          const subKey = normalizeName(subName);
+          const subSaved = Array.from(savedItemsMap.entries()).find(([key, entry]: [string, any]) => 
+            key === subKey && (entry.id?.includes('carros-testeros') || entry.id?.includes('carros') || entry.id?.includes('testeros'))
+          )?.[1];
           
-          if (subItemEntry) {
-            // Encontrado el sub-item en checklistEntriesRaw
-            checklist.push({
-              index: currentIndex,
-              name: subItemName,
-              status: subItemEntry.status === 'good' ? 'good' : subItemEntry.status === 'bad' ? 'bad' : subItemEntry.status === 'na' ? 'na' : null,
-              observation: typeof subItemEntry.observation === 'string' ? subItemEntry.observation : '',
-            });
-            console.log(`[maintenance-pdf] ✅ Sub-item de Carros testeros agregado desde checklistEntriesRaw: "${subItemName}" - status: ${subItemEntry.status || 'null'}`);
-            currentIndex++;
-          } else {
-            // Si no está en checklistEntriesRaw, crearlo con datos por defecto
-            checklist.push({
-              index: currentIndex,
-              name: subItemName,
-              status: null,
-              observation: '',
-            });
-            console.log(`[maintenance-pdf] ⚠️ Sub-item de Carros testeros agregado por defecto: "${subItemName}" (no estaba en checklistEntriesRaw)`);
-            currentIndex++;
-          }
+          checklist.push({
+            index: checklist.length,
+            name: subName,
+            status: subSaved?.status === 'good' ? 'good' : subSaved?.status === 'bad' ? 'bad' : subSaved?.status === 'na' ? 'na' : null,
+            observation: typeof subSaved?.observation === 'string' ? subSaved.observation : '',
+          });
         });
-        
-        console.log(`[maintenance-pdf] ✅✅✅ COMPLETADO: 5 sub-items agregados después de "Carros testeros"`);
       } else {
-        // Para todos los demás items, agregar normalmente
-        // Usar la MISMA lógica que funciona para "Freno motor de elevación" y otros items
-        const itemStatus = entry?.status ?? null;
-        const itemObservation = entry?.observation ?? '';
-        
+        // Agregar item normal
         checklist.push({
-          index: currentIndex,
+          index: checklist.length,
           name,
-          status: itemStatus,
-          observation: itemObservation,
+          status: savedItem?.status === 'good' ? 'good' : savedItem?.status === 'bad' ? 'bad' : savedItem?.status === 'na' ? 'na' : null,
+          observation: typeof savedItem?.observation === 'string' ? savedItem.observation : '',
         });
-        
-        currentIndex++;
       }
-      
     }
     
-    // Logs finales para verificar
-    console.log('[maintenance-pdf] ====== CHECKLIST FINAL CONSTRUIDO ======');
-    console.log('[maintenance-pdf] Total items en checklist:', checklist.length);
-    const trolleyChecklistItems = checklist.filter(item => {
-      const nameLower = normalizeName(item.name);
-      return nameLower.includes('trolley');
-    });
-    console.log('[maintenance-pdf] Items del trolley en checklist:', trolleyChecklistItems.length);
-    trolleyChecklistItems.forEach(item => {
-      console.log(`[maintenance-pdf] - ${item.name}: status=${item.status}, observation=${item.observation ? 'yes' : 'no'}`);
-    });
-    
-    const carrosChecklistItems = checklist.filter(item => {
-      const nameLower = normalizeName(item.name);
-      return nameLower.includes('carros') || nameLower.includes('motorreductor') || nameLower.includes('freno') || 
-             (nameLower.includes('ruedas') && !nameLower.includes('trolley')) || 
-             nameLower.includes('chumacera') || nameLower.includes('palanquilla');
-    });
-    console.log('[maintenance-pdf] Items de carros testeros en checklist:', carrosChecklistItems.length);
-    carrosChecklistItems.forEach(item => {
-      console.log(`[maintenance-pdf] - ${item.name}: status=${item.status}, observation=${item.observation ? 'yes' : 'no'}`);
-    });
-    console.log('[maintenance-pdf] ========================================');
-    
-    // VERIFICACIÓN FINAL: Asegurarse de que los sub-items de carros testeros estén en el checklist
-    const expectedSubItemNames = ['Motorreductor', 'Freno', 'Ruedas', 'Chumaceras', 'Palanquilla'];
-    const foundSubItems = expectedSubItemNames.filter(subItemName => {
-      return checklist.some(item => normalizeName(item.name) === normalizeName(subItemName));
-    });
-    
-    console.log('[maintenance-pdf] 🔍 VERIFICACIÓN: Sub-items esperados:', expectedSubItemNames.length);
-    console.log('[maintenance-pdf] 🔍 VERIFICACIÓN: Sub-items encontrados:', foundSubItems.length, '-', foundSubItems.join(', '));
-    
-    if (foundSubItems.length < expectedSubItemNames.length) {
-      console.log('[maintenance-pdf] ⚠️⚠️⚠️ PROBLEMA: Faltan sub-items! Agregando manualmente...');
-      
-      // Buscar la posición de "Carros testeros" en el checklist
-      const carrosTesterosIndex = checklist.findIndex(item => {
-        const nameLower = normalizeName(item.name);
-        return nameLower.includes('carros') && nameLower.includes('testeros');
-      });
-      
-      if (carrosTesterosIndex !== -1) {
-        console.log(`[maintenance-pdf] ✅ Encontrado "Carros testeros" en índice ${carrosTesterosIndex} del checklist`);
-        const carrosTesterosItem = checklist[carrosTesterosIndex];
-        
-        // Buscar los sub-items en el mapa (ya están ahí desde checklistEntriesRaw)
-        const subItemsToInsert: any[] = [];
-        expectedSubItemNames.forEach((subItemName) => {
-          const subItemKey = normalizeName(subItemName);
-          const subItemEntry = checklistMap.get(subItemKey);
-          if (subItemEntry) {
-            subItemsToInsert.push(subItemEntry);
-          } else {
-            // Si no está en el mapa, crear uno por defecto
-            subItemsToInsert.push({
-              name: subItemName,
-              status: null,
-              observation: '',
-            });
-          }
-        });
-        
-        console.log(`[maintenance-pdf] Insertando ${subItemsToInsert.length} sub-items después de "Carros testeros"...`);
-        
-        // Reconstruir el checklist agregando los sub-items después de "Carros testeros"
-        const newChecklist: MaintenanceReportPdfPayload['checklist'] = [];
-        let newIndex = 0;
-        
-        // Copiar todos los items hasta "Carros testeros"
-        for (let i = 0; i <= carrosTesterosIndex; i++) {
-          newChecklist.push({
-            ...checklist[i],
-            index: newIndex,
-          });
-          newIndex++;
-        }
-        
-        // Agregar los sub-items después de "Carros testeros"
-        subItemsToInsert.forEach((subItem: any, idx: number) => {
-          const subItemName = (subItem.name && typeof subItem.name === 'string') ? subItem.name : expectedSubItemNames[idx] || `Componente ${idx + 1}`;
-          
-          // Verificar si ya existe en el checklist original (para evitar duplicados)
-          const alreadyExists = checklist.some(item => normalizeName(item.name) === normalizeName(subItemName));
-          if (!alreadyExists) {
-            const subItemStatus = (subItem.status === 'good' || subItem.status === 'bad' || subItem.status === 'na') ? subItem.status : null;
-            const subItemObs = (subItem.observation && typeof subItem.observation === 'string' && subItem.observation.trim()) 
-              ? subItem.observation.trim()
-              : ((carrosTesteros && typeof carrosTesteros === 'object' && carrosTesteros.observation && typeof carrosTesteros.observation === 'string') 
-                ? carrosTesteros.observation 
-                : '');
-            
-            newChecklist.push({
-              index: newIndex,
-              name: subItemName,
-              status: subItemStatus,
-              observation: subItemObs,
-            });
-            
-            console.log(`[maintenance-pdf] ✅ Agregado sub-item "${subItemName}" con index ${newIndex}`);
-            newIndex++;
-          } else {
-            console.log(`[maintenance-pdf] ⚠️ Sub-item "${subItemName}" ya existe, copiando desde checklist original...`);
-            // Si ya existe, copiarlo del checklist original con el nuevo índice
-            const existingItem = checklist.find(item => normalizeName(item.name) === normalizeName(subItemName));
-            if (existingItem) {
-              newChecklist.push({
-                ...existingItem,
-                index: newIndex,
-              });
-              newIndex++;
-            }
-          }
-        });
-        
-        // Copiar todos los items restantes después de "Carros testeros"
-      for (let i = carrosTesterosIndex + 1; i < checklist.length; i++) {
-          // Verificar que no sea un sub-item que ya agregamos
-          const itemNameLower = normalizeName(checklist[i].name);
-          const isSubItem = expectedSubItemNames.some(subName => normalizeName(subName) === itemNameLower);
-          
-          if (!isSubItem) {
-            newChecklist.push({
-              ...checklist[i],
-              index: newIndex,
-            });
-            newIndex++;
-          }
-        }
-        
-        // Reemplazar el checklist con el nuevo
-        checklist.length = 0;
-        checklist.push(...newChecklist);
-        
-        console.log(`[maintenance-pdf] ✅✅✅ COMPLETADO: ${subItemsToInsert.length} sub-items agregados manualmente después de "Carros testeros"`);
-        console.log(`[maintenance-pdf] Total items en checklist ahora: ${checklist.length}`);
-    } else {
-        console.log('[maintenance-pdf] ❌ No se encontró "Carros testeros" en el checklist para agregar sub-items');
-      }
-    }
-
-    // Log final del checklist generado
-    console.log('[maintenance-pdf] Final checklist items count:', checklist.length);
-    const trolleyItems = checklist.filter(item => {
-      const nameLower = normalizeName(item.name);
-      return nameLower.includes('trolley') || nameLower.includes('carros');
-    });
-    console.log('[maintenance-pdf] Trolley and carros items found:', trolleyItems.length);
-    trolleyItems.forEach(item => {
-      console.log(`[maintenance-pdf] - ${item.name}: status=${item.status}, observation=${item.observation ? 'yes' : 'no'}`);
-    });
-
-    // VERIFICACIÓN FINAL ABSOLUTA: Asegurar que los sub-items estén antes de crear el payload
-    const finalExpectedSubItems = ['Motorreductor', 'Freno', 'Ruedas', 'Chumaceras', 'Palanquilla'];
-    const finalCarrosIndex = checklist.findIndex(item => {
-      const nameLower = normalizeName(item.name);
-      return nameLower.includes('carros') && nameLower.includes('testeros');
-    });
-    
-    // Verificar qué sub-items ya están presentes
-    const existingSubItemNames = new Set<string>();
-    checklist.forEach(item => {
-      const nameLower = normalizeName(item.name);
-      finalExpectedSubItems.forEach(subName => {
-        if (normalizeName(subName) === nameLower) {
-          existingSubItemNames.add(subName);
-        }
-      });
-    });
-    
-    const missingSubItems = finalExpectedSubItems.filter(subName => !existingSubItemNames.has(subName));
-    
-    console.log('[maintenance-pdf] ========== VERIFICACIÓN FINAL DE SUB-ITEMS ==========');
-    console.log('[maintenance-pdf] Sub-items esperados:', finalExpectedSubItems.length);
-    console.log('[maintenance-pdf] Sub-items encontrados:', existingSubItemNames.size, '-', Array.from(existingSubItemNames).join(', '));
-    console.log('[maintenance-pdf] Sub-items faltantes:', missingSubItems.length, '-', missingSubItems.join(', '));
-    
-    if (finalCarrosIndex !== -1 && missingSubItems.length > 0) {
-      console.log(`[maintenance-pdf] 🔴 AGREGANDO ${missingSubItems.length} SUB-ITEMS FALTANTES...`);
-      
-      // Obtener datos de carrosTesteros
-      let subItemsData: any[] = [];
-      if (carrosTesteros && typeof carrosTesteros === 'object' && carrosTesteros.subItems && Array.isArray(carrosTesteros.subItems)) {
-        subItemsData = carrosTesteros.subItems;
-      }
-      
-      // Crear un nuevo checklist con los sub-items agregados
-      const finalChecklist: MaintenanceReportPdfPayload['checklist'] = [];
-      
-      // Copiar items hasta "Carros testeros"
-      for (let i = 0; i <= finalCarrosIndex; i++) {
-        finalChecklist.push({
-          ...checklist[i],
-          index: finalChecklist.length,
-        });
-      }
-      
-      // Agregar TODOS los sub-items esperados
-      finalExpectedSubItems.forEach((subItemName, idx) => {
-        // Buscar si ya existe en el checklist original
-        const existingItem = checklist.find(item => normalizeName(item.name) === normalizeName(subItemName));
-        
-        if (existingItem) {
-          // Si ya existe, usarlo
-          finalChecklist.push({
-            ...existingItem,
-            index: finalChecklist.length,
-          });
-        } else {
-          // Si no existe, buscar en carrosTesteros o crear uno nuevo
-          const subItemData = subItemsData.find((item: any) => 
-            normalizeName(item.name || '') === normalizeName(subItemName)
-          );
-          
-          finalChecklist.push({
-            index: finalChecklist.length,
-            name: subItemName,
-            status: subItemData?.status === 'good' || subItemData?.status === 'bad' || subItemData?.status === 'na' 
-              ? subItemData.status 
-              : null,
-            observation: subItemData?.observation && typeof subItemData.observation === 'string' && subItemData.observation.trim()
-              ? subItemData.observation.trim()
-              : ((carrosTesteros && typeof carrosTesteros === 'object' && carrosTesteros.observation && typeof carrosTesteros.observation === 'string') 
-                ? carrosTesteros.observation 
-                : ''),
-          });
-        }
-        
-        console.log(`[maintenance-pdf] ✅ Sub-item "${subItemName}" agregado (index: ${finalChecklist.length - 1})`);
-      });
-      
-      // Copiar el resto de items después de los sub-items
-      for (let i = finalCarrosIndex + 1; i < checklist.length; i++) {
-        const itemNameLower = normalizeName(checklist[i].name);
-        const isSubItem = finalExpectedSubItems.some(subName => normalizeName(subName) === itemNameLower);
-        
+    // Agregar cualquier item adicional guardado que no esté en fallbackList
+    savedItemsMap.forEach((entry, key) => {
+      const alreadyAdded = checklist.some(item => normalizeName(item.name) === key);
+      if (!alreadyAdded) {
+        const isSubItem = entry.id?.includes('carros-testeros') || entry.id?.includes('carros') || entry.id?.includes('testeros');
         if (!isSubItem) {
-          finalChecklist.push({
-            ...checklist[i],
-            index: finalChecklist.length,
+          checklist.push({
+            index: checklist.length,
+            name: entry.name,
+            status: entry.status === 'good' ? 'good' : entry.status === 'bad' ? 'bad' : entry.status === 'na' ? 'na' : null,
+            observation: typeof entry.observation === 'string' ? entry.observation : '',
           });
         }
       }
-      
-      // Reemplazar el checklist con el nuevo
-      checklist.length = 0;
-      checklist.push(...finalChecklist);
-      
-      console.log(`[maintenance-pdf] ✅✅✅ COMPLETADO: Checklist reconstruido con ${checklist.length} items`);
-    }
-    
-    // VERIFICACIÓN Y AGREGADO DE SUB-ITEMS DE MOTORREDUCTOR (item independiente)
-    // Buscar el item "Motorreductor" en el checklist (no confundir con el sub-item de carrosTesteros)
-    // Si motorreductor tiene subItems propios, buscar el item principal "Motorreductor"
-    // que debería estar en el checklist (agregado desde checklistEntriesRaw con id 'motorreductor-main')
-    let motorreductorMainIndex = -1;
-    
-    if (motorreductor && typeof motorreductor === 'object' && motorreductor.subItems && Array.isArray(motorreductor.subItems) && motorreductor.subItems.length > 0) {
-      // Buscar el item "Motorreductor" que sea el principal (no el sub-item de carrosTesteros)
-      // El principal debería estar antes de los sub-items de carrosTesteros o después de ellos
-      // Buscamos el primer "Motorreductor" que no esté inmediatamente después de "Carros testeros"
-      const carrosTesterosIndex = checklist.findIndex(item => {
-        const nameLower = normalizeName(item.name);
-        return nameLower.includes('carros') && nameLower.includes('testeros');
-      });
-      
-      // Buscar todos los items "Motorreductor"
-      const allMotorreductorIndices = checklist
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) => normalizeName(item.name) === normalizeName('Motorreductor'));
-      
-      if (allMotorreductorIndices.length > 0) {
-        // Si hay "Carros testeros", el motorreductor principal probablemente esté después de sus sub-items
-        // o antes de "Carros testeros". Buscamos el que tenga el status del motorreductor principal
-        const motorreductorMainStatus = motorreductor.mainStatus;
-        
-        for (const { item, index } of allMotorreductorIndices) {
-          // Verificar si este item tiene el mismo status que el motorreductor principal
-          if (item.status === motorreductorMainStatus) {
-            motorreductorMainIndex = index;
-            console.log(`[maintenance-pdf] ✅ Encontrado item principal "Motorreductor" en índice ${index} (coincide con mainStatus)`);
-            break;
-          }
-        }
-        
-        // Si no encontramos por status, usar el primero que no esté inmediatamente después de carrosTesteros
-        if (motorreductorMainIndex === -1 && allMotorreductorIndices.length > 0) {
-          if (carrosTesterosIndex !== -1) {
-            // Buscar el que esté más lejos de carrosTesteros (probablemente el principal)
-            const distances = allMotorreductorIndices.map(({ index }) => Math.abs(index - carrosTesterosIndex));
-            const maxDistanceIndex = distances.indexOf(Math.max(...distances));
-            motorreductorMainIndex = allMotorreductorIndices[maxDistanceIndex].index;
-            console.log(`[maintenance-pdf] ✅ Encontrado item principal "Motorreductor" en índice ${motorreductorMainIndex} (más lejos de Carros testeros)`);
-          } else {
-            // Si no hay carrosTesteros, usar el primero
-            motorreductorMainIndex = allMotorreductorIndices[0].index;
-            console.log(`[maintenance-pdf] ✅ Encontrado item principal "Motorreductor" en índice ${motorreductorMainIndex} (único encontrado)`);
-          }
-        }
-      }
-    }
-    
-    if (motorreductorMainIndex !== -1 && motorreductor && typeof motorreductor === 'object' && 
-        motorreductor.subItems && Array.isArray(motorreductor.subItems) && motorreductor.subItems.length > 0) {
-      console.log(`[maintenance-pdf] 🔧 Procesando sub-items de Motorreductor (item independiente) en índice ${motorreductorMainIndex}`);
-      
-      // Obtener los nombres de los sub-items de motorreductor
-      const motorreductorSubItemNames = motorreductor.subItems
-        .filter((subItem: any) => subItem && typeof subItem === 'object' && subItem.name)
-        .map((subItem: any) => subItem.name);
-      
-      console.log(`[maintenance-pdf] 📋 Sub-items esperados de Motorreductor:`, motorreductorSubItemNames);
-      
-      // Verificar qué sub-items ya están presentes después del item principal
-      const existingMotorreductorSubItems = new Set<string>();
-      for (let i = motorreductorMainIndex + 1; i < checklist.length; i++) {
-        const itemNameLower = normalizeName(checklist[i].name);
-        motorreductorSubItemNames.forEach((subName: string) => {
-          if (normalizeName(subName) === itemNameLower) {
-            existingMotorreductorSubItems.add(subName);
-          }
-        });
-      }
-      
-      const missingMotorreductorSubItems = motorreductorSubItemNames.filter(
-        (subName: string) => !existingMotorreductorSubItems.has(subName)
-      );
-      
-      console.log(`[maintenance-pdf] Sub-items de Motorreductor encontrados:`, Array.from(existingMotorreductorSubItems));
-      console.log(`[maintenance-pdf] Sub-items de Motorreductor faltantes:`, missingMotorreductorSubItems);
-      
-      if (missingMotorreductorSubItems.length > 0) {
-        console.log(`[maintenance-pdf] 🔴 AGREGANDO ${missingMotorreductorSubItems.length} SUB-ITEMS DE MOTORREDUCTOR...`);
-        
-        // Crear un nuevo checklist con los sub-items agregados después de Motorreductor
-        const motorreductorChecklist: MaintenanceReportPdfPayload['checklist'] = [];
-        
-        // Copiar items hasta "Motorreductor"
-        for (let i = 0; i <= motorreductorMainIndex; i++) {
-          motorreductorChecklist.push({
-            ...checklist[i],
-            index: motorreductorChecklist.length,
-          });
-        }
-        
-        // Agregar los sub-items de motorreductor
-        motorreductorSubItemNames.forEach((subItemName: string) => {
-          // Buscar si ya existe en el checklist original
-          const existingItem = checklist.find(item => normalizeName(item.name) === normalizeName(subItemName));
-          
-          if (existingItem) {
-            // Si ya existe, usarlo
-            motorreductorChecklist.push({
-              ...existingItem,
-              index: motorreductorChecklist.length,
-            });
-          } else {
-            // Si no existe, buscar en motorreductor.subItems
-            const subItemData = motorreductor.subItems.find((item: any) => 
-              normalizeName(item.name || '') === normalizeName(subItemName)
-            );
-            
-            motorreductorChecklist.push({
-              index: motorreductorChecklist.length,
-              name: subItemName,
-              status: subItemData?.status === 'good' || subItemData?.status === 'bad' || subItemData?.status === 'na' 
-                ? subItemData.status 
-                : null,
-              observation: subItemData?.observation && typeof subItemData.observation === 'string' && subItemData.observation.trim()
-                ? subItemData.observation.trim()
-                : ((motorreductor.observation && typeof motorreductor.observation === 'string') 
-                  ? motorreductor.observation 
-                  : ''),
-            });
-          }
-          
-          console.log(`[maintenance-pdf] ✅ Sub-item de Motorreductor "${subItemName}" agregado (index: ${motorreductorChecklist.length - 1})`);
-        });
-        
-        // Copiar el resto de items después de los sub-items de motorreductor
-        for (let i = motorreductorMainIndex + 1; i < checklist.length; i++) {
-          const itemNameLower = normalizeName(checklist[i].name);
-          const isMotorreductorSubItem = motorreductorSubItemNames.some(
-            (subName: string) => normalizeName(subName) === itemNameLower
-          );
-          
-          if (!isMotorreductorSubItem) {
-            motorreductorChecklist.push({
-              ...checklist[i],
-              index: motorreductorChecklist.length,
-            });
-          }
-        }
-        
-        // Reemplazar el checklist con el nuevo
-        checklist.length = 0;
-        checklist.push(...motorreductorChecklist);
-        
-        console.log(`[maintenance-pdf] ✅✅✅ COMPLETADO: Sub-items de Motorreductor agregados, checklist ahora tiene ${checklist.length} items`);
-      } else {
-        console.log(`[maintenance-pdf] ✅ Todos los sub-items de Motorreductor ya están presentes`);
-      }
-    } else if (motorreductorMainIndex === -1) {
-      console.log(`[maintenance-pdf] ⚠️ No se encontró el item principal "Motorreductor" en el checklist`);
-    } else if (!motorreductor || !motorreductor.subItems || !Array.isArray(motorreductor.subItems) || motorreductor.subItems.length === 0) {
-      console.log(`[maintenance-pdf] ⚠️ Motorreductor no tiene subItems o está vacío`);
-    }
-    
-    // Log final antes de crear el payload
-    console.log('[maintenance-pdf] ========== CHECKLIST FINAL ANTES DEL PDF ==========');
-    console.log('[maintenance-pdf] Total items:', checklist.length);
-    
-    // Verificar items del trolley
-    const trolleyItemsFinal = checklist.filter(item => {
-      const nameLower = normalizeName(item.name);
-      return nameLower.includes('trolley');
-    });
-    console.log('[maintenance-pdf] Items del trolley encontrados:', trolleyItemsFinal.length);
-    trolleyItemsFinal.forEach(item => {
-      console.log(`[maintenance-pdf] - ${item.index + 1}. ${item.name}: status=${item.status || 'null'}, observation=${item.observation ? 'yes' : 'no'}`);
     });
     
-    // Verificar sub-items de carros testeros
-    const allSubItemsFinal = checklist.filter(item => {
-      const nameLower = normalizeName(item.name);
-      return finalExpectedSubItems.some(subName => normalizeName(subName) === nameLower);
-    });
-    console.log('[maintenance-pdf] Sub-items de carros testeros encontrados:', allSubItemsFinal.length);
-    allSubItemsFinal.forEach(item => {
-      console.log(`[maintenance-pdf] - ${item.index + 1}. ${item.name}: status=${item.status || 'null'}, observation=${item.observation ? 'yes' : 'no'}`);
-    });
-    
-    // IMPORTANTE: Re-indexar el checklist final para asegurar índices consecutivos
-    const finalChecklistReindexed = checklist.map((item, idx) => ({
+    // Re-indexar
+    const finalChecklist = checklist.map((item, idx) => ({
       ...item,
-      index: idx, // Asegurar índices consecutivos desde 0
+      index: idx,
     }));
-    
-    console.log('[maintenance-pdf] Checklist re-indexado con', finalChecklistReindexed.length, 'items');
-    console.log('[maintenance-pdf] Primeros 10 items:', JSON.stringify(finalChecklistReindexed.slice(0, 10).map(i => ({ index: i.index, name: i.name, status: i.status })), null, 2));
-    console.log('[maintenance-pdf] ==================================================');
+
+    console.log('[maintenance-pdf] Checklist final:', finalChecklist.length, 'items');
+    console.log('[maintenance-pdf] Items:', finalChecklist.map(i => `${i.index}: ${i.name}`).join(', '));
 
     const payload: MaintenanceReportPdfPayload = {
       title: 'Informe de Mantenimiento',
@@ -1109,9 +766,16 @@ Deno.serve(async (req) => {
       initialState: report.initial_state ?? reportData.initialState ?? reportData.initial_state ?? null,
       recommendations: report.recommendations ?? reportData.recommendations ?? null,
       tests: tests ?? undefined,
-      checklist: finalChecklistReindexed, // Usar el checklist re-indexado
+      checklist: finalChecklist,
       photos,
     };
+    
+    // Log del payload.checklist para verificar
+    console.log('[maintenance-pdf] payload.checklist.length:', payload.checklist.length);
+    const tornilloInPayload = payload.checklist.find(i => normalizeName(i.name) === normalizeName('Tornillo'));
+    const motorreductorInPayload = payload.checklist.find(i => normalizeName(i.name) === normalizeName('Motorreductor'));
+    console.log('[maintenance-pdf] "Tornillo" en payload.checklist:', tornilloInPayload ? `✅` : '❌');
+    console.log('[maintenance-pdf] "Motorreductor" en payload.checklist:', motorreductorInPayload ? `✅` : '❌');
 
     console.log('[maintenance-pdf] generating PDF...');
     const pdfBytes = await createMaintenanceReportPDF(payload);

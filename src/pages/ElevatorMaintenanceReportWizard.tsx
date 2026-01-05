@@ -45,7 +45,8 @@ const normalizeDateToLocalString = (date: string | Date | null | undefined): str
   return null;
 };
 
-const CHECKLIST_ITEMS = [
+// Items base para elevadores
+const ELEVATOR_CHECKLIST_ITEMS = [
   "Motor de elevación",
   "Freno motor de elevación",
   "Trolley",
@@ -71,6 +72,26 @@ const CHECKLIST_ITEMS = [
   "Carcazas",
 ];
 
+// Items adicionales para puentes grúa
+// TODO: Agregar aquí los items específicos que necesites para puentes grúa
+const BRIDGE_CRANE_ADDITIONAL_ITEMS = [
+  // Ejemplo: "Sistema de iluminación",
+  // Ejemplo: "Carril de desplazamiento",
+  // Agregar más items según necesidad
+];
+
+// Función para obtener los items según el tipo de equipo
+const getChecklistItems = (equipmentType?: EquipmentType): string[] => {
+  if (equipmentType === "puentes-grua") {
+    return [...ELEVATOR_CHECKLIST_ITEMS, ...BRIDGE_CRANE_ADDITIONAL_ITEMS];
+  }
+  return ELEVATOR_CHECKLIST_ITEMS;
+};
+
+// Mantener CHECKLIST_ITEMS para compatibilidad, pero ahora es dinámico
+// Se actualizará según el equipmentType en el componente
+const CHECKLIST_ITEMS = ELEVATOR_CHECKLIST_ITEMS;
+
 type ChecklistStatus = "good" | "bad" | "na" | null;
 
 type ChecklistEntry = {
@@ -79,6 +100,8 @@ type ChecklistEntry = {
   status: ChecklistStatus;
   observation: string;
 };
+
+type EquipmentType = "elevadores" | "puentes-grua";
 
 
 
@@ -230,8 +253,8 @@ type StepDefinition = {
   checklistIndex?: number;
 };
 
-const buildDefaultChecklist = (): ChecklistEntry[] =>
-  CHECKLIST_ITEMS.map((name, index) => ({
+const buildDefaultChecklist = (equipmentType?: EquipmentType): ChecklistEntry[] =>
+  getChecklistItems(equipmentType).map((name, index) => ({
     id: crypto.randomUUID(),
     name,
     status: null,
@@ -243,7 +266,7 @@ const buildDefaultMotorreductor = () => ({
   observation: "",
 });
 
-const defaultForm: MaintenanceReportForm = {
+const buildDefaultForm = (equipmentType?: EquipmentType): MaintenanceReportForm => ({
   startDate: null,
   endDate: null,
   company: "",
@@ -259,7 +282,7 @@ const defaultForm: MaintenanceReportForm = {
   locationPg: "",
   voltage: "",
   initialState: "",
-  checklist: buildDefaultChecklist(),
+  checklist: buildDefaultChecklist(equipmentType),
   motorreductor: buildDefaultMotorreductor(),
   recommendations: "",
   tests: {
@@ -270,32 +293,38 @@ const defaultForm: MaintenanceReportForm = {
     },
   },
   photos: [],
+});
+
+const defaultForm: MaintenanceReportForm = buildDefaultForm();
+
+const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
+  const items = getChecklistItems(equipmentType);
+  return [
+    {
+      key: "intro",
+      title: "Procedimiento de llenado de Informe de Mantenimiento",
+      subtitle:
+        "A continuación, podrá llenar paso a paso su informe de mantenimiento. Asegúrese de completar todos los campos.",
+    },
+    { key: "basicInfo", title: "Información Básica" },
+    { key: "initialState", title: "Estado Inicial" },
+    ...items.map((name, index) => ({
+      key: `checklist-${index}`,
+      title: "Lista de Chequeo",
+      subtitle: `${index + 1}. ${name}`,
+      checklistIndex: index,
+    })),
+    { key: "recommendations", title: "Recomendaciones" },
+    { key: "tests", title: "Pruebas sin carga" },
+    { key: "photos", title: "Soporte Fotográfico" },
+    { key: "finish", title: "Fin del Informe de Mantenimiento" },
+  ];
 };
 
-const steps: StepDefinition[] = [
-  {
-    key: "intro",
-    title: "Procedimiento de llenado de Informe de Mantenimiento",
-    subtitle:
-      "A continuación, podrá llenar paso a paso su informe de mantenimiento. Asegúrese de completar todos los campos.",
-  },
-  { key: "basicInfo", title: "Información Básica" },
-  { key: "initialState", title: "Estado Inicial" },
-  ...CHECKLIST_ITEMS.map((name, index) => ({
-    key: `checklist-${index}`,
-    title: "Lista de Chequeo",
-    subtitle: `${index + 1}. ${name}`,
-    checklistIndex: index,
-  })),
-  { key: "recommendations", title: "Recomendaciones" },
-  { key: "tests", title: "Pruebas sin carga" },
-  { key: "photos", title: "Soporte Fotográfico" },
-  { key: "finish", title: "Fin del Informe de Mantenimiento" },
-];
-
-const totalSteps = steps.length;
-
 type EquipmentType = "elevadores" | "puentes-grua";
+
+const steps: StepDefinition[] = buildSteps();
+const totalSteps = steps.length;
 
 interface MaintenanceReportWizardProps {
   equipmentType?: EquipmentType;
@@ -308,7 +337,11 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const { toast } = useToast();
   const { user, session, loading: authLoading } = useAuth();
 
-  const [formData, setFormData] = useState<MaintenanceReportForm>(defaultForm);
+  // Construir steps y formData según el tipo de equipo
+  const [steps] = useState<StepDefinition[]>(() => buildSteps(equipmentType));
+  const [totalSteps] = useState(() => steps.length);
+  
+  const [formData, setFormData] = useState<MaintenanceReportForm>(() => buildDefaultForm(equipmentType));
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [reportId, setReportId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -779,9 +812,77 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             voltage: typeof dataObj.voltage === 'string' ? dataObj.voltage : defaultForm.voltage,
             initialState: typeof dataObj.initialState === 'string' ? dataObj.initialState : defaultForm.initialState,
             recommendations: typeof dataObj.recommendations === 'string' ? dataObj.recommendations : defaultForm.recommendations,
-            checklist: Array.isArray(dataObj.checklist) && dataObj.checklist.length > 0 
+            checklist: (() => {
+              // Asegurar que el checklist tenga todos los items necesarios
+              let checklist = Array.isArray(dataObj.checklist) && dataObj.checklist.length > 0 
               ? dataObj.checklist 
-              : defaultForm.checklist,
+                : defaultForm.checklist;
+              
+              // Completar el checklist si faltan items (por ejemplo, si se agregó "Motorreductor" después)
+              const expectedItems = getChecklistItems(equipmentType);
+              console.log(`[ElevatorMaintenanceReportWizard] Verificando checklist:`, {
+                currentLength: checklist.length,
+                expectedLength: expectedItems.length,
+                hasMotorreductor: checklist.some(item => item.name === 'Motorreductor'),
+                motorreductorIndex: checklist.findIndex(item => item.name === 'Motorreductor'),
+                expectedMotorreductorIndex: expectedItems.findIndex(name => name === 'Motorreductor')
+              });
+              
+              if (checklist.length < expectedItems.length) {
+                const missingItems: ChecklistEntry[] = [];
+                for (let i = checklist.length; i < expectedItems.length; i++) {
+                  missingItems.push({
+                    id: crypto.randomUUID(),
+                    name: expectedItems[i],
+                    status: null,
+                    observation: "",
+                  });
+                }
+                checklist = [...checklist, ...missingItems];
+                console.log(`[ElevatorMaintenanceReportWizard] Completado checklist: agregados ${missingItems.length} items faltantes:`, missingItems.map(i => i.name));
+              } else {
+                // Verificar que todos los items esperados estén presentes (puede que falten en el medio)
+                const checklistItemNames = checklist.map(item => item.name);
+                const missingItemNames: string[] = [];
+                expectedItems.forEach((expectedName, expectedIndex) => {
+                  if (!checklistItemNames.includes(expectedName)) {
+                    missingItemNames.push(expectedName);
+                    // Insertar en la posición correcta
+                    checklist.splice(expectedIndex, 0, {
+                      id: crypto.randomUUID(),
+                      name: expectedName,
+                      status: null,
+                      observation: "",
+                    });
+                  }
+                });
+                if (missingItemNames.length > 0) {
+                  console.log(`[ElevatorMaintenanceReportWizard] Agregados items faltantes en posiciones correctas:`, missingItemNames);
+                }
+              }
+              
+              // Verificar específicamente "Motorreductor" y asegurar que esté en la posición correcta
+              const motorreductorIndex = checklist.findIndex(item => item.name === 'Motorreductor');
+              const expectedMotorreductorIndex = expectedItems.findIndex(name => name === 'Motorreductor');
+              
+              if (motorreductorIndex === -1 && expectedMotorreductorIndex !== -1) {
+                // "Motor reductor" no está en el checklist, agregarlo en la posición correcta
+                checklist.splice(expectedMotorreductorIndex, 0, {
+                  id: crypto.randomUUID(),
+                  name: 'Motorreductor',
+                  status: null,
+                  observation: "",
+                });
+                console.log(`[ElevatorMaintenanceReportWizard] ✅ "Motor reductor" agregado en índice ${expectedMotorreductorIndex}`);
+              } else if (motorreductorIndex !== expectedMotorreductorIndex && motorreductorIndex !== -1 && expectedMotorreductorIndex !== -1) {
+                // "Motor reductor" está en la posición incorrecta, moverlo
+                const motorreductorItem = checklist.splice(motorreductorIndex, 1)[0];
+                checklist.splice(expectedMotorreductorIndex, 0, motorreductorItem);
+                console.log(`[ElevatorMaintenanceReportWizard] ✅ "Motor reductor" movido de índice ${motorreductorIndex} a ${expectedMotorreductorIndex}`);
+              }
+              
+              return checklist;
+            })(),
             motorreductor: (typeof dataObj.motorreductor === 'object' && dataObj.motorreductor !== null)
               ? {
                   mainStatus: (dataObj.motorreductor.mainStatus === 'good' || dataObj.motorreductor.mainStatus === 'bad' || dataObj.motorreductor.mainStatus === 'na')
@@ -903,8 +1004,24 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       motorreductorType: typeof data.motorreductor
     });
     
+    // Verificar que el checklist tenga "Motorreductor"
+    const motorreductorInChecklist = data.checklist.find(item => item.name === 'Motorreductor');
+    console.log('[buildDbPayload] Verificando checklist:', {
+      checklistLength: data.checklist.length,
+      hasMotorreductor: !!motorreductorInChecklist,
+      motorreductorIndex: motorreductorInChecklist ? data.checklist.indexOf(motorreductorInChecklist) : -1,
+      motorreductorStatus: motorreductorInChecklist?.status || 'null',
+      checklistItemNames: data.checklist.map(item => item.name)
+    });
+    
+    // Incluir equipmentType en los datos para que el PDF pueda detectarlo
+    const dataWithEquipmentType = {
+      ...data,
+      equipmentType: equipmentType || 'elevadores',
+    };
+    
     const payload = {
-      data,
+      data: dataWithEquipmentType,
       current_step: stepIndex + 1,
       start_date: normalizedStartDate,
       end_date: normalizedEndDate,
@@ -1272,7 +1389,40 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     : null;
 
   const renderChecklistStep = (index: number) => {
+    // Asegurar que el checklist tenga suficientes items
+    if (formData.checklist.length <= index) {
+      console.warn(`[ElevatorMaintenanceReportWizard] Checklist too short (${formData.checklist.length}), completing to index ${index}`);
+      const expectedItems = getChecklistItems(equipmentType);
+      setFormData(prev => {
+        const newChecklist = [...prev.checklist];
+        while (newChecklist.length <= index) {
+          const idx = newChecklist.length;
+          newChecklist.push({
+            id: crypto.randomUUID(),
+            name: expectedItems[idx] || `Item ${idx + 1}`,
+            status: null,
+            observation: "",
+          });
+        }
+        return { ...prev, checklist: newChecklist };
+      });
+      // Retornar un mensaje temporal mientras se actualiza
+      return (
+        <div className="space-y-6">
+          <p className="text-muted-foreground">Cargando item...</p>
+        </div>
+      );
+    }
+    
     const entry = formData.checklist[index];
+    if (!entry) {
+      console.error(`[ElevatorMaintenanceReportWizard] Entry at index ${index} is undefined`);
+      return (
+        <div className="space-y-6">
+          <p className="text-destructive">Error: No se pudo cargar el item del checklist.</p>
+        </div>
+      );
+    }
     
     return (
       <div className="space-y-6">

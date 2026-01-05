@@ -9,6 +9,10 @@ const MaintenanceReportTypeSelector = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
 
+  // Bloqueos temporales
+  const ELEVATORS_BLOCKED = true;
+  const GENERAL_BLOCKED = true;
+
   useEffect(() => {
     if (!authLoading && !user) {
       navigate("/auth");
@@ -60,7 +64,16 @@ const MaintenanceReportTypeSelector = () => {
           </Card>
 
           {/* Elevadores */}
-          <Card className="p-6 opacity-60 cursor-not-allowed">
+          <Card className={`p-6 transition-shadow ${
+            ELEVATORS_BLOCKED
+              ? "opacity-60 cursor-not-allowed"
+              : "hover:shadow-lg cursor-pointer"
+          }`} onClick={() => {
+            if (ELEVATORS_BLOCKED) {
+              return;
+            }
+            navigate("/maintenance-reports/new/elevadores");
+          }}>
             <div className="flex flex-col items-center text-center space-y-4">
               <div className="p-4 rounded-full bg-blue-500/10">
                 <Wrench className="h-12 w-12 text-blue-500" />
@@ -69,14 +82,28 @@ const MaintenanceReportTypeSelector = () => {
               <p className="text-sm text-muted-foreground">
                 Informe de mantenimiento para elevadores
               </p>
-              <div className="w-full mt-4 p-3 bg-muted rounded-lg">
-                <p className="text-sm font-semibold text-muted-foreground">Próximamente</p>
-              </div>
+              <Button className="w-full mt-4" disabled={ELEVATORS_BLOCKED}>
+                Seleccionar
+              </Button>
+              {ELEVATORS_BLOCKED && (
+                <div className="mt-2 p-2 bg-muted rounded-lg text-center">
+                  <p className="text-xs font-semibold text-muted-foreground">Próximamente</p>
+                </div>
+              )}
             </div>
           </Card>
 
           {/* Generales */}
-          <Card className="p-6 opacity-60 cursor-not-allowed">
+          <Card className={`p-6 transition-shadow ${
+            GENERAL_BLOCKED
+              ? "opacity-60 cursor-not-allowed"
+              : "hover:shadow-lg cursor-pointer"
+          }`} onClick={() => {
+            if (GENERAL_BLOCKED) {
+              return;
+            }
+            navigate("/maintenance-reports/new/mantenimientos-generales");
+          }}>
             <div className="flex flex-col items-center text-center space-y-4">
               <div className="p-4 rounded-full bg-gray-500/10">
                 <Settings className="h-12 w-12 text-gray-500" />
@@ -85,9 +112,14 @@ const MaintenanceReportTypeSelector = () => {
               <p className="text-sm text-muted-foreground">
                 Informe de mantenimientos generales
               </p>
-              <div className="w-full mt-4 p-3 bg-muted rounded-lg">
-                <p className="text-sm font-semibold text-muted-foreground">Próximamente</p>
-              </div>
+              <Button className="w-full mt-4" disabled={GENERAL_BLOCKED}>
+                Seleccionar
+              </Button>
+              {GENERAL_BLOCKED && (
+                <div className="mt-2 p-2 bg-muted rounded-lg text-center">
+                  <p className="text-xs font-semibold text-muted-foreground">Próximamente</p>
+                </div>
+              )}
             </div>
           </Card>
         </div>

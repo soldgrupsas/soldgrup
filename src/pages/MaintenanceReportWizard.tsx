@@ -26,6 +26,7 @@ const CHECKLIST_ITEMS = [
   "Freno motor de elevación",
   // Trolley y sus componentes se agrupan en un paso especial
   "Estructura",
+  "Tornillo",
   "Gancho",
   "Cadena",
   "Guaya",
@@ -40,6 +41,7 @@ const CHECKLIST_ITEMS = [
   "Limitador de carga",
   "Sistema de alimentación de línea blindada",
   "Carcazas",
+  "Motorreductor",
 ];
 
 type ChecklistStatus = "good" | "bad" | "na" | null;
@@ -253,7 +255,7 @@ const buildDefaultTrolleyGroup = () => ({
 const buildDefaultCarrosTesteros = () => ({
   mainStatus: null as ChecklistStatus,
   subItems: [
-    { id: generateUUID(), name: "Motorreductor", status: null as ChecklistStatus },
+    // NOTA: "Motorreductor" ya no es un sub-item, es un item independiente después de "Carros testeros"
     { id: generateUUID(), name: "Freno", status: null as ChecklistStatus },
     { id: generateUUID(), name: "Ruedas", status: null as ChecklistStatus },
     { id: generateUUID(), name: "Chumaceras", status: null as ChecklistStatus },
@@ -305,21 +307,23 @@ const steps: StepDefinition[] = [
   { key: "checklist-1", title: "Lista de Chequeo", subtitle: "2. Freno motor de elevación", checklistIndex: 1 },
   { key: "trolley-group", title: "Lista de Chequeo", subtitle: "3. Trolley y componentes", specialStep: "trolley-group" },
   { key: "checklist-2", title: "Lista de Chequeo", subtitle: "4. Estructura", checklistIndex: 2 },
-  { key: "checklist-3", title: "Lista de Chequeo", subtitle: "5. Gancho", checklistIndex: 3 },
-  { key: "checklist-4", title: "Lista de Chequeo", subtitle: "6. Cadena", checklistIndex: 4 },
-  { key: "checklist-5", title: "Lista de Chequeo", subtitle: "7. Guaya", checklistIndex: 5 },
-  { key: "checklist-6", title: "Lista de Chequeo", subtitle: "8. Gabinete eléctrico", checklistIndex: 6 },
-  { key: "checklist-7", title: "Lista de Chequeo", subtitle: "9. Aceite", checklistIndex: 7 },
-  { key: "checklist-8", title: "Lista de Chequeo", subtitle: "10. Sistema de cables planos", checklistIndex: 8 },
-  { key: "checklist-9", title: "Lista de Chequeo", subtitle: "11. Topes mecánicos", checklistIndex: 9 },
-  { key: "checklist-10", title: "Lista de Chequeo", subtitle: "12. Botonera", checklistIndex: 10 },
-  { key: "checklist-11", title: "Lista de Chequeo", subtitle: "13. Pines de seguridad", checklistIndex: 11 },
-  { key: "checklist-12", title: "Lista de Chequeo", subtitle: "14. Polipasto", checklistIndex: 12 },
-  { key: "checklist-13", title: "Lista de Chequeo", subtitle: "15. Límite de elevación", checklistIndex: 13 },
-  { key: "checklist-14", title: "Lista de Chequeo", subtitle: "16. Limitador de carga", checklistIndex: 14 },
-  { key: "checklist-15", title: "Lista de Chequeo", subtitle: "17. Sistema de alimentación de línea blindada", checklistIndex: 15 },
-  { key: "checklist-16", title: "Lista de Chequeo", subtitle: "18. Carcazas", checklistIndex: 16 },
-  { key: "carros-testeros", title: "Lista de Chequeo", subtitle: "19. Carros testeros", specialStep: "carros-testeros" },
+  { key: "checklist-3", title: "Lista de Chequeo", subtitle: "5. Tornillo", checklistIndex: 3 },
+  { key: "checklist-4", title: "Lista de Chequeo", subtitle: "6. Gancho", checklistIndex: 4 },
+  { key: "checklist-5", title: "Lista de Chequeo", subtitle: "7. Cadena", checklistIndex: 5 },
+  { key: "checklist-6", title: "Lista de Chequeo", subtitle: "8. Guaya", checklistIndex: 6 },
+  { key: "checklist-7", title: "Lista de Chequeo", subtitle: "9. Gabinete eléctrico", checklistIndex: 7 },
+  { key: "checklist-8", title: "Lista de Chequeo", subtitle: "10. Aceite", checklistIndex: 8 },
+  { key: "checklist-9", title: "Lista de Chequeo", subtitle: "11. Sistema de cables planos", checklistIndex: 9 },
+  { key: "checklist-10", title: "Lista de Chequeo", subtitle: "12. Topes mecánicos", checklistIndex: 10 },
+  { key: "checklist-11", title: "Lista de Chequeo", subtitle: "13. Botonera", checklistIndex: 11 },
+  { key: "checklist-12", title: "Lista de Chequeo", subtitle: "14. Pines de seguridad", checklistIndex: 12 },
+  { key: "checklist-13", title: "Lista de Chequeo", subtitle: "15. Polipasto", checklistIndex: 13 },
+  { key: "checklist-14", title: "Lista de Chequeo", subtitle: "16. Límite de elevación", checklistIndex: 14 },
+  { key: "checklist-15", title: "Lista de Chequeo", subtitle: "17. Limitador de carga", checklistIndex: 15 },
+  { key: "checklist-16", title: "Lista de Chequeo", subtitle: "18. Sistema de alimentación de línea blindada", checklistIndex: 16 },
+  { key: "checklist-17", title: "Lista de Chequeo", subtitle: "19. Carcazas", checklistIndex: 17 },
+  { key: "carros-testeros", title: "Lista de Chequeo", subtitle: "20. Carros testeros", specialStep: "carros-testeros" },
+  { key: "checklist-18", title: "Lista de Chequeo", subtitle: "21. Motorreductor", checklistIndex: 18 },
   { key: "recommendations", title: "Recomendaciones" },
   { key: "tests", title: "Pruebas sin carga" },
   { key: "photos", title: "Soporte Fotográfico" },
@@ -859,9 +863,28 @@ const MaintenanceReportWizard = () => {
         carrosTesteros = defaultForm.carrosTesteros;
       }
       
+      // Asegurar que el checklist tenga todos los items necesarios
+      let checklist = Array.isArray(loadedData.checklist) ? loadedData.checklist : defaultForm.checklist;
+      
+      // Completar el checklist si faltan items (por ejemplo, si se agregó "Motorreductor" después)
+      if (checklist.length < CHECKLIST_ITEMS.length) {
+        const missingItems: ChecklistEntry[] = [];
+        for (let i = checklist.length; i < CHECKLIST_ITEMS.length; i++) {
+          missingItems.push({
+            id: generateUUID(),
+            name: CHECKLIST_ITEMS[i],
+            status: null,
+            observation: "",
+          });
+        }
+        checklist = [...checklist, ...missingItems];
+        console.log(`[MaintenanceReportWizard] Completado checklist: agregados ${missingItems.length} items faltantes`);
+      }
+      
       const parsedData: MaintenanceReportForm = {
         ...defaultForm,
         ...loadedData,
+        checklist, // Usar el checklist completado
         // Asegurar que los nuevos campos de grupos existan y estén bien formados con nombres normalizados
         trolleyGroup,
         carrosTesteros,
@@ -910,7 +933,8 @@ const MaintenanceReportWizard = () => {
           ? {
               ...parsedData.carrosTesteros,
               subItems: parsedData.carrosTesteros.subItems.map((item, index) => {
-                const correctNames = ["Motorreductor", "Freno", "Ruedas", "Chumaceras", "Palanquilla"];
+                // NOTA: "Motorreductor" ya no es un sub-item, es un item independiente después de "Carros testeros"
+                const correctNames = ["Freno", "Ruedas", "Chumaceras", "Palanquilla"];
                 return { ...item, name: correctNames[index] || item.name };
               }),
             }
@@ -1091,7 +1115,8 @@ const MaintenanceReportWizard = () => {
     
     // Normalizar nombres de carros testeros
     if (formData.carrosTesteros && Array.isArray(formData.carrosTesteros.subItems)) {
-      const correctCarrosNames = ["Motorreductor", "Freno", "Ruedas", "Chumaceras", "Palanquilla"];
+      // NOTA: "Motorreductor" ya no es un sub-item, es un item independiente después de "Carros testeros"
+      const correctCarrosNames = ["Freno", "Ruedas", "Chumaceras", "Palanquilla"];
       const hasIncorrectCarrosNames = formData.carrosTesteros.subItems.some((item, index) => {
         const correctName = correctCarrosNames[index];
         return correctName && item.name !== correctName;
@@ -1440,6 +1465,43 @@ const MaintenanceReportWizard = () => {
 
   const renderChecklistStep = (index: number) => {
     const entry = formData.checklist[index];
+    
+    // Validar que el entry existe, si no, crear uno por defecto
+    if (!entry) {
+      console.warn(`[MaintenanceReportWizard] Entry at index ${index} not found, creating default`);
+      const defaultEntry: ChecklistEntry = {
+        id: generateUUID(),
+        name: CHECKLIST_ITEMS[index] || `Item ${index + 1}`,
+        status: null,
+        observation: "",
+      };
+      // Agregar al checklist
+      setFormData(prev => ({
+        ...prev,
+        checklist: [
+          ...prev.checklist,
+          ...Array(index + 1 - prev.checklist.length).fill(null).map((_, i) => {
+            const idx = prev.checklist.length + i;
+            return {
+              id: generateUUID(),
+              name: CHECKLIST_ITEMS[idx] || `Item ${idx + 1}`,
+              status: null,
+              observation: "",
+            };
+          })
+        ]
+      }));
+      // Usar el entry por defecto temporalmente
+      const tempEntry = defaultEntry;
+      return (
+        <div className="space-y-6">
+          <p className="text-muted-foreground">
+            Cargando item...
+          </p>
+        </div>
+      );
+    }
+    
     return (
       <div className="space-y-6">
         <p className="text-muted-foreground">
