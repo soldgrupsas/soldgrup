@@ -36,13 +36,16 @@ const queryClient = new QueryClient({
   },
 });
 
+// Obtener la ruta base desde la configuración de Vite
+const baseUrl = import.meta.env.BASE_URL;
+
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <BrowserRouter basename={baseUrl}>
           <Routes>
           <Route path="/" element={<Navigate to="/auth" replace />} />
           <Route path="/auth" element={<Auth />} />

@@ -9,8 +9,8 @@
     "build:coolify": "cross-env VITE_APP_BASE=/ vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "start": "serve docs -s -l ${PORT:-3000}"
+    "preview": "vite preview --base /soldgrup/ --outDir docs",
+    "start": "vite preview --base /soldgrup/ --outDir docs --port ${PORT:-3000}"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
