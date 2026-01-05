@@ -41,5 +41,15 @@ export default defineConfig(({ mode }) => {
       deny: ["**/TimeControl_backup*.tsx", "**/*_backup_*.tsx", "**/*_backup_*.ts"],
     },
   },
+  // Configuración del servidor de preview para Coolify
+  preview: {
+    host: "0.0.0.0",
+    port: 3000,
+    allowedHosts: [
+      "app.soldgrup.com",
+      "localhost",
+      ".soldgrup.com", // Permite cualquier subdominio de soldgrup.com
+    ],
+  },
   };
 });
