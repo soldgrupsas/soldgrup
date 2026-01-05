@@ -183,3 +183,4 @@ if (motorreductorInChecklist) {
 3. Revisa los logs en Supabase Dashboard para ver los mensajes de "Motorreductor"
 
 
+
