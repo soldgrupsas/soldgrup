@@ -129,6 +129,10 @@
     background: var(--gradient-subtle);
   }
   
+  .bg-gradient-industrial {
+    background: var(--gradient-subtle);
+  }
+  
   .shadow-elegant {
     box-shadow: var(--shadow-elegant);
   }
