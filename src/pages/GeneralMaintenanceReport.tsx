@@ -1,9 +1,8 @@
 import ElevatorMaintenanceReportWizard from "./ElevatorMaintenanceReportWizard";
 
-// Usa el mismo wizard de elevadores para mantenimientos generales
-// Por ahora, ambos tipos de informes usan la misma estructura
+// Informe de mantenimientos generales con lista de chequeo dinámica
 const GeneralMaintenanceReport = () => {
-  return <ElevatorMaintenanceReportWizard />;
+  return <ElevatorMaintenanceReportWizard equipmentType="mantenimientos-generales" />;
 };
 
 export default GeneralMaintenanceReport;

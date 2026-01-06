@@ -58,6 +58,7 @@ export type MaintenanceReportPdfPayload = {
   tests?: MaintenanceTests | null;
   checklist: ChecklistEntry[];
   photos: PhotoEntry[];
+  equipmentType?: string; // 'elevadores' | 'puentes-grua' | 'mantenimientos-generales'
 };
 
 const margin = 50;
@@ -70,33 +71,23 @@ const textColor = rgb(0.2, 0.2, 0.2);
 const mutedColor = rgb(0.5, 0.5, 0.5);
 const borderColor = rgb(0.7, 0.7, 0.7);
 
-// Items base para elevadores (se actualizará dinámicamente según el tipo de equipo)
+// Items para ELEVADORES (lista simple, sin sub-items especiales)
 const checklistItems = [
-  'Motor de elevación',
-  'Freno motor de elevación',
-  'Trolley',
-  'Motor Trolley',
-  'Freno motor Trolley',
-  'Guias de Trolley',
-  'Ruedas Trolley',
-  'Carros testeros',
-  'Motorreductor',
+  'Motor elevación',
+  'Freno elevación',
   'Estructura',
-  'Tornillo',
   'Gancho',
   'Cadena',
   'Guaya',
   'Gabinete eléctrico',
-  'Aceite',
-  'Sistema de cables planos',
+  'Guías laterales',
+  'Finales de carrera',
   'Topes mecánicos',
-  'Botonera',
+  'Aceite',
+  'Botoneras',
   'Pines de seguridad',
-  'Polipasto',
-  'Límite de elevación',
-  'Limitador de carga',
-  'Sistema de alimentación de línea blindada',
-  'Carcazas',
+  'Cabina o canasta',
+  'Puertas',
 ];
 
 const SOLDGRUP_LOGO_BASE64 =
@@ -616,21 +607,31 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
   }
 
   let isFirstPage = true;
+  let pageIndex = 0;
+  const allPages: any[] = [];
+  
   const addPage = () => {
     const page = pdfDoc.addPage([pageWidth, pageHeight]);
+    allPages.push({ page, isFirst: isFirstPage });
     const cursorStart = drawHeader(page, fontBold, {
       title: payload.title ?? 'Informe de Mantenimiento',
       showTitle: isFirstPage,
       logo: isFirstPage ? logoImage : null,
     });
     isFirstPage = false;
+    pageIndex++;
     return { page, cursorY: cursorStart };
   };
 
   let current = addPage();
 
+  // Espacio reservado para el footer (logo en páginas después de la primera)
+  const footerHeight = 50;
+
   const ensureSpace = (height: number) => {
-    if (current.cursorY - height < margin + 40) {
+    // Reservar espacio para el footer en páginas que no son la primera
+    const bottomMargin = margin + (allPages.length > 1 ? footerHeight : 40);
+    if (current.cursorY - height < bottomMargin) {
       current = addPage();
     }
   };
@@ -697,7 +698,10 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     current.cursorY -= height;
   };
 
-  const drawTableRow = (values: string[], colWidths: number[], lineHeight: number, isHeader: boolean) => {
+  // Color rojo para observaciones de items con mal estado
+  const badStatusColor = rgb(0.8, 0.1, 0.1);
+
+  const drawTableRow = (values: string[], colWidths: number[], lineHeight: number, isHeader: boolean, cellColors?: (typeof textColor | null)[], centerOnlyFirst: boolean = false) => {
     const textSize = isHeader ? 10 : 10;
     const textFont = isHeader ? fontBold : fontRegular;
     const paddingY = 8;
@@ -744,7 +748,16 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         });
       }
 
-      if (index === 0 || index === 2 || index === 3 || index === 4) {
+      // Determinar el color del texto para esta celda
+      const cellColor = cellColors?.[index] ?? (isHeader ? headingColor : textColor);
+
+      // Para headers: centrar todos los textos
+      // Para datos: 
+      //   - Si centerOnlyFirst=true (tabla procedimientos): solo centrar columna 0 (número)
+      //   - Si centerOnlyFirst=false (tabla checklist): centrar columnas 0,2,3,4 (número, estados, N/A)
+      const shouldCenter = isHeader || (centerOnlyFirst ? index === 0 : (index === 0 || index === 2 || index === 3 || index === 4));
+
+      if (shouldCenter) {
         const text = (value ?? '').toString();
         const textWidth = textFont.widthOfTextAtSize(text, textSize);
         const textX = xPointer + width / 2 - textWidth / 2;
@@ -755,7 +768,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
             y: textY,
             font: textFont,
             size: textSize,
-            color: isHeader ? headingColor : textColor,
+            color: cellColor,
           });
         }
       } else {
@@ -764,7 +777,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
           y: current.cursorY - paddingY,
           font: textFont,
           size: textSize,
-          color: isHeader ? headingColor : textColor,
+          color: cellColor,
           lineHeight,
         });
       }
@@ -892,13 +905,37 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     current.cursorY -= rowHeight * rows.length + 8;
   };
 
-  const drawChecklist = (entries: ChecklistEntry[]) => {
+  const drawChecklist = (entries: ChecklistEntry[], isGeneralMaintenance: boolean = false) => {
+    // Para informe general: tabla con Procedimiento y Observación
+    if (isGeneralMaintenance) {
+      drawSectionTitle('Procedimientos realizados');
+      const numberWidth = 28;
+      const procedureWidth = contentWidth * 0.35;
+      const observationWidthGen = contentWidth - numberWidth - procedureWidth;
+      const colWidthsGen = [numberWidth, procedureWidth, observationWidthGen];
+      const headerLineHeight = 12;
+      // centerOnlyFirst=true para que solo se centre el # y el resto se alinee a la izquierda
+      drawTableRow(['#', 'Procedimiento', 'Observación'], colWidthsGen, headerLineHeight, true, undefined, true);
+
+      entries.forEach((entry, idx) => {
+        const values = [
+          String(entry.index + 1),
+          entry.name,
+          entry.observation ?? '',
+        ];
+        drawTableRow(values, colWidthsGen, 14, false, undefined, true);
+      });
+      current.cursorY -= 16;
+      return;
+    }
+
+    // Para elevadores y puentes grúa: tabla normal con estados
     drawSectionTitle('Lista de chequeo');
-    const numberWidth = 40;
-    const goodWidth = 60;
-    const badWidth = 60;
-    const naWidth = 50;
-    const observationWidth = contentWidth * 0.45;
+    const numberWidth = 28;
+    const goodWidth = 70;
+    const badWidth = 70;
+    const naWidth = 40;
+    const observationWidth = contentWidth * 0.38;
     const descriptionWidth = contentWidth - numberWidth - goodWidth - badWidth - naWidth - observationWidth;
     const colWidths = [numberWidth, descriptionWidth, goodWidth, badWidth, naWidth, observationWidth];
     const headerLineHeight = 12;
@@ -913,7 +950,11 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         entry.status === 'na' ? 'X' : '',
         entry.observation ?? '',
       ];
-      drawTableRow(values, colWidths, 14, false);
+      // Si el estado es "bad", la observación se muestra en rojo
+      const cellColors = entry.status === 'bad' 
+        ? [null, null, null, null, null, badStatusColor] 
+        : undefined;
+      drawTableRow(values, colWidths, 14, false, cellColors);
     });
     current.cursorY -= 16;
   };
@@ -922,51 +963,51 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     if (!embeddedPhotos.length) return;
     drawSectionTitle('Registro fotográfico');
 
-    const maxImageWidth = contentWidth * 0.55;
-    const maxImageHeight = 220;
-    const gap = 16;
+    const maxImageWidth = contentWidth * 0.65;
+    const maxImageHeight = 250;
 
     for (const photo of embeddedPhotos) {
       const scale = Math.min(maxImageWidth / photo.width, maxImageHeight / photo.height, 1);
       const drawWidth = photo.width * scale;
       const drawHeight = photo.height * scale;
-      const descriptionWidth = Math.max(contentWidth - drawWidth - gap, 140);
       const descriptionText = photo.description?.trim() ?? '';
       const hasDescription = descriptionText.length > 0;
       const descriptionLines = hasDescription
-        ? wrapText(descriptionText, fontRegular, 11, descriptionWidth)
+        ? wrapText(descriptionText, fontRegular, 11, contentWidth)
         : ['Sin descripción'];
-      const descriptionHeight = descriptionLines.length * 14;
-      const blockHeight = Math.max(drawHeight, descriptionHeight) + 20;
+      const descriptionHeight = descriptionLines.length * 14 + 20; // 20 para el label
+      const blockHeight = descriptionHeight + drawHeight + 24; // espacio entre descripción e imagen
 
       ensureSpace(blockHeight);
       const topY = current.cursorY;
 
-      current.page.drawImage(photo.image, {
+      // Descripción arriba a la izquierda
+      current.page.drawText('Descripción', {
         x: margin,
-        y: topY - drawHeight,
-        width: drawWidth,
-        height: drawHeight,
-      });
-
-      const descriptionX = margin + drawWidth + gap;
-      const descriptionTopY = topY - 6;
-      const label = hasDescription ? 'Descripción' : 'Descripción';
-      current.page.drawText(label, {
-        x: descriptionX,
-        y: descriptionTopY,
+        y: topY - 6,
         font: fontBold,
         size: 11,
         color: headingColor,
       });
 
       drawWrappedText(current.page, descriptionLines, {
-        x: descriptionX,
-        y: descriptionTopY - 16,
+        x: margin,
+        y: topY - 22,
         font: fontRegular,
         size: 11,
         color: textColor,
         lineHeight: 14,
+      });
+
+      // Imagen centrada debajo de la descripción
+      const imageTopY = topY - descriptionHeight - 8;
+      const imageX = margin + (contentWidth - drawWidth) / 2; // Centrar imagen
+      
+      current.page.drawImage(photo.image, {
+        x: imageX,
+        y: imageTopY - drawHeight,
+        width: drawWidth,
+        height: drawHeight,
       });
 
       current.cursorY -= blockHeight;
@@ -995,15 +1036,47 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
   drawSectionTitle('Estado inicial del equipo');
   drawParagraph(payload.initialState);
 
-  drawChecklist(normalizeChecklist(payload.checklist));
+  // Determinar si es informe de mantenimiento general
+  const isGeneralMaintenance = payload.equipmentType === 'mantenimientos-generales';
+  
+  drawChecklist(normalizeChecklist(payload.checklist), isGeneralMaintenance);
 
   drawSectionTitle('Recomendaciones');
   drawParagraph(payload.recommendations);
 
-  drawSectionTitle('Pruebas sin carga');
-  drawTests(payload.tests ?? null);
+  // Solo mostrar pruebas sin carga para elevadores y puentes grúa
+  if (!isGeneralMaintenance) {
+    drawSectionTitle('Pruebas sin carga');
+    drawTests(payload.tests ?? null);
+  }
 
   drawPhotos();
+
+  // Agregar logo como pie de página en todas las páginas excepto la primera
+  if (logoImage) {
+    const footerLogoMaxWidth = 100;
+    const footerLogoMaxHeight = 35;
+    const footerLogoScale = Math.min(
+      footerLogoMaxWidth / logoImage.width, 
+      footerLogoMaxHeight / logoImage.height, 
+      1
+    );
+    const footerLogoWidth = logoImage.width * footerLogoScale;
+    const footerLogoHeight = logoImage.height * footerLogoScale;
+    const footerLogoX = (pageWidth - footerLogoWidth) / 2; // Centrado
+    const footerLogoY = margin / 2; // En la parte inferior
+
+    allPages.forEach(({ page, isFirst }) => {
+      if (!isFirst) {
+        page.drawImage(logoImage, {
+          x: footerLogoX,
+          y: footerLogoY,
+          width: footerLogoWidth,
+          height: footerLogoHeight,
+        });
+      }
+    });
+  }
 
   return await pdfDoc.save();
 }
@@ -1024,24 +1097,38 @@ function drawHeader(
   const top = pageHeight - margin;
   let headerBottom = top;
 
+  // Calcular dimensiones del logo
+  let logoDrawHeight = 0;
+  let logoDrawWidth = 0;
   if (logo) {
     const maxWidth = 150;
-    const maxHeight = 60;
+    const maxHeight = 50;
     const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height, 1);
-    const drawWidth = logo.width * scale;
-    const drawHeight = logo.height * scale;
+    logoDrawWidth = logo.width * scale;
+    logoDrawHeight = logo.height * scale;
+  }
+
+  // Calcular altura del título
+  const titleSize = 18;
+
+  // Usar la mayor altura para alinear ambos elementos
+  const headerHeight = Math.max(logoDrawHeight, titleSize);
+  const centerY = top - headerHeight / 2;
+
+  // Dibujar logo alineado verticalmente al centro
+  if (logo) {
     const x = margin;
-    const y = top - drawHeight;
-    page.drawImage(logo, { x, y, width: drawWidth, height: drawHeight });
+    const y = centerY - logoDrawHeight / 2;
+    page.drawImage(logo, { x, y, width: logoDrawWidth, height: logoDrawHeight });
     headerBottom = Math.min(headerBottom, y);
   }
 
+  // Dibujar título alineado verticalmente al centro
   if (showTitle && title) {
-    const size = 18;
-    const titleWidth = font.widthOfTextAtSize(title, size);
+    const titleWidth = font.widthOfTextAtSize(title, titleSize);
     const x = pageWidth - margin - titleWidth;
-    const y = top - size + 4;
-    page.drawText(title, { x, y, size, font, color: headingColor });
+    const y = centerY - titleSize / 2;
+    page.drawText(title, { x, y, size: titleSize, font, color: headingColor });
     headerBottom = Math.min(headerBottom, y - 8);
   }
 

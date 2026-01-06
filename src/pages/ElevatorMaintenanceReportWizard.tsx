@@ -45,16 +45,30 @@ const normalizeDateToLocalString = (date: string | Date | null | undefined): str
   return null;
 };
 
-// Items base para elevadores
+// Items para ELEVADORES (lista simple, sin sub-items especiales)
 const ELEVATOR_CHECKLIST_ITEMS = [
+  "Motor elevación",
+  "Freno elevación",
+  "Estructura",
+  "Gancho",
+  "Cadena",
+  "Guaya",
+  "Gabinete eléctrico",
+  "Guías laterales",
+  "Finales de carrera",
+  "Topes mecánicos",
+  "Aceite",
+  "Botoneras",
+  "Pines de seguridad",
+  "Cabina o canasta",
+  "Puertas",
+];
+
+// Items para PUENTES GRÚA
+// NOTA: "Trolley" y "Carros testeros" tienen pasos especiales con sub-items
+const BRIDGE_CRANE_CHECKLIST_ITEMS = [
   "Motor de elevación",
   "Freno motor de elevación",
-  "Trolley",
-  "Motor trolley",
-  "Freno motor trolley",
-  "Guías de trolley",
-  "Ruedas trolley",
-  "Carros testeros",
   "Estructura",
   "Gancho",
   "Cadena",
@@ -72,24 +86,20 @@ const ELEVATOR_CHECKLIST_ITEMS = [
   "Carcazas",
 ];
 
-// Items adicionales para puentes grúa
-// TODO: Agregar aquí los items específicos que necesites para puentes grúa
-const BRIDGE_CRANE_ADDITIONAL_ITEMS = [
-  // Ejemplo: "Sistema de iluminación",
-  // Ejemplo: "Carril de desplazamiento",
-  // Agregar más items según necesidad
-];
-
 // Función para obtener los items según el tipo de equipo
 const getChecklistItems = (equipmentType?: EquipmentType): string[] => {
   if (equipmentType === "puentes-grua") {
-    return [...ELEVATOR_CHECKLIST_ITEMS, ...BRIDGE_CRANE_ADDITIONAL_ITEMS];
+    return BRIDGE_CRANE_CHECKLIST_ITEMS;
   }
   return ELEVATOR_CHECKLIST_ITEMS;
 };
 
-// Mantener CHECKLIST_ITEMS para compatibilidad, pero ahora es dinámico
-// Se actualizará según el equipmentType en el componente
+// Indica si el tipo de equipo tiene pasos especiales (Trolley, Carros testeros)
+const hasSpecialSteps = (equipmentType?: EquipmentType): boolean => {
+  return equipmentType === "puentes-grua";
+};
+
+// Mantener CHECKLIST_ITEMS para compatibilidad
 const CHECKLIST_ITEMS = ELEVATOR_CHECKLIST_ITEMS;
 
 type ChecklistStatus = "good" | "bad" | "na" | null;
@@ -101,7 +111,40 @@ type ChecklistEntry = {
   observation: string;
 };
 
-type EquipmentType = "elevadores" | "puentes-grua";
+type CarrosTesterosSubItem = {
+  id: string;
+  name: string;
+  status: ChecklistStatus;
+  observation: string;
+};
+
+type CarrosTesterosData = {
+  mainStatus: ChecklistStatus;
+  subItems: CarrosTesterosSubItem[];
+  observation: string;
+};
+
+type TrolleySubItem = {
+  id: string;
+  name: string;
+  status: ChecklistStatus;
+  observation: string;
+};
+
+type TrolleyData = {
+  mainStatus: ChecklistStatus;
+  subItems: TrolleySubItem[];
+  observation: string;
+};
+
+// Tipo para procedimientos dinámicos (informe general)
+type ProcedimientoEntry = {
+  id: string;
+  procedimiento: string;
+  observacion: string;
+};
+
+type EquipmentType = "elevadores" | "puentes-grua" | "mantenimientos-generales";
 
 
 
@@ -231,10 +274,9 @@ type MaintenanceReportForm = {
   voltage: string;
   initialState: string;
   checklist: ChecklistEntry[];
-  motorreductor: {
-    mainStatus: ChecklistStatus;
-    observation: string;
-  };
+  trolleyData: TrolleyData;
+  carrosTesteros: CarrosTesterosData;
+  procedimientos: ProcedimientoEntry[]; // Para informe general
   recommendations: string;
   tests: {
     voltage: string;
@@ -261,8 +303,25 @@ const buildDefaultChecklist = (equipmentType?: EquipmentType): ChecklistEntry[] 
     observation: "",
   }));
 
-const buildDefaultMotorreductor = () => ({
+const buildDefaultTrolley = (): TrolleyData => ({
   mainStatus: null as ChecklistStatus,
+  subItems: [
+    { id: crypto.randomUUID(), name: "Motor Trolley", status: null, observation: "" },
+    { id: crypto.randomUUID(), name: "Freno motor Trolley", status: null, observation: "" },
+    { id: crypto.randomUUID(), name: "Guías de Trolley", status: null, observation: "" },
+    { id: crypto.randomUUID(), name: "Ruedas de Trolley", status: null, observation: "" },
+  ],
+  observation: "",
+});
+
+const buildDefaultCarrosTesteros = (): CarrosTesterosData => ({
+  mainStatus: null as ChecklistStatus,
+  subItems: [
+    { id: crypto.randomUUID(), name: "Motorreductor", status: null, observation: "" },
+    { id: crypto.randomUUID(), name: "Freno", status: null, observation: "" },
+    { id: crypto.randomUUID(), name: "Ruedas y palanquilla", status: null, observation: "" },
+    { id: crypto.randomUUID(), name: "Chumaceras", status: null, observation: "" },
+  ],
   observation: "",
 });
 
@@ -283,7 +342,9 @@ const buildDefaultForm = (equipmentType?: EquipmentType): MaintenanceReportForm 
   voltage: "",
   initialState: "",
   checklist: buildDefaultChecklist(equipmentType),
-  motorreductor: buildDefaultMotorreductor(),
+  trolleyData: buildDefaultTrolley(),
+  carrosTesteros: buildDefaultCarrosTesteros(),
+  procedimientos: [], // Para informe general
   recommendations: "",
   tests: {
     voltage: "",
@@ -298,7 +359,82 @@ const buildDefaultForm = (equipmentType?: EquipmentType): MaintenanceReportForm 
 const defaultForm: MaintenanceReportForm = buildDefaultForm();
 
 const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
+  // MANTENIMIENTOS GENERALES: solo un paso de procedimientos dinámicos
+  if (equipmentType === "mantenimientos-generales") {
+    return [
+      {
+        key: "intro",
+        title: "Procedimiento de llenado de Informe de Mantenimiento",
+        subtitle:
+          "A continuación, podrá llenar paso a paso su informe de mantenimiento. Asegúrese de completar todos los campos.",
+      },
+      { key: "basicInfo", title: "Información Básica" },
+      { key: "initialState", title: "Estado Inicial" },
+      { key: "procedimientos", title: "Procedimientos Realizados", subtitle: "Agregue los procedimientos realizados" },
+      { key: "recommendations", title: "Recomendaciones" },
+      { key: "photos", title: "Soporte Fotográfico" },
+      { key: "finish", title: "Fin del Informe de Mantenimiento" },
+    ];
+  }
+
   const items = getChecklistItems(equipmentType);
+  const includeSpecialSteps = hasSpecialSteps(equipmentType);
+  
+  // Construir los pasos del checklist
+  // Para puentes grúa: incluye Trolley y Carros testeros con sub-items
+  // Para elevadores: lista simple sin pasos especiales
+  const checklistSteps: StepDefinition[] = [];
+  let displayNumber = 1;
+  
+  if (includeSpecialSteps) {
+    // PUENTES GRÚA: incluir Trolley y Carros testeros después de "Freno motor de elevación"
+    const frenoMotorIndex = items.findIndex(item => 
+      item.toLowerCase().includes("freno") && item.toLowerCase().includes("motor") && item.toLowerCase().includes("elevación")
+    );
+    const insertAfterIndex = frenoMotorIndex !== -1 ? frenoMotorIndex : 0;
+    
+    let specialStepsInserted = false;
+    
+    for (let i = 0; i < items.length; i++) {
+      checklistSteps.push({
+        key: `checklist-${i}`,
+        title: "Lista de Chequeo",
+        subtitle: `${displayNumber}. ${items[i]}`,
+        checklistIndex: i,
+      });
+      displayNumber++;
+      
+      // Insertar "Trolley" y "Carros testeros" después de "Freno motor de elevación"
+      if (i === insertAfterIndex && !specialStepsInserted) {
+        checklistSteps.push({
+          key: "trolley",
+          title: "Lista de Chequeo",
+          subtitle: `${displayNumber}. Trolley`,
+        });
+        displayNumber++;
+        
+        checklistSteps.push({
+          key: "carros-testeros",
+          title: "Lista de Chequeo",
+          subtitle: `${displayNumber}. Carros testeros`,
+        });
+        displayNumber++;
+        specialStepsInserted = true;
+      }
+    }
+  } else {
+    // ELEVADORES: lista simple sin pasos especiales
+    for (let i = 0; i < items.length; i++) {
+      checklistSteps.push({
+        key: `checklist-${i}`,
+        title: "Lista de Chequeo",
+        subtitle: `${displayNumber}. ${items[i]}`,
+        checklistIndex: i,
+      });
+      displayNumber++;
+    }
+  }
+  
   return [
     {
       key: "intro",
@@ -308,20 +444,13 @@ const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
     },
     { key: "basicInfo", title: "Información Básica" },
     { key: "initialState", title: "Estado Inicial" },
-    ...items.map((name, index) => ({
-      key: `checklist-${index}`,
-      title: "Lista de Chequeo",
-      subtitle: `${index + 1}. ${name}`,
-      checklistIndex: index,
-    })),
+    ...checklistSteps,
     { key: "recommendations", title: "Recomendaciones" },
     { key: "tests", title: "Pruebas sin carga" },
     { key: "photos", title: "Soporte Fotográfico" },
     { key: "finish", title: "Fin del Informe de Mantenimiento" },
   ];
 };
-
-type EquipmentType = "elevadores" | "puentes-grua";
 
 const steps: StepDefinition[] = buildSteps();
 const totalSteps = steps.length;
@@ -818,15 +947,17 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
               ? dataObj.checklist 
                 : defaultForm.checklist;
               
-              // Completar el checklist si faltan items (por ejemplo, si se agregó "Motorreductor" después)
+              // Completar el checklist si faltan items
               const expectedItems = getChecklistItems(equipmentType);
               console.log(`[ElevatorMaintenanceReportWizard] Verificando checklist:`, {
                 currentLength: checklist.length,
                 expectedLength: expectedItems.length,
-                hasMotorreductor: checklist.some(item => item.name === 'Motorreductor'),
-                motorreductorIndex: checklist.findIndex(item => item.name === 'Motorreductor'),
-                expectedMotorreductorIndex: expectedItems.findIndex(name => name === 'Motorreductor')
               });
+              
+              // Filtrar items que ya no están en la lista (como "Motorreductor" y "Carros testeros" que ahora son especiales)
+              checklist = checklist.filter(item => 
+                !['Motorreductor', 'Carros testeros'].includes(item.name)
+              );
               
               if (checklist.length < expectedItems.length) {
                 const missingItems: ChecklistEntry[] = [];
@@ -841,13 +972,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                 checklist = [...checklist, ...missingItems];
                 console.log(`[ElevatorMaintenanceReportWizard] Completado checklist: agregados ${missingItems.length} items faltantes:`, missingItems.map(i => i.name));
               } else {
-                // Verificar que todos los items esperados estén presentes (puede que falten en el medio)
+                // Verificar que todos los items esperados estén presentes
                 const checklistItemNames = checklist.map(item => item.name);
                 const missingItemNames: string[] = [];
                 expectedItems.forEach((expectedName, expectedIndex) => {
                   if (!checklistItemNames.includes(expectedName)) {
                     missingItemNames.push(expectedName);
-                    // Insertar en la posición correcta
                     checklist.splice(expectedIndex, 0, {
                       id: crypto.randomUUID(),
                       name: expectedName,
@@ -861,36 +991,30 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                 }
               }
               
-              // Verificar específicamente "Motorreductor" y asegurar que esté en la posición correcta
-              const motorreductorIndex = checklist.findIndex(item => item.name === 'Motorreductor');
-              const expectedMotorreductorIndex = expectedItems.findIndex(name => name === 'Motorreductor');
-              
-              if (motorreductorIndex === -1 && expectedMotorreductorIndex !== -1) {
-                // "Motor reductor" no está en el checklist, agregarlo en la posición correcta
-                checklist.splice(expectedMotorreductorIndex, 0, {
-                  id: crypto.randomUUID(),
-                  name: 'Motorreductor',
-                  status: null,
-                  observation: "",
-                });
-                console.log(`[ElevatorMaintenanceReportWizard] ✅ "Motor reductor" agregado en índice ${expectedMotorreductorIndex}`);
-              } else if (motorreductorIndex !== expectedMotorreductorIndex && motorreductorIndex !== -1 && expectedMotorreductorIndex !== -1) {
-                // "Motor reductor" está en la posición incorrecta, moverlo
-                const motorreductorItem = checklist.splice(motorreductorIndex, 1)[0];
-                checklist.splice(expectedMotorreductorIndex, 0, motorreductorItem);
-                console.log(`[ElevatorMaintenanceReportWizard] ✅ "Motor reductor" movido de índice ${motorreductorIndex} a ${expectedMotorreductorIndex}`);
-              }
-              
               return checklist;
             })(),
-            motorreductor: (typeof dataObj.motorreductor === 'object' && dataObj.motorreductor !== null)
+            trolleyData: (typeof dataObj.trolleyData === 'object' && dataObj.trolleyData !== null)
               ? {
-                  mainStatus: (dataObj.motorreductor.mainStatus === 'good' || dataObj.motorreductor.mainStatus === 'bad' || dataObj.motorreductor.mainStatus === 'na')
-                    ? dataObj.motorreductor.mainStatus
+                  mainStatus: (dataObj.trolleyData.mainStatus === 'good' || dataObj.trolleyData.mainStatus === 'bad' || dataObj.trolleyData.mainStatus === 'na')
+                    ? dataObj.trolleyData.mainStatus
                     : null,
-                  observation: typeof dataObj.motorreductor.observation === 'string' ? dataObj.motorreductor.observation : '',
+                  subItems: Array.isArray(dataObj.trolleyData.subItems) 
+                    ? dataObj.trolleyData.subItems 
+                    : buildDefaultTrolley().subItems,
+                  observation: typeof dataObj.trolleyData.observation === 'string' ? dataObj.trolleyData.observation : '',
                 }
-              : defaultForm.motorreductor,
+              : buildDefaultTrolley(),
+            carrosTesteros: (typeof dataObj.carrosTesteros === 'object' && dataObj.carrosTesteros !== null)
+              ? {
+                  mainStatus: (dataObj.carrosTesteros.mainStatus === 'good' || dataObj.carrosTesteros.mainStatus === 'bad' || dataObj.carrosTesteros.mainStatus === 'na')
+                    ? dataObj.carrosTesteros.mainStatus
+                    : null,
+                  subItems: Array.isArray(dataObj.carrosTesteros.subItems) 
+                    ? dataObj.carrosTesteros.subItems 
+                    : buildDefaultCarrosTesteros().subItems,
+                  observation: typeof dataObj.carrosTesteros.observation === 'string' ? dataObj.carrosTesteros.observation : '',
+                }
+              : buildDefaultCarrosTesteros(),
             tests: typeof dataObj.tests === 'object' && dataObj.tests !== null 
               ? {
                   voltage: typeof dataObj.tests.voltage === 'string' ? dataObj.tests.voltage : defaultForm.tests.voltage,
@@ -936,13 +1060,27 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         parsedData.endDate = extractDateOnly(parsedData.endDate);
       }
       
-      // Cargar motorreductor desde la columna dedicada o desde data.motorreductor
-      if (data.motorreductor && typeof data.motorreductor === 'object') {
-        parsedData.motorreductor = {
-          mainStatus: (data.motorreductor.mainStatus === 'good' || data.motorreductor.mainStatus === 'bad' || data.motorreductor.mainStatus === 'na')
-            ? data.motorreductor.mainStatus
+      // Cargar trolleyData desde la columna dedicada o desde data.trolleyData
+      if (data.trolley_data && typeof data.trolley_data === 'object') {
+        const td = data.trolley_data as any;
+        parsedData.trolleyData = {
+          mainStatus: (td.mainStatus === 'good' || td.mainStatus === 'bad' || td.mainStatus === 'na')
+            ? td.mainStatus
             : null,
-          observation: typeof data.motorreductor.observation === 'string' ? data.motorreductor.observation : '',
+          subItems: Array.isArray(td.subItems) ? td.subItems : buildDefaultTrolley().subItems,
+          observation: typeof td.observation === 'string' ? td.observation : '',
+        };
+      }
+      
+      // Cargar carrosTesteros desde la columna dedicada o desde data.carrosTesteros
+      if (data.carros_testeros && typeof data.carros_testeros === 'object') {
+        const ct = data.carros_testeros as any;
+        parsedData.carrosTesteros = {
+          mainStatus: (ct.mainStatus === 'good' || ct.mainStatus === 'bad' || ct.mainStatus === 'na')
+            ? ct.mainStatus
+            : null,
+          subItems: Array.isArray(ct.subItems) ? ct.subItems : buildDefaultCarrosTesteros().subItems,
+          observation: typeof ct.observation === 'string' ? ct.observation : '',
         };
       }
 
@@ -997,20 +1135,16 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     
     console.log('[Date Debug] Saving dates - start:', normalizedStartDate, 'end:', normalizedEndDate);
     
-    // Verificar que motorreductor esté en los datos antes de guardar
-    console.log('[buildDbPayload] Verificando motorreductor en data:', {
-      hasMotorreductor: 'motorreductor' in data,
-      motorreductorValue: data.motorreductor,
-      motorreductorType: typeof data.motorreductor
+    // Verificar que trolleyData y carrosTesteros estén en los datos antes de guardar
+    console.log('[buildDbPayload] Verificando datos especiales:', {
+      hasTrolleyData: 'trolleyData' in data,
+      trolleyMainStatus: data.trolleyData?.mainStatus,
+      hasCarrosTesteros: 'carrosTesteros' in data,
+      carrosTesterosMainStatus: data.carrosTesteros?.mainStatus,
     });
     
-    // Verificar que el checklist tenga "Motorreductor"
-    const motorreductorInChecklist = data.checklist.find(item => item.name === 'Motorreductor');
     console.log('[buildDbPayload] Verificando checklist:', {
       checklistLength: data.checklist.length,
-      hasMotorreductor: !!motorreductorInChecklist,
-      motorreductorIndex: motorreductorInChecklist ? data.checklist.indexOf(motorreductorInChecklist) : -1,
-      motorreductorStatus: motorreductorInChecklist?.status || 'null',
       checklistItemNames: data.checklist.map(item => item.name)
     });
     
@@ -1042,11 +1176,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       tests: data.tests,
     } as Record<string, unknown>;
     
-    // Verificar que motorreductor esté en el payload.data
-    console.log('[buildDbPayload] Verificando motorreductor en payload.data:', {
-      hasMotorreductor: 'motorreductor' in (payload.data as any),
-      motorreductorValue: (payload.data as any)?.motorreductor,
-      dataKeys: Object.keys((payload.data as any) || {})
+    // Verificar que carrosTesteros esté en el payload.data
+    console.log('[buildDbPayload] Verificando carrosTesteros en payload.data:', {
+      hasCarrosTesteros: 'carrosTesteros' in (payload.data as any),
+      carrosTesterosValue: (payload.data as any)?.carrosTesteros,
     });
 
     if (userId) {
@@ -1061,11 +1194,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       if (!reportId) return;
       const dataToSave = overrideData ?? formDataRef.current;
       
-      // Verificar que motorreductor esté en dataToSave antes de guardar
-      console.log('[persistReport] Verificando motorreductor en dataToSave:', {
-        hasMotorreductor: 'motorreductor' in dataToSave,
-        motorreductorValue: dataToSave.motorreductor,
-        motorreductorType: typeof dataToSave.motorreductor
+      // Verificar datos especiales antes de guardar
+      console.log('[persistReport] Verificando datos especiales en dataToSave:', {
+        hasTrolleyData: 'trolleyData' in dataToSave,
+        hasCarrosTesteros: 'carrosTesteros' in dataToSave,
       });
       
       setIsSaving(true);
@@ -1073,11 +1205,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       try {
         const payload = buildDbPayload(dataToSave, currentStepIndex);
         
-        // Verificar que motorreductor esté en payload.data antes de enviar
-        console.log('[persistReport] Verificando motorreductor en payload.data antes de guardar:', {
-          hasMotorreductor: 'motorreductor' in (payload.data as any),
-          motorreductorValue: (payload.data as any)?.motorreductor,
-          dataKeys: Object.keys((payload.data as any) || {}).slice(0, 20) // Primeros 20 keys para no saturar
+        // Verificar datos especiales en payload.data antes de enviar
+        console.log('[persistReport] Verificando datos en payload.data:', {
+          hasTrolleyData: 'trolleyData' in (payload.data as any),
+          hasCarrosTesteros: 'carrosTesteros' in (payload.data as any),
         });
         
         const { error, data } = await supabase
@@ -1485,99 +1616,452 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     );
   };
 
-  const renderMotorreductor = () => {
-    const { motorreductor } = formData;
+  // Renderizar interfaz de procedimientos dinámicos (informe general)
+  const renderProcedimientos = () => {
+    const procedimientos = formData.procedimientos || [];
+
+    const addProcedimiento = () => {
+      setFormData((prev) => ({
+        ...prev,
+        procedimientos: [
+          ...prev.procedimientos,
+          { id: crypto.randomUUID(), procedimiento: "", observacion: "" },
+        ],
+      }));
+    };
+
+    const removeProcedimiento = (id: string) => {
+      setFormData((prev) => ({
+        ...prev,
+        procedimientos: prev.procedimientos.filter((p) => p.id !== id),
+      }));
+    };
+
+    const updateProcedimiento = (id: string, field: "procedimiento" | "observacion", value: string) => {
+      setFormData((prev) => ({
+        ...prev,
+        procedimientos: prev.procedimientos.map((p) =>
+          p.id === id ? { ...p, [field]: value } : p
+        ),
+      }));
+    };
+
+    return (
+      <div className="space-y-6">
+        <p className="text-muted-foreground">
+          Agregue los procedimientos realizados durante el mantenimiento. Puede agregar tantos como necesite.
+        </p>
+
+        {procedimientos.length === 0 ? (
+          <div className="text-center py-8 border-2 border-dashed rounded-lg">
+            <p className="text-muted-foreground mb-4">No hay procedimientos agregados</p>
+            <Button onClick={addProcedimiento} variant="outline">
+              + Agregar primer procedimiento
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {procedimientos.map((proc, index) => (
+              <div key={proc.id} className="p-4 border rounded-lg space-y-3 bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-sm text-muted-foreground">
+                    Procedimiento #{index + 1}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => removeProcedimiento(proc.id)}
+                  >
+                    Eliminar
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`proc-${proc.id}`}>Procedimiento</Label>
+                  <Input
+                    id={`proc-${proc.id}`}
+                    placeholder="Ej: Cambio de carcaza, Lubricación de rodamientos..."
+                    value={proc.procedimiento}
+                    onChange={(e) => updateProcedimiento(proc.id, "procedimiento", e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`obs-${proc.id}`}>Observación</Label>
+                  <Textarea
+                    id={`obs-${proc.id}`}
+                    placeholder="Ej: Se cambia la carcaza debido a que presentaba fisuras..."
+                    rows={2}
+                    value={proc.observacion}
+                    onChange={(e) => updateProcedimiento(proc.id, "observacion", e.target.value)}
+                  />
+                </div>
+              </div>
+            ))}
+            
+            <Button onClick={addProcedimiento} variant="outline" className="w-full">
+              + Agregar otro procedimiento
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderTrolley = () => {
+    const { trolleyData } = formData;
     
     // Validación defensiva - usar valores por defecto si no existen
-    const safeMotorreductor = motorreductor || defaultForm.motorreductor;
+    const safeTrolley = trolleyData || buildDefaultTrolley();
+    const showSubItems = safeTrolley.mainStatus === "good" || safeTrolley.mainStatus === "bad";
 
     const updateMainStatus = (status: ChecklistStatus) => {
       setFormData((prev) => {
-        // Asegurar que motorreductor siempre tenga una estructura válida
-        const currentMotorreductor = prev.motorreductor || defaultForm.motorreductor;
-        const updated = {
+        const currentTrolley = prev.trolleyData || buildDefaultTrolley();
+        return {
           ...prev,
-          motorreductor: {
+          trolleyData: {
+            ...currentTrolley,
             mainStatus: status,
-            observation: currentMotorreductor.observation || '',
           },
         };
-        console.log('[renderMotorreductor] updateMainStatus - motorreductor actualizado:', updated.motorreductor);
-        console.log('[renderMotorreductor] updateMainStatus - formData completo tiene motorreductor:', 'motorreductor' in updated);
-        return updated;
+      });
+    };
+
+    const updateSubItemStatus = (subItemId: string, status: ChecklistStatus) => {
+      setFormData((prev) => {
+        const currentTrolley = prev.trolleyData || buildDefaultTrolley();
+        return {
+          ...prev,
+          trolleyData: {
+            ...currentTrolley,
+            subItems: currentTrolley.subItems.map((item) =>
+              item.id === subItemId ? { ...item, status } : item
+            ),
+          },
+        };
+      });
+    };
+
+    const updateSubItemObservation = (subItemId: string, observation: string) => {
+      setFormData((prev) => {
+        const currentTrolley = prev.trolleyData || buildDefaultTrolley();
+        return {
+          ...prev,
+          trolleyData: {
+            ...currentTrolley,
+            subItems: currentTrolley.subItems.map((item) =>
+              item.id === subItemId ? { ...item, observation } : item
+            ),
+          },
+        };
       });
     };
 
     const updateObservation = (value: string) => {
       setFormData((prev) => {
-        // Asegurar que motorreductor siempre tenga una estructura válida
-        const currentMotorreductor = prev.motorreductor || defaultForm.motorreductor;
-        const updated = {
+        const currentTrolley = prev.trolleyData || buildDefaultTrolley();
+        return {
           ...prev,
-          motorreductor: {
-            mainStatus: currentMotorreductor.mainStatus || null,
+          trolleyData: {
+            ...currentTrolley,
             observation: value,
           },
         };
-        console.log('[renderMotorreductor] updateObservation - motorreductor actualizado:', updated.motorreductor);
-        console.log('[renderMotorreductor] updateObservation - formData completo tiene motorreductor:', 'motorreductor' in updated);
-        return updated;
       });
     };
 
     return (
       <div className="space-y-6">
         <p className="text-muted-foreground">
-          Revise el estado del Motorreductor.
+          Revise el estado del Trolley. Al seleccionar Buen estado o Mal estado, aparecerán los sub-items para evaluar.
         </p>
 
+        {/* Estado principal de Trolley */}
         <div className="space-y-4">
-          <h4 className="font-semibold text-lg">Motorreductor</h4>
+          <h4 className="font-semibold text-lg">Trolley</h4>
           <RadioGroup
-            value={safeMotorreductor.mainStatus ?? ""}
+            value={safeTrolley.mainStatus ?? ""}
             onValueChange={(value: ChecklistStatus) => updateMainStatus(value)}
             className="grid grid-cols-1 sm:grid-cols-3 gap-3"
           >
             <Label
-              htmlFor="motorreductor-main-good"
+              htmlFor="trolley-main-good"
               className={cn(
                 "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
-                safeMotorreductor.mainStatus === "good" && "border-green-500 bg-green-500/10",
+                safeTrolley.mainStatus === "good" && "border-green-500 bg-green-500/10",
               )}
             >
-              <RadioGroupItem value="good" id="motorreductor-main-good" />
+              <RadioGroupItem value="good" id="trolley-main-good" />
               Buen estado
             </Label>
             <Label
-              htmlFor="motorreductor-main-bad"
+              htmlFor="trolley-main-bad"
               className={cn(
                 "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
-                safeMotorreductor.mainStatus === "bad" && "border-destructive bg-destructive/10",
+                safeTrolley.mainStatus === "bad" && "border-destructive bg-destructive/10",
               )}
             >
-              <RadioGroupItem value="bad" id="motorreductor-main-bad" />
+              <RadioGroupItem value="bad" id="trolley-main-bad" />
               Mal estado
             </Label>
             <Label
-              htmlFor="motorreductor-main-na"
+              htmlFor="trolley-main-na"
               className={cn(
                 "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
-                safeMotorreductor.mainStatus === "na" && "border-blue-500 bg-blue-500/10",
+                safeTrolley.mainStatus === "na" && "border-blue-500 bg-blue-500/10",
               )}
             >
-              <RadioGroupItem value="na" id="motorreductor-main-na" />
+              <RadioGroupItem value="na" id="trolley-main-na" />
               N/A
             </Label>
           </RadioGroup>
         </div>
 
+        {/* Sub-items - solo se muestran si mainStatus es good o bad */}
+        {showSubItems && (
+          <div className="space-y-6 border-l-4 border-primary/30 pl-4 ml-2">
+            <h4 className="font-semibold text-base text-muted-foreground">Sub-componentes de Trolley:</h4>
+            
+            {safeTrolley.subItems.map((subItem) => (
+              <div key={subItem.id} className="space-y-3 p-4 bg-muted/30 rounded-lg">
+                <h5 className="font-medium">{subItem.name}</h5>
+                <RadioGroup
+                  value={subItem.status ?? ""}
+                  onValueChange={(value: ChecklistStatus) => updateSubItemStatus(subItem.id, value)}
+                  className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+                >
+                  <Label
+                    htmlFor={`trolley-subitem-${subItem.id}-good`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 cursor-pointer transition-colors text-sm",
+                      subItem.status === "good" && "border-green-500 bg-green-500/10",
+                    )}
+                  >
+                    <RadioGroupItem value="good" id={`trolley-subitem-${subItem.id}-good`} />
+                    Buen estado
+                  </Label>
+                  <Label
+                    htmlFor={`trolley-subitem-${subItem.id}-bad`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 cursor-pointer transition-colors text-sm",
+                      subItem.status === "bad" && "border-destructive bg-destructive/10",
+                    )}
+                  >
+                    <RadioGroupItem value="bad" id={`trolley-subitem-${subItem.id}-bad`} />
+                    Mal estado
+                  </Label>
+                  <Label
+                    htmlFor={`trolley-subitem-${subItem.id}-na`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 cursor-pointer transition-colors text-sm",
+                      subItem.status === "na" && "border-blue-500 bg-blue-500/10",
+                    )}
+                  >
+                    <RadioGroupItem value="na" id={`trolley-subitem-${subItem.id}-na`} />
+                    N/A
+                  </Label>
+                </RadioGroup>
+                <Textarea
+                  placeholder={`Observación de ${subItem.name}`}
+                  rows={2}
+                  value={subItem.observation}
+                  onChange={(e) => updateSubItemObservation(subItem.id, e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Observación general */}
         <div className="space-y-2">
-          <Label htmlFor="motorreductor-observation">Observaciones</Label>
+          <Label htmlFor="trolley-observation">Observaciones generales del Trolley</Label>
           <Textarea
-            id="motorreductor-observation"
-            rows={5}
-            placeholder="Escriba observaciones relevantes sobre el Motorreductor."
-            value={safeMotorreductor.observation}
+            id="trolley-observation"
+            rows={4}
+            placeholder="Escriba observaciones generales sobre el Trolley."
+            value={safeTrolley.observation}
+            onChange={(event) => updateObservation(event.target.value)}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderCarrosTesteros = () => {
+    const { carrosTesteros } = formData;
+    
+    // Validación defensiva - usar valores por defecto si no existen
+    const safeCarrosTesteros = carrosTesteros || buildDefaultCarrosTesteros();
+    const showSubItems = safeCarrosTesteros.mainStatus === "good" || safeCarrosTesteros.mainStatus === "bad";
+
+    const updateMainStatus = (status: ChecklistStatus) => {
+      setFormData((prev) => {
+        const currentCarrosTesteros = prev.carrosTesteros || buildDefaultCarrosTesteros();
+        return {
+          ...prev,
+          carrosTesteros: {
+            ...currentCarrosTesteros,
+            mainStatus: status,
+          },
+        };
+      });
+    };
+
+    const updateSubItemStatus = (subItemId: string, status: ChecklistStatus) => {
+      setFormData((prev) => {
+        const currentCarrosTesteros = prev.carrosTesteros || buildDefaultCarrosTesteros();
+        return {
+          ...prev,
+          carrosTesteros: {
+            ...currentCarrosTesteros,
+            subItems: currentCarrosTesteros.subItems.map((item) =>
+              item.id === subItemId ? { ...item, status } : item
+            ),
+          },
+        };
+      });
+    };
+
+    const updateSubItemObservation = (subItemId: string, observation: string) => {
+      setFormData((prev) => {
+        const currentCarrosTesteros = prev.carrosTesteros || buildDefaultCarrosTesteros();
+        return {
+          ...prev,
+          carrosTesteros: {
+            ...currentCarrosTesteros,
+            subItems: currentCarrosTesteros.subItems.map((item) =>
+              item.id === subItemId ? { ...item, observation } : item
+            ),
+          },
+        };
+      });
+    };
+
+    const updateObservation = (value: string) => {
+      setFormData((prev) => {
+        const currentCarrosTesteros = prev.carrosTesteros || buildDefaultCarrosTesteros();
+        return {
+          ...prev,
+          carrosTesteros: {
+            ...currentCarrosTesteros,
+            observation: value,
+          },
+        };
+      });
+    };
+
+    return (
+      <div className="space-y-6">
+        <p className="text-muted-foreground">
+          Revise el estado de Carros testeros. Al seleccionar Buen estado o Mal estado, aparecerán los sub-items para evaluar.
+        </p>
+
+        {/* Estado principal de Carros testeros */}
+        <div className="space-y-4">
+          <h4 className="font-semibold text-lg">Carros testeros</h4>
+          <RadioGroup
+            value={safeCarrosTesteros.mainStatus ?? ""}
+            onValueChange={(value: ChecklistStatus) => updateMainStatus(value)}
+            className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+          >
+            <Label
+              htmlFor="carros-testeros-main-good"
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                safeCarrosTesteros.mainStatus === "good" && "border-green-500 bg-green-500/10",
+              )}
+            >
+              <RadioGroupItem value="good" id="carros-testeros-main-good" />
+              Buen estado
+            </Label>
+            <Label
+              htmlFor="carros-testeros-main-bad"
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                safeCarrosTesteros.mainStatus === "bad" && "border-destructive bg-destructive/10",
+              )}
+            >
+              <RadioGroupItem value="bad" id="carros-testeros-main-bad" />
+              Mal estado
+            </Label>
+            <Label
+              htmlFor="carros-testeros-main-na"
+              className={cn(
+                "flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors",
+                safeCarrosTesteros.mainStatus === "na" && "border-blue-500 bg-blue-500/10",
+              )}
+            >
+              <RadioGroupItem value="na" id="carros-testeros-main-na" />
+              N/A
+            </Label>
+          </RadioGroup>
+        </div>
+
+        {/* Sub-items - solo se muestran si mainStatus es good o bad */}
+        {showSubItems && (
+          <div className="space-y-6 border-l-4 border-primary/30 pl-4 ml-2">
+            <h4 className="font-semibold text-base text-muted-foreground">Sub-componentes de Carros testeros:</h4>
+            
+            {safeCarrosTesteros.subItems.map((subItem) => (
+              <div key={subItem.id} className="space-y-3 p-4 bg-muted/30 rounded-lg">
+                <h5 className="font-medium">{subItem.name}</h5>
+                <RadioGroup
+                  value={subItem.status ?? ""}
+                  onValueChange={(value: ChecklistStatus) => updateSubItemStatus(subItem.id, value)}
+                  className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+                >
+                  <Label
+                    htmlFor={`subitem-${subItem.id}-good`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 cursor-pointer transition-colors text-sm",
+                      subItem.status === "good" && "border-green-500 bg-green-500/10",
+                    )}
+                  >
+                    <RadioGroupItem value="good" id={`subitem-${subItem.id}-good`} />
+                    Buen estado
+                  </Label>
+                  <Label
+                    htmlFor={`subitem-${subItem.id}-bad`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 cursor-pointer transition-colors text-sm",
+                      subItem.status === "bad" && "border-destructive bg-destructive/10",
+                    )}
+                  >
+                    <RadioGroupItem value="bad" id={`subitem-${subItem.id}-bad`} />
+                    Mal estado
+                  </Label>
+                  <Label
+                    htmlFor={`subitem-${subItem.id}-na`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 cursor-pointer transition-colors text-sm",
+                      subItem.status === "na" && "border-blue-500 bg-blue-500/10",
+                    )}
+                  >
+                    <RadioGroupItem value="na" id={`subitem-${subItem.id}-na`} />
+                    N/A
+                  </Label>
+                </RadioGroup>
+                <Textarea
+                  placeholder={`Observación de ${subItem.name}`}
+                  rows={2}
+                  value={subItem.observation}
+                  onChange={(e) => updateSubItemObservation(subItem.id, e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Observación general */}
+        <div className="space-y-2">
+          <Label htmlFor="carros-testeros-observation">Observaciones generales de Carros testeros</Label>
+          <Textarea
+            id="carros-testeros-observation"
+            rows={4}
+            placeholder="Escriba observaciones generales sobre Carros testeros."
+            value={safeCarrosTesteros.observation}
             onChange={(event) => updateObservation(event.target.value)}
           />
         </div>
@@ -2076,6 +2560,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             </Button>
           </div>
         );
+      case "procedimientos":
+        return renderProcedimientos();
+      case "trolley":
+        return renderTrolley();
+      case "carros-testeros":
+        return renderCarrosTesteros();
       default:
         if (currentStep.checklistIndex !== undefined) {
           return renderChecklistStep(currentStep.checklistIndex);

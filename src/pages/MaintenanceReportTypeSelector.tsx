@@ -10,8 +10,8 @@ const MaintenanceReportTypeSelector = () => {
   const { user, loading: authLoading } = useAuth();
 
   // Bloqueos temporales
-  const ELEVATORS_BLOCKED = true;
-  const GENERAL_BLOCKED = true;
+  const ELEVATORS_BLOCKED = false;
+  const GENERAL_BLOCKED = false;
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -46,25 +46,25 @@ const MaintenanceReportTypeSelector = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
           {/* Puentes grúa */}
-          <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate("/maintenance-reports/new/puentes-grua")}>
-            <div className="flex flex-col items-center text-center space-y-4">
+          <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer h-full" onClick={() => navigate("/maintenance-reports/new/puentes-grua")}>
+            <div className="flex flex-col items-center text-center h-full">
               <div className="p-4 rounded-full bg-primary/10">
                 <Building2 className="h-12 w-12 text-primary" />
               </div>
-              <h3 className="text-xl font-semibold">Puentes grúa</h3>
-              <p className="text-sm text-muted-foreground">
+              <h3 className="text-xl font-semibold mt-4">Puentes grúa</h3>
+              <p className="text-sm text-muted-foreground mt-2 min-h-[40px] flex items-center">
                 Informe de mantenimiento para puentes grúa
               </p>
-              <Button className="w-full mt-4">
+              <Button className="w-full mt-auto">
                 Seleccionar
               </Button>
             </div>
           </Card>
 
           {/* Elevadores */}
-          <Card className={`p-6 transition-shadow ${
+          <Card className={`p-6 transition-shadow h-full ${
             ELEVATORS_BLOCKED
               ? "opacity-60 cursor-not-allowed"
               : "hover:shadow-lg cursor-pointer"
@@ -74,15 +74,15 @@ const MaintenanceReportTypeSelector = () => {
             }
             navigate("/maintenance-reports/new/elevadores");
           }}>
-            <div className="flex flex-col items-center text-center space-y-4">
+            <div className="flex flex-col items-center text-center h-full">
               <div className="p-4 rounded-full bg-blue-500/10">
                 <Wrench className="h-12 w-12 text-blue-500" />
               </div>
-              <h3 className="text-xl font-semibold">Elevadores</h3>
-              <p className="text-sm text-muted-foreground">
+              <h3 className="text-xl font-semibold mt-4">Elevadores</h3>
+              <p className="text-sm text-muted-foreground mt-2 min-h-[40px] flex items-center">
                 Informe de mantenimiento para elevadores
               </p>
-              <Button className="w-full mt-4" disabled={ELEVATORS_BLOCKED}>
+              <Button className="w-full mt-auto" disabled={ELEVATORS_BLOCKED}>
                 Seleccionar
               </Button>
               {ELEVATORS_BLOCKED && (
@@ -94,7 +94,7 @@ const MaintenanceReportTypeSelector = () => {
           </Card>
 
           {/* Generales */}
-          <Card className={`p-6 transition-shadow ${
+          <Card className={`p-6 transition-shadow h-full ${
             GENERAL_BLOCKED
               ? "opacity-60 cursor-not-allowed"
               : "hover:shadow-lg cursor-pointer"
@@ -104,15 +104,15 @@ const MaintenanceReportTypeSelector = () => {
             }
             navigate("/maintenance-reports/new/mantenimientos-generales");
           }}>
-            <div className="flex flex-col items-center text-center space-y-4">
+            <div className="flex flex-col items-center text-center h-full">
               <div className="p-4 rounded-full bg-gray-500/10">
                 <Settings className="h-12 w-12 text-gray-500" />
               </div>
-              <h3 className="text-xl font-semibold">Generales</h3>
-              <p className="text-sm text-muted-foreground">
+              <h3 className="text-xl font-semibold mt-4">Generales</h3>
+              <p className="text-sm text-muted-foreground mt-2 min-h-[40px] flex items-center">
                 Informe de mantenimientos generales
               </p>
-              <Button className="w-full mt-4" disabled={GENERAL_BLOCKED}>
+              <Button className="w-full mt-auto" disabled={GENERAL_BLOCKED}>
                 Seleccionar
               </Button>
               {GENERAL_BLOCKED && (

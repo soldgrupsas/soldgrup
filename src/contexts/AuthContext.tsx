@@ -78,6 +78,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isInitialLoadRef = useRef(true);
   const refreshTokenInvalidRef = useRef(false); // Bandera para evitar bucles de refresh token inválido
   const isRefreshingRef = useRef(false); // Bandera para evitar múltiples refreshes simultáneos
+  const lastFocusRefreshRef = useRef<number>(0); // Timestamp del último refresh por focus
+  const FOCUS_REFRESH_THROTTLE = 30000; // 30 segundos entre refreshes por focus
 
   const clearRefreshTimer = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -432,82 +434,86 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     initializeSession();
 
-    const handleWindowFocus = async () => {
+    const handleWindowFocus = () => {
       // NO intentar refrescar si ya sabemos que el token es inválido
       if (refreshTokenInvalidRef.current) {
         return;
       }
 
-      try {
-        // Solo intentar refrescar si hay una sesión activa
-        const { data: currentSession } = await supabase.auth.getSession();
-        if (!currentSession?.session) {
-          return; // No hay sesión, no intentar refrescar
-        }
+      // Throttle: no refrescar si ya se hizo recientemente
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < FOCUS_REFRESH_THROTTLE) {
+        return;
+      }
 
-        // Evitar múltiples refreshes simultáneos
-        if (isRefreshingRef.current) {
-          return;
-        }
+      // Evitar múltiples refreshes simultáneos
+      if (isRefreshingRef.current) {
+        return;
+      }
 
-        isRefreshingRef.current = true;
-        const { data, error } = await supabase.auth.refreshSession();
-        isRefreshingRef.current = false;
-
-        if (error) {
-          // Si es un error de refresh token inválido, marcar la bandera y cerrar sesión
-          if (error.message?.toLowerCase().includes("refresh token") || 
-              error.message?.toLowerCase().includes("invalid refresh token") ||
-              error.name === "AuthApiError") {
-            refreshTokenInvalidRef.current = true;
-            console.warn("Refresh token inválido detectado, limpiando tokens y cerrando sesión");
-            // Limpiar TODOS los tokens de localStorage relacionados con Supabase
-            try {
-              Object.keys(localStorage).forEach(key => {
-                if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
-                  localStorage.removeItem(key);
-                }
-              });
-            } catch (e) {
-              console.warn("Error limpiando localStorage:", e);
-            }
-            try {
-              await supabase.auth.signOut();
-              await handleSessionChange(null, { silent: true });
-            } catch (signOutError) {
-              // Ignorar errores al cerrar sesión
-              console.warn("Error al cerrar sesión:", signOutError);
-            }
+      // Ejecutar de forma no bloqueante usando setTimeout
+      setTimeout(async () => {
+        try {
+          // Solo intentar refrescar si hay una sesión activa en memoria
+          if (!session) {
             return;
           }
-          console.error("Error refreshing session on focus:", error);
-          return; // No continuar si hay error
-        }
 
-        if (data?.session) {
-          // Si el refresh fue exitoso, resetear la bandera
-          refreshTokenInvalidRef.current = false;
-          await handleSessionChange(data.session, { silent: true });
-          return;
-        }
-      } catch (error) {
-        isRefreshingRef.current = false;
-        // Si hay una excepción relacionada con refresh token, marcar como inválido
-        if (error && typeof error === 'object' && 'message' in error) {
-          const errorMessage = String((error as any).message || '');
-          if (errorMessage.toLowerCase().includes("refresh token") || 
-              errorMessage.toLowerCase().includes("invalid")) {
-            refreshTokenInvalidRef.current = true;
+          isRefreshingRef.current = true;
+          lastFocusRefreshRef.current = Date.now();
+          
+          const { data, error } = await supabase.auth.refreshSession();
+          isRefreshingRef.current = false;
+
+          if (error) {
+            // Si es un error de refresh token inválido, marcar la bandera y cerrar sesión
+            if (error.message?.toLowerCase().includes("refresh token") || 
+                error.message?.toLowerCase().includes("invalid refresh token") ||
+                error.name === "AuthApiError") {
+              refreshTokenInvalidRef.current = true;
+              console.warn("Refresh token inválido detectado, limpiando tokens y cerrando sesión");
+              try {
+                Object.keys(localStorage).forEach(key => {
+                  if (key.includes('supabase') || key.includes('auth') || key.includes('sb-')) {
+                    localStorage.removeItem(key);
+                  }
+                });
+              } catch (e) {
+                console.warn("Error limpiando localStorage:", e);
+              }
+              try {
+                await supabase.auth.signOut();
+                await handleSessionChange(null, { silent: true });
+              } catch (signOutError) {
+                console.warn("Error al cerrar sesión:", signOutError);
+              }
+              return;
+            }
+            console.error("Error refreshing session on focus:", error);
+            return;
           }
+
+          if (data?.session) {
+            refreshTokenInvalidRef.current = false;
+            await handleSessionChange(data.session, { silent: true });
+          }
+        } catch (error) {
+          isRefreshingRef.current = false;
+          if (error && typeof error === 'object' && 'message' in error) {
+            const errorMessage = String((error as any).message || '');
+            if (errorMessage.toLowerCase().includes("refresh token") || 
+                errorMessage.toLowerCase().includes("invalid")) {
+              refreshTokenInvalidRef.current = true;
+            }
+          }
+          console.warn("Error en handleWindowFocus:", error);
         }
-        // Ignorar errores silenciosamente para no romper el renderizado
-        console.warn("Error en handleWindowFocus:", error);
-      }
+      }, 100); // Pequeño delay para no bloquear el render
     };
 
-    const handleVisibilityChange = async () => {
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        await handleWindowFocus();
+        handleWindowFocus();
       }
     };
 
