@@ -80,52 +80,135 @@ type AttendanceRecord = {
   exit_time: string | null;
   entry_photo_url: string | null;
   exit_photo_url: string | null;
+  entry_latitude: number | null;
+  entry_longitude: number | null;
+  exit_latitude: number | null;
+  exit_longitude: number | null;
+  time_adjustment_minutes: number | null; // Ajuste de tiempo: + = trabajó más, - = trabajó menos
+  adjustment_note: string | null;          // Nota explicativa del ajuste
   worker?: Worker;
 };
 
+type PhotoViewData = {
+  url: string;
+  latitude: number | null;
+  longitude: number | null;
+  type: "entry" | "exit";
+} | null;
+
 const PHOTO_BUCKET = "attendance-photos";
 
+// Festivos Colombia 2025 y 2026
 const HOLIDAYS = [
-  "2025-01-01",
-  "2025-01-06",
-  "2025-03-24",
-  "2025-03-25",
-  "2025-05-01",
-  "2025-05-12",
-  "2025-06-16",
-  "2025-07-07",
-  "2025-07-20",
-  "2025-08-07",
-  "2025-08-17",
-  "2025-10-13",
-  "2025-11-03",
-  "2025-11-17",
-  "2025-12-08",
-  "2025-12-25",
+  // 2025
+  "2025-01-01", // Año Nuevo
+  "2025-01-06", // Reyes Magos
+  "2025-03-24", // San José
+  "2025-04-17", // Jueves Santo
+  "2025-04-18", // Viernes Santo
+  "2025-05-01", // Día del Trabajo
+  "2025-06-02", // Ascensión del Señor
+  "2025-06-23", // Corpus Christi
+  "2025-06-30", // Sagrado Corazón
+  "2025-07-20", // Independencia
+  "2025-08-07", // Batalla de Boyacá
+  "2025-08-18", // Asunción de la Virgen
+  "2025-10-13", // Día de la Raza
+  "2025-11-03", // Todos los Santos
+  "2025-11-17", // Independencia de Cartagena
+  "2025-12-08", // Inmaculada Concepción
+  "2025-12-25", // Navidad
+  // 2026
+  "2026-01-01", // Año Nuevo
+  "2026-01-12", // Reyes Magos
+  "2026-03-23", // San José
+  "2026-04-02", // Jueves Santo
+  "2026-04-03", // Viernes Santo
+  "2026-05-01", // Día del Trabajo
+  "2026-05-18", // Ascensión del Señor
+  "2026-06-08", // Corpus Christi
+  "2026-06-15", // Sagrado Corazón
+  "2026-07-20", // Independencia
+  "2026-08-07", // Batalla de Boyacá
+  "2026-08-17", // Asunción de la Virgen
+  "2026-10-12", // Día de la Raza
+  "2026-11-02", // Todos los Santos
+  "2026-11-16", // Independencia de Cartagena
+  "2026-12-08", // Inmaculada Concepción
+  "2026-12-25", // Navidad
 ];
 
+// Horario laboral de la empresa
+// Lunes a Viernes: 8am - 12pm y 1pm - 5pm (8 horas con 1 hora almuerzo)
+// Sábado: 8am - 12pm (4 horas)
+// Domingo: No se trabaja
 const SCHEDULE_BY_DAY: Record<string, { start: string; end: string }[]> = {
-  "1": [
+  "0": [], // Domingo - no se trabaja
+  "1": [   // Lunes
     { start: "08:00", end: "12:00" },
     { start: "13:00", end: "17:00" },
   ],
-  "2": [
+  "2": [   // Martes
     { start: "08:00", end: "12:00" },
     { start: "13:00", end: "17:00" },
   ],
-  "3": [
+  "3": [   // Miércoles
     { start: "08:00", end: "12:00" },
     { start: "13:00", end: "17:00" },
   ],
-  "4": [
+  "4": [   // Jueves
     { start: "08:00", end: "12:00" },
     { start: "13:00", end: "17:00" },
   ],
-  "5": [
+  "5": [   // Viernes
     { start: "08:00", end: "12:00" },
     { start: "13:00", end: "17:00" },
   ],
-  "6": [{ start: "08:00", end: "12:00" }],
+  "6": [{ start: "08:00", end: "12:00" }], // Sábado
+};
+
+// Constantes de legislación laboral colombiana
+const MONTHLY_WORK_HOURS = 220; // Intensidad laboral mensual en Colombia
+
+// Recargos según ley colombiana (porcentajes sobre hora ordinaria)
+const SURCHARGES = {
+  EXTRA_DIURNA: 0.25,           // 25% - Hora extra diurna (6am-7pm)
+  EXTRA_NOCTURNA: 0.75,         // 75% - Hora extra nocturna (7pm-6am)
+  RECARGO_NOCTURNO: 0.35,       // 35% - Recargo por trabajo nocturno ordinario
+  DOMINICAL_FESTIVO: 0.80,      // 80% - Recargo dominical o festivo
+  EXTRA_DIURNA_DOMINICAL: 1.15, // 115% - Hora extra diurna dominical/festivo (25% + 100% - descuento)
+  EXTRA_NOCTURNA_DOMINICAL: 1.65, // 165% - Hora extra nocturna dominical/festivo
+};
+
+// Horario nocturno: 7pm (19:00) a 6am (06:00)
+const NIGHT_START_HOUR = 19; // 7 PM
+const NIGHT_END_HOUR = 6;    // 6 AM
+
+// Tipo para el desglose detallado de horas
+type HoursBreakdown = {
+  // Minutos trabajados por tipo
+  normalMinutes: number;           // Horas ordinarias dentro del horario laboral
+  extraDiurnaMinutes: number;      // Horas extra diurnas (6am-7pm) días normales
+  extraNocturnaMinutes: number;    // Horas extra nocturnas (7pm-6am) días normales
+  recargoNocturnoMinutes: number;  // Minutos con recargo nocturno (trabajo ordinario nocturno)
+  dominicalFestivoMinutes: number; // Minutos trabajados en dominical/festivo (ordinarios)
+  extraDiurnaDominicalMinutes: number;   // Horas extra diurnas en dominical/festivo
+  extraNocturnaDominicalMinutes: number; // Horas extra nocturnas en dominical/festivo
+  totalMinutes: number;            // Total de minutos trabajados
+};
+
+// Tipo para el cálculo de valores en dinero
+type HoursValue = HoursBreakdown & {
+  hourlyRate: number;              // Valor hora ordinaria (sueldo / 220)
+  normalValue: number;             // Valor horas ordinarias
+  extraDiurnaValue: number;        // Valor horas extra diurnas
+  extraNocturnaValue: number;      // Valor horas extra nocturnas
+  recargoNocturnoValue: number;    // Valor recargo nocturno
+  dominicalFestivoValue: number;   // Valor recargo dominical/festivo
+  extraDiurnaDominicalValue: number;   // Valor extra diurna dominical
+  extraNocturnaDominicalValue: number; // Valor extra nocturna dominical
+  totalExtraValue: number;         // Total valor extras y recargos
+  totalValue: number;              // Valor total (normal + extras)
 };
 
 // Función helper para obtener la fecha en formato YYYY-MM-DD usando zona horaria local
@@ -151,9 +234,23 @@ const normalizeDateToKey = (date: string | Date): string => {
   return toDateKey(date);
 };
 
+// Verifica si una fecha es festivo
 const isHoliday = (date: Date) => HOLIDAYS.includes(toDateKey(date));
 
+// Verifica si es domingo (día 0)
+const isSunday = (date: Date) => date.getDay() === 0;
+
+// Verifica si es domingo o festivo
+const isDominicalOrHoliday = (date: Date) => isSunday(date) || isHoliday(date);
+
+// Verifica si una hora específica está en horario nocturno (7pm - 6am)
+const isNightHour = (hour: number): boolean => {
+  return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;
+};
+
+// Obtiene los intervalos de trabajo para una fecha
 const intervalsForDate = (date: Date) => {
+  // En festivos no hay horario laboral normal
   if (isHoliday(date)) return [];
   const day = date.getDay().toString();
   return SCHEDULE_BY_DAY[day] ?? [];
@@ -164,34 +261,186 @@ const timeStringToMinutes = (value: string) => {
   return hours * 60 + minutes;
 };
 
-const computeRecordHours = (record: AttendanceRecord) => {
+// Calcula los minutos nocturnos dentro de un rango de tiempo
+const calculateNightMinutes = (startTime: Date, endTime: Date): number => {
+  let nightMinutes = 0;
+  const current = new Date(startTime);
+  
+  while (current < endTime) {
+    const hour = current.getHours();
+    if (isNightHour(hour)) {
+      nightMinutes++;
+    }
+    current.setMinutes(current.getMinutes() + 1);
+  }
+  
+  return nightMinutes;
+};
+
+// Función principal para calcular el desglose de horas de un registro
+const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
   const entry = record.entry_time ? new Date(record.entry_time) : null;
   const exit = record.exit_time ? new Date(record.exit_time) : null;
+  
+  const emptyResult: HoursBreakdown = {
+    normalMinutes: 0,
+    extraDiurnaMinutes: 0,
+    extraNocturnaMinutes: 0,
+    recargoNocturnoMinutes: 0,
+    dominicalFestivoMinutes: 0,
+    extraDiurnaDominicalMinutes: 0,
+    extraNocturnaDominicalMinutes: 0,
+    totalMinutes: 0,
+  };
+  
   if (!entry || !exit) {
-    return { normalMinutes: 0, extraMinutes: 0, totalMinutes: 0 };
+    return emptyResult;
   }
 
+  // Calcular minutos totales trabajados + ajuste de tiempo (si existe)
+  const adjustment = typeof record.time_adjustment_minutes === 'number' ? record.time_adjustment_minutes : 0;
+  const totalMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000 + adjustment);
+  const isDomFestivo = isDominicalOrHoliday(entry);
   const intervals = intervalsForDate(entry);
-  const totalMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000);
-
+  
   let normalMinutes = 0;
-
+  let recargoNocturnoMinutes = 0;
+  
+  // Calcular minutos dentro del horario laboral normal
   intervals.forEach((interval) => {
     const intervalStart = new Date(entry);
-    intervalStart.setHours(Number(interval.start.split(":")[0]), Number(interval.start.split(":")[1]));
+    intervalStart.setHours(
+      Number(interval.start.split(":")[0]),
+      Number(interval.start.split(":")[1]),
+      0, 0
+    );
     const intervalEnd = new Date(entry);
-    intervalEnd.setHours(Number(interval.end.split(":")[0]), Number(interval.end.split(":")[1]));
+    intervalEnd.setHours(
+      Number(interval.end.split(":")[0]),
+      Number(interval.end.split(":")[1]),
+      0, 0
+    );
 
-    const overlapStart = Math.max(entry.getTime(), intervalStart.getTime());
-    const overlapEnd = Math.min(exit.getTime(), intervalEnd.getTime());
+    const overlapStart = new Date(Math.max(entry.getTime(), intervalStart.getTime()));
+    const overlapEnd = new Date(Math.min(exit.getTime(), intervalEnd.getTime()));
 
     if (overlapEnd > overlapStart) {
-      normalMinutes += (overlapEnd - overlapStart) / 60000;
+      const overlapMinutes = (overlapEnd.getTime() - overlapStart.getTime()) / 60000;
+      normalMinutes += overlapMinutes;
+      
+      // Calcular recargo nocturno dentro del horario normal (si aplica)
+      // Por ejemplo, si el horario normal fuera hasta las 8pm, habría recargo nocturno
+      const nightInOverlap = calculateNightMinutes(overlapStart, overlapEnd);
+      recargoNocturnoMinutes += nightInOverlap;
     }
   });
 
+  // Minutos extra son los que están fuera del horario normal
   const extraMinutes = Math.max(0, totalMinutes - normalMinutes);
-  return { normalMinutes, extraMinutes, totalMinutes };
+  
+  // Calcular minutos nocturnos en las horas extra
+  let extraNightMinutes = 0;
+  if (extraMinutes > 0) {
+    // Calcular nocturnos en todo el período y restar los del horario normal
+    const totalNightMinutes = calculateNightMinutes(entry, exit);
+    extraNightMinutes = Math.max(0, totalNightMinutes - recargoNocturnoMinutes);
+  }
+  
+  const extraDayMinutes = Math.max(0, extraMinutes - extraNightMinutes);
+
+  // Si es dominical o festivo, todo tiene recargo especial
+  if (isDomFestivo) {
+    return {
+      normalMinutes: 0,
+      extraDiurnaMinutes: 0,
+      extraNocturnaMinutes: 0,
+      recargoNocturnoMinutes: 0,
+      dominicalFestivoMinutes: normalMinutes, // Trabajo ordinario en festivo
+      extraDiurnaDominicalMinutes: extraDayMinutes,
+      extraNocturnaDominicalMinutes: extraNightMinutes,
+      totalMinutes,
+    };
+  }
+
+  // Día normal (no festivo ni domingo)
+  return {
+    normalMinutes: normalMinutes - recargoNocturnoMinutes, // Horas normales sin recargo
+    extraDiurnaMinutes: extraDayMinutes,
+    extraNocturnaMinutes: extraNightMinutes,
+    recargoNocturnoMinutes, // Horas normales con recargo nocturno
+    dominicalFestivoMinutes: 0,
+    extraDiurnaDominicalMinutes: 0,
+    extraNocturnaDominicalMinutes: 0,
+    totalMinutes,
+  };
+};
+
+// Calcula el valor en dinero del desglose de horas
+const computeHoursValue = (breakdown: HoursBreakdown, monthlySalary: number): HoursValue => {
+  const hourlyRate = monthlySalary / MONTHLY_WORK_HOURS;
+  const minuteRate = hourlyRate / 60;
+  
+  // Valor de horas normales (sin recargo)
+  const normalValue = breakdown.normalMinutes * minuteRate;
+  
+  // Valor horas extra diurnas: hora ordinaria + 25%
+  const extraDiurnaValue = breakdown.extraDiurnaMinutes * minuteRate * (1 + SURCHARGES.EXTRA_DIURNA);
+  
+  // Valor horas extra nocturnas: hora ordinaria + 75%
+  const extraNocturnaValue = breakdown.extraNocturnaMinutes * minuteRate * (1 + SURCHARGES.EXTRA_NOCTURNA);
+  
+  // Valor recargo nocturno: solo el 35% adicional (la hora base ya está en normalMinutes conceptualmente)
+  // Pero en realidad aquí contamos los minutos completos con recargo
+  const recargoNocturnoValue = breakdown.recargoNocturnoMinutes * minuteRate * (1 + SURCHARGES.RECARGO_NOCTURNO);
+  
+  // Valor trabajo dominical/festivo ordinario: hora ordinaria + 80%
+  const dominicalFestivoValue = breakdown.dominicalFestivoMinutes * minuteRate * (1 + SURCHARGES.DOMINICAL_FESTIVO);
+  
+  // Valor hora extra diurna dominical/festivo: hora ordinaria + 115%
+  const extraDiurnaDominicalValue = breakdown.extraDiurnaDominicalMinutes * minuteRate * (1 + SURCHARGES.EXTRA_DIURNA_DOMINICAL);
+  
+  // Valor hora extra nocturna dominical/festivo: hora ordinaria + 165%
+  const extraNocturnaDominicalValue = breakdown.extraNocturnaDominicalMinutes * minuteRate * (1 + SURCHARGES.EXTRA_NOCTURNA_DOMINICAL);
+  
+  // Total de extras y recargos (sin incluir horas normales)
+  const totalExtraValue = 
+    extraDiurnaValue + 
+    extraNocturnaValue + 
+    (breakdown.recargoNocturnoMinutes * minuteRate * SURCHARGES.RECARGO_NOCTURNO) + // Solo el recargo, no la hora completa
+    (breakdown.dominicalFestivoMinutes * minuteRate * SURCHARGES.DOMINICAL_FESTIVO) +
+    extraDiurnaDominicalValue + 
+    extraNocturnaDominicalValue;
+  
+  // Valor total
+  const totalValue = normalValue + extraDiurnaValue + extraNocturnaValue + 
+    recargoNocturnoValue + dominicalFestivoValue + 
+    extraDiurnaDominicalValue + extraNocturnaDominicalValue;
+
+  return {
+    ...breakdown,
+    hourlyRate,
+    normalValue,
+    extraDiurnaValue,
+    extraNocturnaValue,
+    recargoNocturnoValue,
+    dominicalFestivoValue,
+    extraDiurnaDominicalValue,
+    extraNocturnaDominicalValue,
+    totalExtraValue,
+    totalValue,
+  };
+};
+
+// Función legacy para compatibilidad (retorna formato simplificado)
+const computeRecordHoursSimple = (record: AttendanceRecord) => {
+  const breakdown = computeRecordHours(record);
+  const extraMinutes = breakdown.extraDiurnaMinutes + breakdown.extraNocturnaMinutes +
+    breakdown.extraDiurnaDominicalMinutes + breakdown.extraNocturnaDominicalMinutes;
+  return {
+    normalMinutes: breakdown.normalMinutes + breakdown.recargoNocturnoMinutes + breakdown.dominicalFestivoMinutes,
+    extraMinutes,
+    totalMinutes: breakdown.totalMinutes,
+  };
 };
 
 const encodeStoragePath = (path: string) =>
@@ -207,6 +456,80 @@ const sanitizeFileName = (name: string) =>
     .replace(/_{2,}/g, "_")
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
+
+// Helper function to get current GPS location with detailed error handling
+const getCurrentLocation = (): Promise<{ latitude: number; longitude: number; error?: string } | { latitude: null; longitude: null; error: string }> => {
+  return new Promise((resolve) => {
+    // Check if we're in a secure context (HTTPS or localhost)
+    if (!window.isSecureContext) {
+      console.warn("Geolocation requires HTTPS");
+      resolve({ latitude: null, longitude: null, error: "La geolocalización requiere conexión HTTPS segura" });
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      console.warn("Geolocation not supported by browser");
+      resolve({ latitude: null, longitude: null, error: "Tu navegador no soporta geolocalización" });
+      return;
+    }
+
+    // First check permission status if available
+    if (navigator.permissions) {
+      navigator.permissions.query({ name: 'geolocation' }).then((result) => {
+        console.log("Geolocation permission status:", result.state);
+        if (result.state === 'denied') {
+          resolve({ latitude: null, longitude: null, error: "Permiso de ubicación denegado. Actívalo en la configuración del navegador." });
+          return;
+        }
+        // Continue to get position
+        requestPosition();
+      }).catch(() => {
+        // Permissions API not available, try directly
+        requestPosition();
+      });
+    } else {
+      requestPosition();
+    }
+
+    function requestPosition() {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          console.log("Location obtained:", position.coords.latitude, position.coords.longitude);
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+        },
+        (error) => {
+          console.warn("Error getting location:", error.code, error.message);
+          let errorMsg = "No se pudo obtener la ubicación";
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMsg = "Permiso de ubicación denegado. Actívalo en la configuración del navegador.";
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMsg = "Ubicación no disponible. Verifica que el GPS esté activado.";
+              break;
+            case error.TIMEOUT:
+              errorMsg = "Tiempo de espera agotado. Intenta en un lugar con mejor señal GPS.";
+              break;
+          }
+          resolve({ latitude: null, longitude: null, error: errorMsg });
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 30000, // 30 seconds timeout for better accuracy
+          maximumAge: 0, // Always get fresh position, no cache
+        }
+      );
+    }
+  });
+};
+
+// Generate Google Maps URL from coordinates
+const getGoogleMapsUrl = (latitude: number, longitude: number): string => {
+  return `https://www.google.com/maps?q=${latitude},${longitude}`;
+};
 
 const TimeControl = () => {
   const navigate = useNavigate();
@@ -258,6 +581,13 @@ const TimeControl = () => {
   const [uploadingExit, setUploadingExit] = useState(false);
   const isUpdatingRecordsRef = useRef(false);
   
+  // Estados para ajuste de tiempo en salida (almuerzo)
+  const [showExitAdjustmentDialog, setShowExitAdjustmentDialog] = useState(false);
+  const [pendingExitFile, setPendingExitFile] = useState<File | null>(null);
+  const [pendingExitLocation, setPendingExitLocation] = useState<{ latitude: number | null; longitude: number | null } | null>(null);
+  const [lunchWasNormal, setLunchWasNormal] = useState<boolean>(true);
+  const [lunchMinutesTaken, setLunchMinutesTaken] = useState<string>("60");
+  
   // Timeout para resetear estados de uploading si se quedan atascados
   useEffect(() => {
     if (uploadingEntry || uploadingExit) {
@@ -270,9 +600,17 @@ const TimeControl = () => {
       return () => clearTimeout(timeout);
     }
   }, [uploadingEntry, uploadingExit]);
-  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
-  const [dateFilter, setDateFilter] = useState<"all" | "week" | "month" | "custom">("week");
+  const [viewingPhoto, setViewingPhoto] = useState<PhotoViewData>(null);
+  const [dateFilter, setDateFilter] = useState<"all" | "fortnight" | "month" | "custom">("fortnight");
   const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>("all");
+  
+  // Estados para selección de quincena y mes
+  const [selectedFortnight, setSelectedFortnight] = useState<1 | 2>(() => {
+    const today = new Date();
+    return today.getDate() <= 15 ? 1 : 2;
+  });
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -376,7 +714,16 @@ const TimeControl = () => {
         setAttendanceRecords([]);
       } else {
         // Cargar registros usando función anti-duplicados
-        const records = (recordsData || []) as unknown as AttendanceRecord[];
+        // Normalizar registros para asegurar que tengan todos los campos
+        const records = (recordsData || []).map((r: any) => ({
+          ...r,
+          entry_latitude: r.entry_latitude ?? null,
+          entry_longitude: r.entry_longitude ?? null,
+          exit_latitude: r.exit_latitude ?? null,
+          exit_longitude: r.exit_longitude ?? null,
+          time_adjustment_minutes: r.time_adjustment_minutes ?? null,
+          adjustment_note: r.adjustment_note ?? null,
+        })) as AttendanceRecord[];
         const deduplicated = removeDuplicateRecords(records);
         setAttendanceRecords(deduplicated);
       }
@@ -1107,20 +1454,61 @@ const TimeControl = () => {
     return record;
   }, [attendanceRecords, selectedWorkerId]);
 
+  // Tipo para totales detallados por trabajador
+  type WorkerTotals = HoursBreakdown & {
+    hourlyRate: number;
+    totalExtraValue: number;
+    totalValue: number;
+  };
+
   const weeklyTotals = useMemo(() => {
-    const totals: Record<string, { normal: number; extra: number; total: number }> = {};
+    const totals: Record<string, WorkerTotals> = {};
+    
     attendanceRecords.forEach((record) => {
       const key = record.worker_id;
       const stats = computeRecordHours(record);
+      const worker = workers.find(w => w.id === key);
+      const salary = worker?.sueldo || 0;
+      
       if (!totals[key]) {
-        totals[key] = { normal: 0, extra: 0, total: 0 };
+        totals[key] = {
+          normalMinutes: 0,
+          extraDiurnaMinutes: 0,
+          extraNocturnaMinutes: 0,
+          recargoNocturnoMinutes: 0,
+          dominicalFestivoMinutes: 0,
+          extraDiurnaDominicalMinutes: 0,
+          extraNocturnaDominicalMinutes: 0,
+          totalMinutes: 0,
+          hourlyRate: salary / MONTHLY_WORK_HOURS,
+          totalExtraValue: 0,
+          totalValue: 0,
+        };
       }
-      totals[key].normal += stats.normalMinutes;
-      totals[key].extra += stats.extraMinutes;
-      totals[key].total += stats.totalMinutes;
+      
+      // Acumular minutos por tipo
+      totals[key].normalMinutes += stats.normalMinutes;
+      totals[key].extraDiurnaMinutes += stats.extraDiurnaMinutes;
+      totals[key].extraNocturnaMinutes += stats.extraNocturnaMinutes;
+      totals[key].recargoNocturnoMinutes += stats.recargoNocturnoMinutes;
+      totals[key].dominicalFestivoMinutes += stats.dominicalFestivoMinutes;
+      totals[key].extraDiurnaDominicalMinutes += stats.extraDiurnaDominicalMinutes;
+      totals[key].extraNocturnaDominicalMinutes += stats.extraNocturnaDominicalMinutes;
+      totals[key].totalMinutes += stats.totalMinutes;
     });
+    
+    // Calcular valores en dinero para cada trabajador
+    Object.keys(totals).forEach((workerId) => {
+      const worker = workers.find(w => w.id === workerId);
+      const salary = worker?.sueldo || 0;
+      const t = totals[workerId];
+      const values = computeHoursValue(t, salary);
+      t.totalExtraValue = values.totalExtraValue;
+      t.totalValue = values.totalValue;
+    });
+    
     return totals;
-  }, [attendanceRecords]);
+  }, [attendanceRecords, workers]);
 
   // Only disable entry button if there's a complete entry record (with photo)
   const entryButtonDisabled =
@@ -1209,6 +1597,38 @@ const TimeControl = () => {
       return;
     }
 
+    // PRIMERO: Obtener ubicación GPS ANTES de abrir la cámara
+    toast({
+      title: "Obteniendo ubicación...",
+      description: "Por favor espera mientras se obtiene tu ubicación GPS.",
+    });
+    
+    const preLocation = await getCurrentLocation();
+    if (!preLocation.latitude || !preLocation.longitude) {
+      toast({
+        title: "⚠️ Ubicación requerida",
+        description: preLocation.error || "No se pudo obtener la ubicación GPS. El registro requiere ubicación.",
+        variant: "destructive",
+      });
+      // Preguntar si desea continuar sin ubicación
+      const continueWithoutLocation = window.confirm(
+        "No se pudo obtener la ubicación GPS.\n\n" +
+        "¿Deseas continuar sin ubicación?\n\n" +
+        "Nota: Se recomienda tener el GPS activado para validar el lugar de trabajo."
+      );
+      if (!continueWithoutLocation) {
+        return;
+      }
+    } else {
+      toast({
+        title: "✅ Ubicación obtenida",
+        description: "Ahora puedes tomar la foto.",
+      });
+    }
+
+    // Guardar la ubicación obtenida para usarla después
+    const capturedLocation = preLocation;
+
     // Usar un try-catch global para capturar cualquier error que pueda romper el renderizado
     let input: HTMLInputElement | null = null;
     let inputRemoved = false;
@@ -1254,6 +1674,20 @@ const TimeControl = () => {
           isFileInputOpenRef.current = false;
           const file = (e.target as HTMLInputElement).files?.[0];
           if (!file) {
+            cleanup();
+            return;
+          }
+
+          // Si es salida, guardar archivo, ubicación y mostrar diálogo de almuerzo
+          if (type === "exit") {
+            setPendingExitFile(file);
+            setPendingExitLocation({
+              latitude: capturedLocation.latitude,
+              longitude: capturedLocation.longitude,
+            });
+            setLunchWasNormal(true);
+            setLunchMinutesTaken("60");
+            setShowExitAdjustmentDialog(true);
             cleanup();
             return;
           }
@@ -1306,6 +1740,12 @@ const TimeControl = () => {
             const today = toDateKey(new Date());
             const now = new Date().toISOString();
 
+            // Usar la ubicación capturada ANTES de abrir la cámara
+            const location = capturedLocation;
+            if (location.latitude && location.longitude) {
+              console.log("Usando ubicación capturada:", location.latitude, location.longitude);
+            }
+
             // Check if record exists for today
             const { data: existingRecords, error: queryError } = await supabase
               .from("attendance_records")
@@ -1344,17 +1784,25 @@ const TimeControl = () => {
               if (type === "entry") {
                 updateData.entry_time = now;
                 updateData.entry_photo_url = photoUrl;
+                updateData.entry_latitude = location?.latitude ?? null;
+                updateData.entry_longitude = location?.longitude ?? null;
                 // Preserve existing exit data
                 updateData.exit_time = existingRecord.exit_time || null;
                 updateData.exit_photo_url = existingRecord.exit_photo_url || null;
+                updateData.exit_latitude = existingRecord.exit_latitude || null;
+                updateData.exit_longitude = existingRecord.exit_longitude || null;
               }
               // If we're updating exit, set exit fields (overwrite existing)
               if (type === "exit") {
                 updateData.exit_time = now;
                 updateData.exit_photo_url = photoUrl;
+                updateData.exit_latitude = location?.latitude ?? null;
+                updateData.exit_longitude = location?.longitude ?? null;
                 // Preserve existing entry data
                 updateData.entry_time = existingRecord.entry_time || null;
                 updateData.entry_photo_url = existingRecord.entry_photo_url || null;
+                updateData.entry_latitude = existingRecord.entry_latitude || null;
+                updateData.entry_longitude = existingRecord.entry_longitude || null;
               }
 
               const { data: updatedData, error } = await supabase
@@ -1404,6 +1852,10 @@ const TimeControl = () => {
                 exit_time: type === "exit" ? now : null,
                 entry_photo_url: type === "entry" ? photoUrl : null,
                 exit_photo_url: type === "exit" ? photoUrl : null,
+                entry_latitude: type === "entry" ? (location?.latitude ?? null) : null,
+                entry_longitude: type === "entry" ? (location?.longitude ?? null) : null,
+                exit_latitude: type === "exit" ? (location?.latitude ?? null) : null,
+                exit_longitude: type === "exit" ? (location?.longitude ?? null) : null,
               };
               const { data: insertedData, error } = await supabase
                 .from("attendance_records")
@@ -1553,6 +2005,171 @@ const TimeControl = () => {
     }
   };
 
+  // Función para procesar la foto de salida con el ajuste de tiempo
+  const processExitWithAdjustment = async () => {
+    if (!pendingExitFile || !selectedWorkerId) {
+      setShowExitAdjustmentDialog(false);
+      setPendingExitFile(null);
+      setPendingExitLocation(null);
+      return;
+    }
+
+    setShowExitAdjustmentDialog(false);
+    setUploadingExit(true);
+
+    try {
+      // Validar que selectedWorkerId todavía sea válido
+      if (!selectedWorkerId.trim()) {
+        throw new Error("ID de trabajador inválido");
+      }
+
+      // Verificar sesión
+      try {
+        const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError && !sessionError.message?.includes("Refresh Token")) {
+          toast({
+            title: "Sesión expirada",
+            description: "Por favor, inicia sesión nuevamente.",
+            variant: "destructive",
+          });
+          setTimeout(() => { window.location.href = "/auth"; }, 100);
+          return;
+        }
+      } catch (sessionCheckError) {
+        console.warn("Error al verificar sesión, continuando:", sessionCheckError);
+      }
+
+      const photoUrl = await uploadPhoto(pendingExitFile, "exit");
+      const today = toDateKey(new Date());
+      const now = new Date().toISOString();
+
+      // Usar la ubicación capturada antes de abrir la cámara
+      const location = pendingExitLocation || { latitude: null, longitude: null };
+      if (location.latitude && location.longitude) {
+        console.log("Usando ubicación capturada para salida:", location.latitude, location.longitude);
+      }
+
+      // Calcular ajuste basado en tiempo de almuerzo
+      // Almuerzo normal = 60 minutos. Si tomó menos, la diferencia son minutos extra trabajados.
+      let adjustmentMins = 0;
+      let adjustmentNoteText: string | null = null;
+      
+      if (!lunchWasNormal) {
+        const lunchTaken = parseInt(lunchMinutesTaken, 10) || 60;
+        adjustmentMins = 60 - lunchTaken; // Diferencia: minutos extra trabajados
+        if (adjustmentMins !== 0) {
+          adjustmentNoteText = `Almuerzo: ${lunchTaken} min (${adjustmentMins > 0 ? '+' : ''}${adjustmentMins} min)`;
+        }
+      }
+
+      // Check if record exists for today
+      const { data: existingRecords, error: queryError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("worker_id", selectedWorkerId)
+        .eq("date", today);
+
+      if (queryError && queryError.code !== "PGRST116") {
+        throw queryError;
+      }
+
+      const existingRecord = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+      if (existingRecord) {
+        // Update existing record
+        const updateData: any = {
+          exit_time: now,
+          exit_photo_url: photoUrl,
+          exit_latitude: location?.latitude ?? null,
+          exit_longitude: location?.longitude ?? null,
+          entry_time: existingRecord.entry_time || null,
+          entry_photo_url: existingRecord.entry_photo_url || null,
+          entry_latitude: existingRecord.entry_latitude || null,
+          entry_longitude: existingRecord.entry_longitude || null,
+          time_adjustment_minutes: adjustmentMins,
+          adjustment_note: adjustmentNoteText,
+        };
+
+        const { data: updatedData, error } = await supabase
+          .from("attendance_records")
+          .update(updateData)
+          .eq("id", existingRecord.id)
+          .select();
+
+        if (error) throw error;
+
+        if (updatedData && updatedData[0]) {
+          const updatedRecord = updatedData[0] as unknown as AttendanceRecord;
+          updateAttendanceRecord(updatedRecord);
+        }
+      } else {
+        // Create new record (shouldn't happen for exit, but just in case)
+        const newRecord = {
+          worker_id: selectedWorkerId,
+          date: today,
+          entry_time: null,
+          exit_time: now,
+          entry_photo_url: null,
+          exit_photo_url: photoUrl,
+          entry_latitude: null,
+          entry_longitude: null,
+          exit_latitude: location?.latitude ?? null,
+          exit_longitude: location?.longitude ?? null,
+          time_adjustment_minutes: adjustmentMins,
+          adjustment_note: adjustmentNoteText,
+        };
+
+        const { data: insertedData, error } = await supabase
+          .from("attendance_records")
+          .insert(newRecord)
+          .select();
+
+        if (error) throw error;
+
+        if (insertedData && insertedData[0]) {
+          const newRecordData = insertedData[0] as unknown as AttendanceRecord;
+          updateAttendanceRecord(newRecordData);
+        }
+      }
+
+      // Show success message
+      let successMessage = "La salida fue registrada correctamente.";
+      if (adjustmentMins !== 0) {
+        const sign = adjustmentMins > 0 ? "+" : "";
+        successMessage += ` Ajuste: ${sign}${adjustmentMins} minutos.`;
+      }
+
+      toast({
+        title: "Salida registrada",
+        description: successMessage,
+      });
+
+    } catch (error: any) {
+      console.error("Error uploading exit photo:", error);
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo registrar la salida.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingExit(false);
+      setPendingExitFile(null);
+      setPendingExitLocation(null);
+      setLunchWasNormal(true);
+      setLunchMinutesTaken("60");
+      isUpdatingRecordsRef.current = false;
+    }
+  };
+
+  // Cancelar el registro de salida
+  const cancelExitUpload = () => {
+    setShowExitAdjustmentDialog(false);
+    setPendingExitFile(null);
+    setPendingExitLocation(null);
+    setLunchWasNormal(true);
+    setLunchMinutesTaken("60");
+  };
+
   const getWorkerName = (workerId: string) => {
     const worker = workers.find((w) => w.id === workerId);
     return worker ? `${worker.first_name} ${worker.last_name}` : "Desconocido";
@@ -1601,28 +2218,30 @@ const TimeControl = () => {
 
   // Get start and end dates based on filter - usar useMemo para evitar recalcular
   const dateRange = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     switch (dateFilter) {
-      case "week": {
-        const start = new Date(today);
-        const dayOfWeek = start.getDay();
-        const diff = start.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Monday
-        start.setDate(diff);
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6); // Sunday
-        return { start, end };
+      case "fortnight": {
+        // Quincena seleccionada: 1-15 o 16-fin de mes
+        if (selectedFortnight === 1) {
+          // Primera quincena: 1-15
+          const start = new Date(selectedYear, selectedMonth, 1);
+          const end = new Date(selectedYear, selectedMonth, 15);
+          return { start, end };
+        } else {
+          // Segunda quincena: 16-fin de mes
+          const start = new Date(selectedYear, selectedMonth, 16);
+          const end = new Date(selectedYear, selectedMonth + 1, 0); // Último día del mes
+          return { start, end };
+        }
       }
       case "month": {
-        const start = new Date(today.getFullYear(), today.getMonth(), 1);
-        const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        const start = new Date(selectedYear, selectedMonth, 1);
+        const end = new Date(selectedYear, selectedMonth + 1, 0);
         return { start, end };
       }
       default:
         return { start: null, end: null };
     }
-  }, [dateFilter]);
+  }, [dateFilter, selectedFortnight, selectedMonth, selectedYear]);
 
   // Eliminar duplicados antes de filtrar - usar función dedicada
   // Usar un useMemo con una función de comparación más estricta para evitar renders innecesarios
@@ -1674,18 +2293,18 @@ const TimeControl = () => {
     });
   }, [groupedByDate]);
 
-  // Calculate weekly summary
-  const weeklySummary = useMemo(() => {
+  // Calculate fortnight (quincena) summary
+  const fortnightSummary = useMemo(() => {
     const { start, end } = dateRange;
-    if (!start || !end || dateFilter !== "week") return null;
+    if (!start || !end || dateFilter !== "fortnight") return null;
 
-    const weekRecords = attendanceRecords.filter((record) => {
+    const fortnightRecords = attendanceRecords.filter((record) => {
       const recordDate = new Date(record.date);
       recordDate.setHours(0, 0, 0, 0);
       return recordDate >= start && recordDate <= end;
     });
 
-    const byWorker = weekRecords.reduce((acc, record) => {
+    const byWorker = fortnightRecords.reduce((acc, record) => {
       if (!acc[record.worker_id]) {
         acc[record.worker_id] = { entries: 0, exits: 0, days: new Set() };
       }
@@ -1702,18 +2321,18 @@ const TimeControl = () => {
     return byWorker;
   }, [attendanceRecords, dateRange, dateFilter]);
 
-  const summary = weeklySummary;
+  const summary = fortnightSummary;
 
-  // Get week days (Monday to Sunday) - usar useMemo para evitar recalcular
-  const weekDays = useMemo(() => {
-    const { start } = dateRange;
-    if (!start) return [];
+  // Get fortnight days (quincena: 1-15 or 16-end of month)
+  const fortnightDays = useMemo(() => {
+    const { start, end } = dateRange;
+    if (!start || !end) return [];
     
     const days = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(start);
-      date.setDate(start.getDate() + i);
-      days.push(date);
+    const current = new Date(start);
+    while (current <= end) {
+      days.push(new Date(current));
+      current.setDate(current.getDate() + 1);
     }
     return days;
   }, [dateRange]);
@@ -2466,7 +3085,12 @@ const TimeControl = () => {
                         src={todaysRecordForSelectedWorker.entry_photo_url}
                         alt="Foto de entrada"
                         className="w-12 h-12 object-cover rounded border cursor-pointer hover:opacity-80"
-                        onClick={() => setViewingPhoto(todaysRecordForSelectedWorker.entry_photo_url!)}
+                        onClick={() => setViewingPhoto({
+                          url: todaysRecordForSelectedWorker.entry_photo_url!,
+                          latitude: todaysRecordForSelectedWorker.entry_latitude,
+                          longitude: todaysRecordForSelectedWorker.entry_longitude,
+                          type: "entry"
+                        })}
                         title="Clic para ver foto completa"
                       />
                     )}
@@ -2482,7 +3106,12 @@ const TimeControl = () => {
                         src={todaysRecordForSelectedWorker.exit_photo_url}
                         alt="Foto de salida"
                         className="w-12 h-12 object-cover rounded border cursor-pointer hover:opacity-80"
-                        onClick={() => setViewingPhoto(todaysRecordForSelectedWorker.exit_photo_url!)}
+                        onClick={() => setViewingPhoto({
+                          url: todaysRecordForSelectedWorker.exit_photo_url!,
+                          latitude: todaysRecordForSelectedWorker.exit_latitude,
+                          longitude: todaysRecordForSelectedWorker.exit_longitude,
+                          type: "exit"
+                        })}
                         title="Clic para ver foto completa"
                       />
                     )}
@@ -2496,27 +3125,120 @@ const TimeControl = () => {
         {/* Attendance Records Table */}
         <Card className="p-6">
           {Object.entries(weeklyTotals).length > 0 && (
-            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(weeklyTotals).map(([workerId, totals]) => {
-                const worker = workers.find((w) => w.id === workerId);
-                return (
-                  <Card key={`totals-${workerId}`} className="p-4 bg-muted/70">
-                    <p className="text-sm text-muted-foreground">Semana actual</p>
-                    <h3 className="font-semibold text-lg">
-                      {worker ? `${worker.first_name} ${worker.last_name}` : "Trabajador"}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Horas normales: {formatMinutes(totals.normal)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Horas extras: {formatMinutes(totals.extra)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Total: {formatMinutes(totals.total)}
-                    </p>
-                  </Card>
-                );
-              })}
+            <div className="mb-6 space-y-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2 flex-wrap">
+                <Clock className="h-5 w-5 text-primary" />
+                <span>Resumen de Horas - Quincena {selectedFortnight}</span>
+                <span className="text-sm font-normal text-muted-foreground">
+                  ({dateRange.start ? `${dateRange.start.getDate()}` : ''} - {dateRange.end ? `${dateRange.end.getDate()} de ${dateRange.end.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}` : ''})
+                </span>
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {Object.entries(weeklyTotals).map(([workerId, totals]) => {
+                  const worker = workers.find((w) => w.id === workerId);
+                  const hasSalary = worker?.sueldo && worker.sueldo > 0;
+                  const formatMoney = (value: number) => 
+                    new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(value);
+                  
+                  // Calcular totales de extras
+                  const totalExtraMinutes = totals.extraDiurnaMinutes + totals.extraNocturnaMinutes + 
+                    totals.extraDiurnaDominicalMinutes + totals.extraNocturnaDominicalMinutes;
+                  
+                  return (
+                    <Card key={`totals-${workerId}`} className="p-4 bg-gradient-to-br from-muted/50 to-muted/30 border-l-4 border-l-primary">
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <h4 className="font-semibold text-lg">
+                            {worker ? `${worker.first_name} ${worker.last_name}` : "Trabajador"}
+                          </h4>
+                          {hasSalary && (
+                            <p className="text-xs text-muted-foreground">
+                              Sueldo: {formatMoney(worker.sueldo!)} | Hora ordinaria: {formatMoney(totals.hourlyRate)}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-medium">Total trabajado</p>
+                          <p className="text-xl font-bold text-primary">{formatMinutes(totals.totalMinutes)}</p>
+                        </div>
+                      </div>
+                      
+                      {/* Desglose de horas */}
+                      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                        <div className="p-2 bg-background/50 rounded">
+                          <p className="text-muted-foreground">Horas ordinarias</p>
+                          <p className="font-medium">{formatMinutes(totals.normalMinutes + totals.recargoNocturnoMinutes)}</p>
+                        </div>
+                        <div className="p-2 bg-background/50 rounded">
+                          <p className="text-muted-foreground">Total horas extra</p>
+                          <p className="font-medium text-amber-600">{formatMinutes(totalExtraMinutes)}</p>
+                        </div>
+                      </div>
+                      
+                      {/* Desglose detallado de extras */}
+                      {totalExtraMinutes > 0 && (
+                        <div className="space-y-1 text-xs border-t pt-2">
+                          <p className="font-medium text-muted-foreground mb-1">Desglose de extras y recargos:</p>
+                          {totals.extraDiurnaMinutes > 0 && (
+                            <div className="flex justify-between">
+                              <span>Extra diurna (+25%)</span>
+                              <span className="font-medium">{formatMinutes(totals.extraDiurnaMinutes)}</span>
+                            </div>
+                          )}
+                          {totals.extraNocturnaMinutes > 0 && (
+                            <div className="flex justify-between">
+                              <span>Extra nocturna (+75%)</span>
+                              <span className="font-medium">{formatMinutes(totals.extraNocturnaMinutes)}</span>
+                            </div>
+                          )}
+                          {totals.recargoNocturnoMinutes > 0 && (
+                            <div className="flex justify-between">
+                              <span>Recargo nocturno (+35%)</span>
+                              <span className="font-medium">{formatMinutes(totals.recargoNocturnoMinutes)}</span>
+                            </div>
+                          )}
+                          {totals.dominicalFestivoMinutes > 0 && (
+                            <div className="flex justify-between">
+                              <span>Dominical/Festivo (+80%)</span>
+                              <span className="font-medium">{formatMinutes(totals.dominicalFestivoMinutes)}</span>
+                            </div>
+                          )}
+                          {totals.extraDiurnaDominicalMinutes > 0 && (
+                            <div className="flex justify-between">
+                              <span>Extra diurna dom/fest (+115%)</span>
+                              <span className="font-medium">{formatMinutes(totals.extraDiurnaDominicalMinutes)}</span>
+                            </div>
+                          )}
+                          {totals.extraNocturnaDominicalMinutes > 0 && (
+                            <div className="flex justify-between">
+                              <span>Extra nocturna dom/fest (+165%)</span>
+                              <span className="font-medium">{formatMinutes(totals.extraNocturnaDominicalMinutes)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Valores en dinero */}
+                      {hasSalary && totalExtraMinutes > 0 && (
+                        <div className="mt-3 pt-3 border-t border-dashed">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-medium">Valor extras y recargos:</span>
+                            <span className="text-lg font-bold text-green-600">
+                              {formatMoney(totals.totalExtraValue)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {!hasSalary && totalExtraMinutes > 0 && (
+                        <p className="text-xs text-amber-600 mt-2 italic">
+                          ⚠️ Registra el sueldo del trabajador para ver el valor en dinero
+                        </p>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
             </div>
           )}
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
@@ -2540,9 +3262,9 @@ const TimeControl = () => {
               {/* Date Filter */}
               <Tabs value={dateFilter} onValueChange={(v) => setDateFilter(v as any)}>
                 <TabsList>
-                  <TabsTrigger value="week">
+                  <TabsTrigger value="fortnight">
                     <Calendar className="h-4 w-4 mr-2" />
-                    Semana
+                    Quincena
                   </TabsTrigger>
                   <TabsTrigger value="month">
                     <Calendar className="h-4 w-4 mr-2" />
@@ -2554,13 +3276,72 @@ const TimeControl = () => {
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
+              
+              {/* Selector de Quincena */}
+              {dateFilter === "fortnight" && (
+                <Select 
+                  value={selectedFortnight.toString()} 
+                  onValueChange={(v) => setSelectedFortnight(parseInt(v) as 1 | 2)}
+                >
+                  <SelectTrigger className="w-[140px]">
+                    <SelectValue placeholder="Quincena" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1-15 (Q1)</SelectItem>
+                    <SelectItem value="2">16-{new Date(selectedYear, selectedMonth + 1, 0).getDate()} (Q2)</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              
+              {/* Selector de Mes */}
+              {(dateFilter === "fortnight" || dateFilter === "month") && (
+                <Select 
+                  value={selectedMonth.toString()} 
+                  onValueChange={(v) => setSelectedMonth(parseInt(v))}
+                >
+                  <SelectTrigger className="w-[140px]">
+                    <SelectValue placeholder="Mes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Enero</SelectItem>
+                    <SelectItem value="1">Febrero</SelectItem>
+                    <SelectItem value="2">Marzo</SelectItem>
+                    <SelectItem value="3">Abril</SelectItem>
+                    <SelectItem value="4">Mayo</SelectItem>
+                    <SelectItem value="5">Junio</SelectItem>
+                    <SelectItem value="6">Julio</SelectItem>
+                    <SelectItem value="7">Agosto</SelectItem>
+                    <SelectItem value="8">Septiembre</SelectItem>
+                    <SelectItem value="9">Octubre</SelectItem>
+                    <SelectItem value="10">Noviembre</SelectItem>
+                    <SelectItem value="11">Diciembre</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              
+              {/* Selector de Año */}
+              {(dateFilter === "fortnight" || dateFilter === "month") && (
+                <Select 
+                  value={selectedYear.toString()} 
+                  onValueChange={(v) => setSelectedYear(parseInt(v))}
+                >
+                  <SelectTrigger className="w-[100px]">
+                    <SelectValue placeholder="Año" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="2024">2024</SelectItem>
+                    <SelectItem value="2025">2025</SelectItem>
+                    <SelectItem value="2026">2026</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
 
-          {/* Weekly Summary */}
-          {dateFilter === "week" && summary && Object.keys(summary).length > 0 && (
+          {/* Fortnight Summary */}
+          {dateFilter === "fortnight" && summary && Object.keys(summary).length > 0 && (
             <Card className="p-4 mb-6 bg-muted/50">
-              <h3 className="font-semibold mb-3">Resumen Semanal</h3>
+              <h3 className="font-semibold mb-3">Resumen de la Quincena</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Object.entries(summary).map(([workerId, data]) => (
                   <div key={workerId} className="p-3 bg-background rounded-lg">
@@ -2579,8 +3360,8 @@ const TimeControl = () => {
             </Card>
           )}
 
-          {dateFilter === "week" ? (
-            // Vista semanal tipo calendario
+          {dateFilter === "fortnight" ? (
+            // Vista quincenal tipo calendario
             <div className="overflow-x-auto">
               <div className="min-w-full">
                 <Table>
@@ -2589,7 +3370,7 @@ const TimeControl = () => {
                       <TableHead className="sticky left-0 z-10 bg-background min-w-[150px]">
                         Trabajador
                       </TableHead>
-                      {weekDays.map((day) => (
+                      {fortnightDays.map((day) => (
                       <TableHead
                         key={day.toISOString()}
                         className={`text-center min-w-[120px] ${
@@ -2621,7 +3402,7 @@ const TimeControl = () => {
                         <TableCell className="sticky left-0 z-10 bg-background font-medium">
                           {worker.first_name} {worker.last_name}
                         </TableCell>
-                        {weekDays.map((day) => {
+                        {fortnightDays.map((day) => {
                           const record = getRecordForWorkerAndDate(worker.id, day);
                           return (
                             <TableCell key={day.toISOString()} className="p-2">
@@ -2630,7 +3411,12 @@ const TimeControl = () => {
                                 <div className="flex items-center justify-center p-2 rounded border border-green-200 bg-green-50/50 min-h-[28px]">
                                   {record?.entry_time ? (
                                     <button
-                                      onClick={() => record.entry_photo_url && setViewingPhoto(record.entry_photo_url)}
+                                      onClick={() => record.entry_photo_url && setViewingPhoto({
+                                        url: record.entry_photo_url,
+                                        latitude: record.entry_latitude,
+                                        longitude: record.entry_longitude,
+                                        type: "entry"
+                                      })}
                                       className={`text-sm font-medium ${
                                         record.entry_photo_url
                                           ? "text-green-700 hover:text-green-900 hover:underline cursor-pointer"
@@ -2648,7 +3434,12 @@ const TimeControl = () => {
                                 <div className="flex items-center justify-center p-2 rounded border border-red-200 bg-red-50/50 min-h-[28px]">
                                   {record?.exit_time ? (
                                     <button
-                                      onClick={() => record.exit_photo_url && setViewingPhoto(record.exit_photo_url)}
+                                      onClick={() => record.exit_photo_url && setViewingPhoto({
+                                        url: record.exit_photo_url,
+                                        latitude: record.exit_latitude,
+                                        longitude: record.exit_longitude,
+                                        type: "exit"
+                                      })}
                                       className={`text-sm font-medium ${
                                         record.exit_photo_url
                                           ? "text-red-700 hover:text-red-900 hover:underline cursor-pointer"
@@ -2660,6 +3451,19 @@ const TimeControl = () => {
                                     </button>
                                   ) : (
                                     <span className="text-xs text-muted-foreground">-</span>
+                                  )}
+                                  {/* Mostrar ajuste de tiempo si existe */}
+                                  {record?.time_adjustment_minutes != null && record.time_adjustment_minutes !== 0 && (
+                                    <span 
+                                      className={`text-[10px] font-medium px-1 rounded ${
+                                        record.time_adjustment_minutes > 0 
+                                          ? 'bg-green-100 text-green-700' 
+                                          : 'bg-amber-100 text-amber-700'
+                                      }`}
+                                      title={record.adjustment_note || "Ajuste de tiempo"}
+                                    >
+                                      {record.time_adjustment_minutes > 0 ? '+' : ''}{record.time_adjustment_minutes}m
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -2702,6 +3506,7 @@ const TimeControl = () => {
                             <TableHead>Trabajador</TableHead>
                             <TableHead>Hora Entrada</TableHead>
                             <TableHead>Hora Salida</TableHead>
+                            <TableHead>Ajuste</TableHead>
                             <TableHead>Fotos</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -2714,7 +3519,12 @@ const TimeControl = () => {
                               <TableCell>
                                 {record.entry_time ? (
                                   <button
-                                    onClick={() => record.entry_photo_url && setViewingPhoto(record.entry_photo_url)}
+                                    onClick={() => record.entry_photo_url && setViewingPhoto({
+                                      url: record.entry_photo_url,
+                                      latitude: record.entry_latitude,
+                                      longitude: record.entry_longitude,
+                                      type: "entry"
+                                    })}
                                     className={`text-green-600 font-medium ${
                                       record.entry_photo_url
                                         ? "hover:text-green-800 hover:underline cursor-pointer"
@@ -2729,18 +3539,60 @@ const TimeControl = () => {
                                 )}
                               </TableCell>
                               <TableCell>
-                                {record.exit_time ? (
-                                  <button
-                                    onClick={() => record.exit_photo_url && setViewingPhoto(record.exit_photo_url)}
-                                    className={`text-red-600 font-medium ${
-                                      record.exit_photo_url
-                                        ? "hover:text-red-800 hover:underline cursor-pointer"
-                                        : ""
-                                    }`}
-                                    title={record.exit_photo_url ? "Clic para ver foto" : ""}
-                                  >
-                                    {formatTime(record.exit_time)}
-                                  </button>
+                                <div className="flex items-center gap-2">
+                                  {record.exit_time ? (
+                                    <button
+                                      onClick={() => record.exit_photo_url && setViewingPhoto({
+                                        url: record.exit_photo_url,
+                                        latitude: record.exit_latitude,
+                                        longitude: record.exit_longitude,
+                                        type: "exit"
+                                      })}
+                                      className={`text-red-600 font-medium ${
+                                        record.exit_photo_url
+                                          ? "hover:text-red-800 hover:underline cursor-pointer"
+                                          : ""
+                                      }`}
+                                      title={record.exit_photo_url ? "Clic para ver foto" : ""}
+                                    >
+                                      {formatTime(record.exit_time)}
+                                    </button>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                  {/* Indicador de ajuste */}
+                                  {record?.time_adjustment_minutes != null && record.time_adjustment_minutes !== 0 && (
+                                    <span 
+                                      className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                                        record.time_adjustment_minutes > 0 
+                                          ? 'bg-green-100 text-green-700' 
+                                          : 'bg-amber-100 text-amber-700'
+                                      }`}
+                                      title={record.adjustment_note || "Ajuste de tiempo"}
+                                    >
+                                      {record.time_adjustment_minutes > 0 ? '+' : ''}{record.time_adjustment_minutes}min
+                                    </span>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {record?.time_adjustment_minutes != null && record.time_adjustment_minutes !== 0 ? (
+                                  <div className="flex flex-col">
+                                    <span 
+                                      className={`text-sm font-medium ${
+                                        record.time_adjustment_minutes > 0 
+                                          ? 'text-green-600' 
+                                          : 'text-amber-600'
+                                      }`}
+                                    >
+                                      {record.time_adjustment_minutes > 0 ? '+' : ''}{record.time_adjustment_minutes} min
+                                    </span>
+                                    {record.adjustment_note && (
+                                      <span className="text-xs text-muted-foreground truncate max-w-[150px]" title={record.adjustment_note}>
+                                        {record.adjustment_note}
+                                      </span>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className="text-muted-foreground">-</span>
                                 )}
@@ -2751,7 +3603,12 @@ const TimeControl = () => {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      onClick={() => setViewingPhoto(record.entry_photo_url!)}
+                                      onClick={() => setViewingPhoto({
+                                        url: record.entry_photo_url!,
+                                        latitude: record.entry_latitude,
+                                        longitude: record.entry_longitude,
+                                        type: "entry"
+                                      })}
                                       title="Ver foto de entrada"
                                     >
                                       <Eye className="h-4 w-4" />
@@ -2761,7 +3618,12 @@ const TimeControl = () => {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      onClick={() => setViewingPhoto(record.exit_photo_url!)}
+                                      onClick={() => setViewingPhoto({
+                                        url: record.exit_photo_url!,
+                                        latitude: record.exit_latitude,
+                                        longitude: record.exit_longitude,
+                                        type: "exit"
+                                      })}
                                       title="Ver foto de salida"
                                     >
                                       <Eye className="h-4 w-4" />
@@ -2784,20 +3646,196 @@ const TimeControl = () => {
           )}
         </Card>
 
+        {/* Exit Time Adjustment Dialog - Almuerzo */}
+        <Dialog open={showExitAdjustmentDialog} onOpenChange={(open) => !open && cancelExitUpload()}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-primary" />
+                Registrar Salida
+              </DialogTitle>
+              <DialogDescription>
+                Indica cómo fue el tiempo de almuerzo hoy.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              {/* Opción de almuerzo normal */}
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">¿Tomó la hora de almuerzo completa?</Label>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLunchWasNormal(true);
+                      setLunchMinutesTaken("60");
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      lunchWasNormal 
+                        ? 'border-primary bg-primary/10 text-primary' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">✅</div>
+                    <div className="font-medium">Sí</div>
+                    <div className="text-xs text-muted-foreground">1 hora normal</div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLunchWasNormal(false);
+                      setLunchMinutesTaken("30");
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      !lunchWasNormal 
+                        ? 'border-amber-500 bg-amber-50 text-amber-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">⏱️</div>
+                    <div className="font-medium">No</div>
+                    <div className="text-xs text-muted-foreground">Tiempo diferente</div>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Input de minutos si no fue normal */}
+              {!lunchWasNormal && (
+                <div className="space-y-2 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                  <Label htmlFor="lunch-minutes" className="text-sm font-medium text-amber-800">
+                    ¿Cuántos minutos de almuerzo tomó?
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="lunch-minutes"
+                      type="number"
+                      min="0"
+                      max="60"
+                      value={lunchMinutesTaken}
+                      onChange={(e) => setLunchMinutesTaken(e.target.value)}
+                      className="w-24 text-center text-lg font-medium"
+                    />
+                    <span className="text-sm text-amber-700">minutos</span>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    {[0, 15, 30, 45].map((mins) => (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => setLunchMinutesTaken(mins.toString())}
+                        className={`px-3 py-1 text-xs rounded-full transition-all ${
+                          lunchMinutesTaken === mins.toString()
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                        }`}
+                      >
+                        {mins} min
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Resumen del ajuste */}
+              {!lunchWasNormal && (() => {
+                const lunchTaken = parseInt(lunchMinutesTaken) || 60;
+                const extraMinutes = 60 - lunchTaken;
+                return (
+                  <div className={`p-3 rounded-lg ${extraMinutes >= 0 ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                    <p className={`text-sm font-medium ${extraMinutes >= 0 ? 'text-green-800' : 'text-amber-800'}`}>
+                      {extraMinutes > 0 && (
+                        <span>✅ Se sumarán <strong>{extraMinutes} minutos</strong> extra por almuerzo reducido</span>
+                      )}
+                      {extraMinutes < 0 && (
+                        <span>⚠️ Se restarán <strong>{Math.abs(extraMinutes)} minutos</strong> por almuerzo extendido</span>
+                      )}
+                      {extraMinutes === 0 && (
+                        <span>Sin ajuste de tiempo</span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+            
+            <DialogFooter className="flex gap-2">
+              <Button variant="outline" onClick={cancelExitUpload}>
+                Cancelar
+              </Button>
+              <Button onClick={processExitWithAdjustment} disabled={uploadingExit}>
+                {uploadingExit ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Registrando...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mr-2 h-4 w-4" />
+                    Registrar Salida
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Photo Viewer Dialog */}
         {viewingPhoto && (
           <Dialog open={!!viewingPhoto} onOpenChange={() => setViewingPhoto(null)}>
             <DialogContent className="max-w-4xl">
               <DialogHeader>
-                <DialogTitle>Foto</DialogTitle>
+                <DialogTitle>
+                  Foto de {viewingPhoto.type === "entry" ? "Entrada" : "Salida"}
+                </DialogTitle>
               </DialogHeader>
               <div className="relative">
                 <img
-                  src={viewingPhoto}
+                  src={viewingPhoto.url}
                   alt="Foto de asistencia"
                   className="w-full h-auto rounded-lg"
                 />
               </div>
+              
+              {/* Location Info */}
+              <div className="mt-4 p-4 bg-muted/50 rounded-lg">
+                <h4 className="font-semibold mb-2 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+                    <circle cx="12" cy="10" r="3"/>
+                  </svg>
+                  Ubicación de la foto
+                </h4>
+                {viewingPhoto.latitude && viewingPhoto.longitude ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Coordenadas: {viewingPhoto.latitude.toFixed(6)}, {viewingPhoto.longitude.toFixed(6)}
+                    </p>
+                    <a
+                      href={getGoogleMapsUrl(viewingPhoto.latitude, viewingPhoto.longitude)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" x2="21" y1="14" y2="3"/>
+                      </svg>
+                      Ver en Google Maps
+                    </a>
+                  </div>
+                ) : (
+                  <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-md">
+                    ⚠️ Esta foto no tiene ubicación registrada. Las fotos nuevas incluirán automáticamente la ubicación GPS.
+                  </p>
+                )}
+              </div>
+              
               <DialogFooter>
                 <Button onClick={() => setViewingPhoto(null)}>Cerrar</Button>
               </DialogFooter>

@@ -915,7 +915,11 @@ const MaintenanceReportWizard = () => {
         }
       }
 
-      const stepIndex = Math.max((data.current_step ?? 1) - 1, 0);
+      // Asegurar que el índice del paso esté dentro del rango válido de steps
+      // Esto evita errores cuando se editan informes creados con versiones anteriores del wizard
+      const savedStepIndex = Math.max((data.current_step ?? 1) - 1, 0);
+      const maxValidStepIndex = steps.length - 1;
+      const stepIndex = Math.min(savedStepIndex, maxValidStepIndex);
       setReportId(data.id);
       
       // FORZAR normalización de nombres antes de establecer el estado
@@ -1451,6 +1455,10 @@ const MaintenanceReportWizard = () => {
 
   const progressValue = ((currentStepIndex + 1) / totalSteps) * 100;
   const currentStep = steps[currentStepIndex];
+  
+  // Validación defensiva: si currentStep es undefined (por ejemplo, si currentStepIndex está fuera de rango)
+  // usar el primer paso como fallback para evitar errores
+  const safeCurrentStep = currentStep ?? steps[0] ?? { key: "intro", title: "Informe de Mantenimiento" };
 
   const isLastStep = currentStepIndex === totalSteps - 1;
   const isFirstStep = currentStepIndex === 0;
@@ -1889,7 +1897,7 @@ const MaintenanceReportWizard = () => {
   };
 
   const renderStepContent = () => {
-    switch (currentStep.key) {
+    switch (safeCurrentStep.key) {
       case "intro":
         return (
           <div className="space-y-4">
@@ -2310,18 +2318,18 @@ const MaintenanceReportWizard = () => {
         );
       default:
         try {
-          if (currentStep.specialStep === "trolley-group") {
+          if (safeCurrentStep.specialStep === "trolley-group") {
             return renderTrolleyGroup();
           }
-          if (currentStep.specialStep === "carros-testeros") {
+          if (safeCurrentStep.specialStep === "carros-testeros") {
             return renderCarrosTesteros();
           }
-          if (currentStep.checklistIndex !== undefined) {
-            return renderChecklistStep(currentStep.checklistIndex);
+          if (safeCurrentStep.checklistIndex !== undefined) {
+            return renderChecklistStep(safeCurrentStep.checklistIndex);
           }
           return null;
         } catch (error) {
-          console.error("Error renderizando paso:", error, currentStep);
+          console.error("Error renderizando paso:", error, safeCurrentStep);
           return (
             <div className="space-y-4">
               <p className="text-destructive">
@@ -2383,9 +2391,9 @@ const MaintenanceReportWizard = () => {
         <Card className="flex-1 p-6 md:p-8">
           <div className="space-y-6">
             <div>
-              <h2 className="text-2xl font-semibold">{currentStep.title}</h2>
-              {currentStep.subtitle && (
-                <p className="text-muted-foreground mt-2">{currentStep.subtitle}</p>
+              <h2 className="text-2xl font-semibold">{safeCurrentStep.title}</h2>
+              {safeCurrentStep.subtitle && (
+                <p className="text-muted-foreground mt-2">{safeCurrentStep.subtitle}</p>
               )}
             </div>
             {renderStepContent()}

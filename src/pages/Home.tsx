@@ -80,7 +80,6 @@ const Home = () => {
         path: "/time-control",
         color: "from-blue-500/20 to-blue-500/5",
         moduleKey: MODULES.TIME_CONTROL,
-        disabled: true, // TEMPORAL: Bloqueado para lanzamiento
       });
     }
     
