@@ -942,59 +942,22 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             initialState: typeof dataObj.initialState === 'string' ? dataObj.initialState : defaultForm.initialState,
             recommendations: typeof dataObj.recommendations === 'string' ? dataObj.recommendations : defaultForm.recommendations,
             checklist: (() => {
-              // Asegurar que el checklist tenga todos los items necesarios
-              let checklist = Array.isArray(dataObj.checklist) && dataObj.checklist.length > 0 
-              ? dataObj.checklist 
-                : defaultForm.checklist;
-              
-              // Completar el checklist si faltan items
-              const expectedItems = getChecklistItems(equipmentType);
-              console.log(`[ElevatorMaintenanceReportWizard] Verificando checklist:`, {
-                currentLength: checklist.length,
-                expectedLength: expectedItems.length,
-              });
-              
-              // Filtrar items que ya no están en la lista (como "Motorreductor" y "Carros testeros" que ahora son especiales)
-              checklist = checklist.filter(item => 
-                !['Motorreductor', 'Carros testeros'].includes(item.name)
-              );
-              
-              if (checklist.length < expectedItems.length) {
-                const missingItems: ChecklistEntry[] = [];
-                for (let i = checklist.length; i < expectedItems.length; i++) {
-                  missingItems.push({
-                    id: crypto.randomUUID(),
-                    name: expectedItems[i],
-                    status: null,
-                    observation: "",
-                  });
-                }
-                checklist = [...checklist, ...missingItems];
-                console.log(`[ElevatorMaintenanceReportWizard] Completado checklist: agregados ${missingItems.length} items faltantes:`, missingItems.map(i => i.name));
-              } else {
-                // Verificar que todos los items esperados estén presentes
-                const checklistItemNames = checklist.map(item => item.name);
-                const missingItemNames: string[] = [];
-                expectedItems.forEach((expectedName, expectedIndex) => {
-                  if (!checklistItemNames.includes(expectedName)) {
-                    missingItemNames.push(expectedName);
-                    checklist.splice(expectedIndex, 0, {
-                      id: crypto.randomUUID(),
-                      name: expectedName,
-                      status: null,
-                      observation: "",
-                    });
-                  }
-                });
-                if (missingItemNames.length > 0) {
-                  console.log(`[ElevatorMaintenanceReportWizard] Agregados items faltantes en posiciones correctas:`, missingItemNames);
-                }
+              // IMPORTANTE: Preservar el checklist guardado TAL CUAL para no perder datos
+              // Solo usar el checklist por defecto si no hay datos guardados
+              if (Array.isArray(dataObj.checklist) && dataObj.checklist.length > 0) {
+                console.log(`[ElevatorMaintenanceReportWizard] Usando checklist guardado con ${dataObj.checklist.length} items`);
+                return dataObj.checklist;
               }
               
-              return checklist;
+              // Si no hay checklist guardado, usar el por defecto según el tipo de equipo
+              const expectedItems = getChecklistItems(equipmentType);
+              console.log(`[ElevatorMaintenanceReportWizard] No hay checklist guardado, creando uno nuevo con ${expectedItems.length} items`);
+              return buildDefaultChecklist(equipmentType);
             })(),
-            trolleyData: (typeof dataObj.trolleyData === 'object' && dataObj.trolleyData !== null)
-              ? {
+            trolleyData: (() => {
+              // Intentar cargar trolleyData (formato nuevo)
+              if (typeof dataObj.trolleyData === 'object' && dataObj.trolleyData !== null) {
+                return {
                   mainStatus: (dataObj.trolleyData.mainStatus === 'good' || dataObj.trolleyData.mainStatus === 'bad' || dataObj.trolleyData.mainStatus === 'na')
                     ? dataObj.trolleyData.mainStatus
                     : null,
@@ -1002,8 +965,29 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                     ? dataObj.trolleyData.subItems 
                     : buildDefaultTrolley().subItems,
                   observation: typeof dataObj.trolleyData.observation === 'string' ? dataObj.trolleyData.observation : '',
-                }
-              : buildDefaultTrolley(),
+                };
+              }
+              // Intentar cargar trolleyGroup (formato antiguo del MaintenanceReportWizard)
+              if (typeof dataObj.trolleyGroup === 'object' && dataObj.trolleyGroup !== null) {
+                console.log('[ElevatorMaintenanceReportWizard] Convirtiendo trolleyGroup (formato antiguo) a trolleyData');
+                const oldGroup = dataObj.trolleyGroup;
+                // Determinar el mainStatus basado en el estado del trolley principal
+                const mainStatus = oldGroup.trolley?.status ?? null;
+                // Convertir los sub-items del formato antiguo al nuevo
+                const subItems = [
+                  { id: crypto.randomUUID(), name: "Motor Trolley", status: oldGroup.motorTrolley?.status ?? null, observation: "" },
+                  { id: crypto.randomUUID(), name: "Freno motor Trolley", status: oldGroup.frenoMotorTrolley?.status ?? null, observation: "" },
+                  { id: crypto.randomUUID(), name: "Guías de Trolley", status: oldGroup.guiasTrolley?.status ?? null, observation: "" },
+                  { id: crypto.randomUUID(), name: "Ruedas de Trolley", status: oldGroup.ruedasTrolley?.status ?? null, observation: "" },
+                ];
+                return {
+                  mainStatus,
+                  subItems,
+                  observation: oldGroup.observation ?? '',
+                };
+              }
+              return buildDefaultTrolley();
+            })(),
             carrosTesteros: (typeof dataObj.carrosTesteros === 'object' && dataObj.carrosTesteros !== null)
               ? {
                   mainStatus: (dataObj.carrosTesteros.mainStatus === 'good' || dataObj.carrosTesteros.mainStatus === 'bad' || dataObj.carrosTesteros.mainStatus === 'na')
@@ -1015,6 +999,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                   observation: typeof dataObj.carrosTesteros.observation === 'string' ? dataObj.carrosTesteros.observation : '',
                 }
               : buildDefaultCarrosTesteros(),
+            procedimientos: Array.isArray(dataObj.procedimientos) ? dataObj.procedimientos : [],
             tests: typeof dataObj.tests === 'object' && dataObj.tests !== null 
               ? {
                   voltage: typeof dataObj.tests.voltage === 'string' ? dataObj.tests.voltage : defaultForm.tests.voltage,

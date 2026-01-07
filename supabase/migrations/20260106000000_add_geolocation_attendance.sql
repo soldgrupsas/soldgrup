@@ -13,3 +13,4 @@ COMMENT ON COLUMN public.attendance_records.entry_longitude IS 'GPS longitude wh
 COMMENT ON COLUMN public.attendance_records.exit_latitude IS 'GPS latitude where exit photo was taken';
 COMMENT ON COLUMN public.attendance_records.exit_longitude IS 'GPS longitude where exit photo was taken';
 
+

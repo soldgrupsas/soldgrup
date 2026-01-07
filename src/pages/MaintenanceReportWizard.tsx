@@ -294,43 +294,121 @@ const defaultForm: MaintenanceReportForm = {
   photos: [],
 };
 
-const steps: StepDefinition[] = [
-  {
-    key: "intro",
-    title: "Procedimiento de llenado de Informe de Mantenimiento",
-    subtitle:
-      "A continuación, podrá llenar paso a paso su informe de mantenimiento. Asegúrese de completar todos los campos.",
-  },
-  { key: "basicInfo", title: "Información Básica" },
-  { key: "initialState", title: "Estado Inicial" },
-  { key: "checklist-0", title: "Lista de Chequeo", subtitle: "1. Motor de elevación", checklistIndex: 0 },
-  { key: "checklist-1", title: "Lista de Chequeo", subtitle: "2. Freno motor de elevación", checklistIndex: 1 },
-  { key: "trolley-group", title: "Lista de Chequeo", subtitle: "3. Trolley y componentes", specialStep: "trolley-group" },
-  { key: "checklist-2", title: "Lista de Chequeo", subtitle: "4. Estructura", checklistIndex: 2 },
-  { key: "checklist-3", title: "Lista de Chequeo", subtitle: "5. Tornillo", checklistIndex: 3 },
-  { key: "checklist-4", title: "Lista de Chequeo", subtitle: "6. Gancho", checklistIndex: 4 },
-  { key: "checklist-5", title: "Lista de Chequeo", subtitle: "7. Cadena", checklistIndex: 5 },
-  { key: "checklist-6", title: "Lista de Chequeo", subtitle: "8. Guaya", checklistIndex: 6 },
-  { key: "checklist-7", title: "Lista de Chequeo", subtitle: "9. Gabinete eléctrico", checklistIndex: 7 },
-  { key: "checklist-8", title: "Lista de Chequeo", subtitle: "10. Aceite", checklistIndex: 8 },
-  { key: "checklist-9", title: "Lista de Chequeo", subtitle: "11. Sistema de cables planos", checklistIndex: 9 },
-  { key: "checklist-10", title: "Lista de Chequeo", subtitle: "12. Topes mecánicos", checklistIndex: 10 },
-  { key: "checklist-11", title: "Lista de Chequeo", subtitle: "13. Botonera", checklistIndex: 11 },
-  { key: "checklist-12", title: "Lista de Chequeo", subtitle: "14. Pines de seguridad", checklistIndex: 12 },
-  { key: "checklist-13", title: "Lista de Chequeo", subtitle: "15. Polipasto", checklistIndex: 13 },
-  { key: "checklist-14", title: "Lista de Chequeo", subtitle: "16. Límite de elevación", checklistIndex: 14 },
-  { key: "checklist-15", title: "Lista de Chequeo", subtitle: "17. Limitador de carga", checklistIndex: 15 },
-  { key: "checklist-16", title: "Lista de Chequeo", subtitle: "18. Sistema de alimentación de línea blindada", checklistIndex: 16 },
-  { key: "checklist-17", title: "Lista de Chequeo", subtitle: "19. Carcazas", checklistIndex: 17 },
-  { key: "carros-testeros", title: "Lista de Chequeo", subtitle: "20. Carros testeros", specialStep: "carros-testeros" },
-  { key: "checklist-18", title: "Lista de Chequeo", subtitle: "21. Motorreductor", checklistIndex: 18 },
-  { key: "recommendations", title: "Recomendaciones" },
-  { key: "tests", title: "Pruebas sin carga" },
-  { key: "photos", title: "Soporte Fotográfico" },
-  { key: "finish", title: "Fin del Informe de Mantenimiento" },
-];
+// Opciones para generar steps
+type BuildStepsOptions = {
+  includeTrolley?: boolean;
+  includeCarrosTesteros?: boolean;
+};
 
-const totalSteps = steps.length;
+// Función para generar steps dinámicamente basándose en el checklist
+const buildStepsFromChecklist = (
+  checklist: ChecklistEntry[], 
+  options: BuildStepsOptions = { includeTrolley: true, includeCarrosTesteros: true }
+): StepDefinition[] => {
+  const { includeTrolley = true, includeCarrosTesteros = true } = options;
+  
+  const baseSteps: StepDefinition[] = [
+    {
+      key: "intro",
+      title: "Procedimiento de llenado de Informe de Mantenimiento",
+      subtitle:
+        "A continuación, podrá llenar paso a paso su informe de mantenimiento. Asegúrese de completar todos los campos.",
+    },
+    { key: "basicInfo", title: "Información Básica" },
+    { key: "initialState", title: "Estado Inicial" },
+  ];
+
+  // Buscar posiciones de items especiales para insertar pasos de trolley y carros testeros
+  const frenoMotorIndex = checklist.findIndex(item => 
+    item.name.toLowerCase().includes("freno motor") && 
+    item.name.toLowerCase().includes("elevación")
+  );
+  const carcazasIndex = checklist.findIndex(item => 
+    item.name.toLowerCase().includes("carcaza")
+  );
+  const motorreductorIndex = checklist.findIndex(item => 
+    item.name.toLowerCase().includes("motorreductor")
+  );
+
+  // Determinar dónde insertar trolley (después de freno motor de elevación, o en posición 1)
+  const insertTrolleyAfterIndex = frenoMotorIndex >= 0 ? frenoMotorIndex : 1;
+  
+  // Determinar dónde insertar carros testeros (después de carcazas, antes de motorreductor, o cerca del final)
+  let insertCarrosAfterIndex = -1;
+  if (carcazasIndex >= 0) {
+    insertCarrosAfterIndex = carcazasIndex;
+  } else if (motorreductorIndex >= 0 && motorreductorIndex > 0) {
+    insertCarrosAfterIndex = motorreductorIndex - 1;
+  } else if (checklist.length > 15) {
+    insertCarrosAfterIndex = checklist.length - 2;
+  }
+
+  // Generar steps para cada item del checklist
+  const checklistSteps: StepDefinition[] = [];
+  let displayNumber = 1;
+  let trolleyInserted = false;
+  let carrosInserted = false;
+
+  for (let i = 0; i < checklist.length; i++) {
+    const item = checklist[i];
+    
+    // Agregar el item del checklist
+    checklistSteps.push({
+      key: `checklist-${i}`,
+      title: "Lista de Chequeo",
+      subtitle: `${displayNumber}. ${item.name}`,
+      checklistIndex: i,
+    });
+    displayNumber++;
+
+    // Insertar paso especial de Trolley SOLO si el informe tiene trolleyGroup
+    if (includeTrolley && !trolleyInserted && i === insertTrolleyAfterIndex) {
+      checklistSteps.push({
+        key: "trolley-group",
+        title: "Lista de Chequeo",
+        subtitle: `${displayNumber}. Trolley y componentes`,
+        specialStep: "trolley-group",
+      });
+      displayNumber++;
+      trolleyInserted = true;
+    }
+
+    // Insertar paso especial de Carros testeros SOLO si el informe tiene carrosTesteros
+    if (includeCarrosTesteros && !carrosInserted && insertCarrosAfterIndex >= 0 && i === insertCarrosAfterIndex) {
+      checklistSteps.push({
+        key: "carros-testeros",
+        title: "Lista de Chequeo",
+        subtitle: `${displayNumber}. Carros testeros`,
+        specialStep: "carros-testeros",
+      });
+      displayNumber++;
+      carrosInserted = true;
+    }
+  }
+
+  // Si no se insertó carros testeros y debía incluirse, agregarlo al final
+  if (includeCarrosTesteros && !carrosInserted) {
+    checklistSteps.push({
+      key: "carros-testeros",
+      title: "Lista de Chequeo",
+      subtitle: `${displayNumber}. Carros testeros`,
+      specialStep: "carros-testeros",
+    });
+    displayNumber++;
+  }
+
+  const endSteps: StepDefinition[] = [
+    { key: "recommendations", title: "Recomendaciones" },
+    { key: "tests", title: "Pruebas sin carga" },
+    { key: "photos", title: "Soporte Fotográfico" },
+    { key: "finish", title: "Fin del Informe de Mantenimiento" },
+  ];
+
+  return [...baseSteps, ...checklistSteps, ...endSteps];
+};
+
+// Steps por defecto para nuevos informes
+const defaultSteps = buildStepsFromChecklist(buildDefaultChecklist());
 
 const MaintenanceReportWizard = () => {
   const navigate = useNavigate();
@@ -338,6 +416,10 @@ const MaintenanceReportWizard = () => {
   const isEditMode = Boolean(params.id);
   const { toast } = useToast();
   const { user, session, loading: authLoading } = useAuth();
+
+  // Steps dinámicos - se actualizan cuando se carga un informe existente
+  const [steps, setSteps] = useState<StepDefinition[]>(defaultSteps);
+  const totalSteps = steps.length;
 
   // Inicializar formData con una copia profunda de defaultForm para evitar mutaciones
   const [formData, setFormData] = useState<MaintenanceReportForm>(() => {
@@ -863,23 +945,34 @@ const MaintenanceReportWizard = () => {
         carrosTesteros = defaultForm.carrosTesteros;
       }
       
-      // Asegurar que el checklist tenga todos los items necesarios
-      let checklist = Array.isArray(loadedData.checklist) ? loadedData.checklist : defaultForm.checklist;
+      // IMPORTANTE: Cargar el checklist TAL CUAL está guardado para no perder datos
+      // Solo usar el checklist por defecto si no hay datos guardados
+      let checklist = Array.isArray(loadedData.checklist) && loadedData.checklist.length > 0 
+        ? loadedData.checklist 
+        : defaultForm.checklist;
       
-      // Completar el checklist si faltan items (por ejemplo, si se agregó "Motorreductor" después)
-      if (checklist.length < CHECKLIST_ITEMS.length) {
-        const missingItems: ChecklistEntry[] = [];
-        for (let i = checklist.length; i < CHECKLIST_ITEMS.length; i++) {
-          missingItems.push({
-            id: generateUUID(),
-            name: CHECKLIST_ITEMS[i],
-            status: null,
-            observation: "",
-          });
-        }
-        checklist = [...checklist, ...missingItems];
-        console.log(`[MaintenanceReportWizard] Completado checklist: agregados ${missingItems.length} items faltantes`);
-      }
+      console.log(`[MaintenanceReportWizard] Checklist cargado con ${checklist.length} items`);
+      
+      // Detectar si el informe tiene trolleyGroup y carrosTesteros con datos reales
+      const hasTrolleyGroup = loadedData.trolleyGroup && 
+        typeof loadedData.trolleyGroup === 'object' &&
+        loadedData.trolleyGroup.trolley?.status !== null;
+      
+      const hasCarrosTesteros = loadedData.carrosTesteros && 
+        typeof loadedData.carrosTesteros === 'object' &&
+        Array.isArray(loadedData.carrosTesteros.subItems) &&
+        loadedData.carrosTesteros.subItems.length > 0;
+      
+      console.log(`[MaintenanceReportWizard] hasTrolleyGroup: ${hasTrolleyGroup}, hasCarrosTesteros: ${hasCarrosTesteros}`);
+      
+      // Regenerar los steps basándose en el checklist cargado
+      // Solo incluir pasos especiales si el informe tiene esos datos
+      const dynamicSteps = buildStepsFromChecklist(checklist, {
+        includeTrolley: hasTrolleyGroup,
+        includeCarrosTesteros: hasCarrosTesteros,
+      });
+      setSteps(dynamicSteps);
+      console.log(`[MaintenanceReportWizard] Steps regenerados: ${dynamicSteps.length} pasos`);
       
       const parsedData: MaintenanceReportForm = {
         ...defaultForm,
@@ -890,62 +983,20 @@ const MaintenanceReportWizard = () => {
         carrosTesteros,
       };
       
-      // Guardar los datos normalizados de vuelta a la base de datos para actualizar nombres antiguos
-      if (trolleyGroup && loadedData.trolleyGroup) {
-        // Verificar si hubo cambios en los nombres
-        const needsUpdate = 
-          (loadedData.trolleyGroup.trolley?.name !== trolleyGroup.trolley.name) ||
-          (loadedData.trolleyGroup.motorTrolley?.name !== trolleyGroup.motorTrolley.name) ||
-          (loadedData.trolleyGroup.frenoMotorTrolley?.name !== trolleyGroup.frenoMotorTrolley.name) ||
-          (loadedData.trolleyGroup.guiasTrolley?.name !== trolleyGroup.guiasTrolley.name) ||
-          (loadedData.trolleyGroup.ruedasTrolley?.name !== trolleyGroup.ruedasTrolley.name);
-        
-        if (needsUpdate) {
-          // Actualizar en la base de datos de forma asíncrona (no bloquear la carga)
-          setTimeout(async () => {
-            try {
-              await supabase
-                .from("maintenance_reports")
-                .update({ data: parsedData })
-                .eq("id", data.id);
-            } catch (error) {
-              console.warn("No se pudieron actualizar los nombres normalizados:", error);
-            }
-          }, 1000);
-        }
-      }
+      // NOTA: Ya NO guardamos automáticamente después de cargar para evitar sobrescribir datos
+      // Los datos solo se guardan cuando el usuario hace cambios explícitos
 
       // Asegurar que el índice del paso esté dentro del rango válido de steps
       // Esto evita errores cuando se editan informes creados con versiones anteriores del wizard
+      // Usar dynamicSteps.length porque setSteps es asíncrono y aún no se ha aplicado
       const savedStepIndex = Math.max((data.current_step ?? 1) - 1, 0);
-      const maxValidStepIndex = steps.length - 1;
+      const maxValidStepIndex = dynamicSteps.length - 1;
       const stepIndex = Math.min(savedStepIndex, maxValidStepIndex);
       setReportId(data.id);
       
-      // FORZAR normalización de nombres antes de establecer el estado
-      const finalParsedData: MaintenanceReportForm = {
-        ...parsedData,
-        trolleyGroup: {
-          ...parsedData.trolleyGroup,
-          trolley: { ...parsedData.trolleyGroup.trolley, name: "Trolley" },
-          motorTrolley: { ...parsedData.trolleyGroup.motorTrolley, name: "Motor Trolley" },
-          frenoMotorTrolley: { ...parsedData.trolleyGroup.frenoMotorTrolley, name: "Freno motor Trolley" },
-          guiasTrolley: { ...parsedData.trolleyGroup.guiasTrolley, name: "Guias de Trolley" },
-          ruedasTrolley: { ...parsedData.trolleyGroup.ruedasTrolley, name: "Ruedas Trolley" },
-        },
-        carrosTesteros: parsedData.carrosTesteros && Array.isArray(parsedData.carrosTesteros.subItems)
-          ? {
-              ...parsedData.carrosTesteros,
-              subItems: parsedData.carrosTesteros.subItems.map((item, index) => {
-                // NOTA: "Motorreductor" ya no es un sub-item, es un item independiente después de "Carros testeros"
-                const correctNames = ["Freno", "Ruedas", "Chumaceras", "Palanquilla"];
-                return { ...item, name: correctNames[index] || item.name };
-              }),
-            }
-          : parsedData.carrosTesteros,
-      };
-      
-      setFormData(finalParsedData);
+      // Usar los datos TAL CUAL fueron cargados, sin normalizar nombres
+      // Esto preserva los datos originales del informe
+      setFormData(parsedData);
       setCurrentStepIndex(stepIndex);
       if (data.updated_at) {
         setLastSavedAt(new Date(data.updated_at));
@@ -953,8 +1004,8 @@ const MaintenanceReportWizard = () => {
 
       // Inicializar lastSavedFormDataRef para evitar guardados innecesarios al cargar
       const formDataForComparison = {
-        ...finalParsedData,
-        photos: finalParsedData.photos.map(p => ({ id: p.id, description: p.description })),
+        ...parsedData,
+        photos: parsedData.photos.map(p => ({ id: p.id, description: p.description })),
       };
       lastSavedFormDataRef.current = JSON.stringify(formDataForComparison) + stepIndex;
 

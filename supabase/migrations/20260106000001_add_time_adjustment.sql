@@ -12,3 +12,4 @@ ADD COLUMN IF NOT EXISTS adjustment_note text;
 COMMENT ON COLUMN public.attendance_records.time_adjustment_minutes IS 'Minutes adjustment: positive = extra worked, negative = not worked';
 COMMENT ON COLUMN public.attendance_records.adjustment_note IS 'Note explaining the time adjustment';
 
+

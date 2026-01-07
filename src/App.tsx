@@ -22,6 +22,7 @@ import MaintenanceReportTypeSelector from "./pages/MaintenanceReportTypeSelector
 import ElevatorMaintenanceReportWizard from "./pages/ElevatorMaintenanceReportWizard";
 import GeneralMaintenanceReport from "./pages/GeneralMaintenanceReport";
 import BridgeCraneMaintenanceReport from "./pages/BridgeCraneMaintenanceReport";
+import MaintenanceReportEditRouter from "./pages/MaintenanceReportEditRouter";
 import TimeControl from "./pages/TimeControl";
 
 // Crear queryClient FUERA del componente para evitar recreación en cada render
@@ -70,7 +71,7 @@ const App = () => (
           <Route path="/maintenance-reports/new/puentes-grua" element={<ProtectedRoute><BridgeCraneMaintenanceReport /></ProtectedRoute>} />
           <Route path="/maintenance-reports/new/elevadores" element={<ProtectedRoute><ElevatorMaintenanceReportWizard /></ProtectedRoute>} />
           <Route path="/maintenance-reports/new/mantenimientos-generales" element={<ProtectedRoute><GeneralMaintenanceReport /></ProtectedRoute>} />
-          <Route path="/maintenance-reports/:id/edit" element={<ProtectedRoute><ElevatorMaintenanceReportWizard /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/:id/edit" element={<ProtectedRoute><MaintenanceReportEditRouter /></ProtectedRoute>} />
           <Route path="/time-control" element={<ProtectedRoute><TimeControl /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
