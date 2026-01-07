@@ -13,3 +13,4 @@ COMMENT ON COLUMN public.attendance_records.time_adjustment_minutes IS 'Minutes 
 COMMENT ON COLUMN public.attendance_records.adjustment_note IS 'Note explaining the time adjustment';
 
 
+

@@ -102,6 +102,54 @@ const hasSpecialSteps = (equipmentType?: EquipmentType): boolean => {
 // Mantener CHECKLIST_ITEMS para compatibilidad
 const CHECKLIST_ITEMS = ELEVATOR_CHECKLIST_ITEMS;
 
+// Mapeo de nombres de items de elevadores a puentes grúa
+// (para corregir datos guardados incorrectamente)
+const ELEVATOR_TO_BRIDGE_NAME_MAP: Record<string, string> = {
+  "Motor elevación": "Motor de elevación",
+  "Freno elevación": "Freno motor de elevación",
+  "Guías laterales": "Sistema de cables planos",
+  "Finales de carrera": "Polipasto",
+  "Botoneras": "Botonera",
+  "Cabina o canasta": "Límite de elevación",
+  "Puertas": "Limitador de carga",
+};
+
+// Función para migrar checklist de elevadores a puentes grúa
+const migrateChecklistToBridgeCrane = (checklist: ChecklistEntry[]): ChecklistEntry[] => {
+  const bridgeCraneItems = BRIDGE_CRANE_CHECKLIST_ITEMS;
+  
+  // Crear un mapa de items guardados por nombre normalizado
+  const savedItemsMap = new Map<string, ChecklistEntry>();
+  checklist.forEach(item => {
+    const normalizedName = item.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    savedItemsMap.set(normalizedName, item);
+    
+    // También mapear con nombre convertido
+    const mappedName = ELEVATOR_TO_BRIDGE_NAME_MAP[item.name];
+    if (mappedName) {
+      const mappedNormalized = mappedName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      savedItemsMap.set(mappedNormalized, item);
+    }
+  });
+  
+  // Reconstruir el checklist con los nombres correctos de puentes grúa
+  return bridgeCraneItems.map((name, index) => {
+    const normalizedName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const savedItem = savedItemsMap.get(normalizedName);
+    
+    // Si no encontramos por nombre, intentar por índice (si el checklist guardado tiene la misma longitud)
+    const itemByIndex = !savedItem && index < checklist.length ? checklist[index] : null;
+    const sourceItem = savedItem || (itemByIndex?.status || itemByIndex?.observation ? itemByIndex : null);
+    
+    return {
+      id: sourceItem?.id || crypto.randomUUID(),
+      name: name, // Usar el nombre correcto de puentes grúa
+      status: sourceItem?.status || null,
+      observation: sourceItem?.observation || "",
+    };
+  });
+};
+
 type ChecklistStatus = "good" | "bad" | "na" | null;
 
 type ChecklistEntry = {
@@ -356,6 +404,8 @@ const buildDefaultForm = (equipmentType?: EquipmentType): MaintenanceReportForm 
   photos: [],
 });
 
+// NOTA: defaultForm se mantiene para compatibilidad pero NO debe usarse directamente
+// Usar buildDefaultForm(equipmentType) en su lugar para obtener el formulario correcto
 const defaultForm: MaintenanceReportForm = buildDefaultForm();
 
 const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
@@ -771,8 +821,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
           await loadExistingReport(params.id);
         } else {
           // No crear el informe automáticamente, solo inicializar el estado
-          setFormData(defaultForm);
-          initialFormDataRef.current = defaultForm;
+          // IMPORTANTE: Usar buildDefaultForm con el equipmentType correcto, no defaultForm global
+          const correctDefaultForm = buildDefaultForm(equipmentType);
+          setFormData(correctDefaultForm);
+          initialFormDataRef.current = correctDefaultForm;
           setCurrentStepIndex(0);
         }
       } finally {
@@ -847,7 +899,9 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const createDraftReport = async (): Promise<string | null> => {
     if (!user) return null;
     try {
-      const payload = buildDbPayload(defaultForm, 0, user.id);
+      // IMPORTANTE: Usar el formulario correcto según el equipmentType
+      const correctDefaultForm = buildDefaultForm(equipmentType);
+      const payload = buildDbPayload(correctDefaultForm, 0, user.id);
       const { data, error } = await supabase
         .from("maintenance_reports")
         .insert(payload)
@@ -856,7 +910,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
       if (error) throw error;
       setReportId(data.id);
-      setFormData(defaultForm);
+      setFormData(correctDefaultForm);
       setCurrentStepIndex(Math.max((data.current_step ?? 1) - 1, 0));
       setLastSavedAt(new Date(data.updated_at));
       return data.id;
@@ -917,35 +971,53 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       }
 
       // Extraer datos de manera segura con validación
-      let parsedData: MaintenanceReportForm = { ...defaultForm };
+      // IMPORTANTE: Usar el formulario correcto según el equipmentType
+      const correctDefaultForm = buildDefaultForm(equipmentType);
+      let parsedData: MaintenanceReportForm = { ...correctDefaultForm };
       
       try {
         if (typeof data.data === "object" && data.data !== null) {
           const dataObj = data.data as any;
           // Validar y asignar cada campo de manera segura
           parsedData = {
-            ...defaultForm,
-            startDate: typeof dataObj.startDate === 'string' ? dataObj.startDate : defaultForm.startDate,
-            endDate: typeof dataObj.endDate === 'string' ? dataObj.endDate : defaultForm.endDate,
-            company: typeof dataObj.company === 'string' ? dataObj.company : defaultForm.company,
-            address: typeof dataObj.address === 'string' ? dataObj.address : defaultForm.address,
-            phone: typeof dataObj.phone === 'string' ? dataObj.phone : defaultForm.phone,
-            contact: typeof dataObj.contact === 'string' ? dataObj.contact : defaultForm.contact,
-            technicianName: typeof dataObj.technicianName === 'string' ? dataObj.technicianName : defaultForm.technicianName,
-            equipment: typeof dataObj.equipment === 'string' ? dataObj.equipment : defaultForm.equipment,
-            brand: typeof dataObj.brand === 'string' ? dataObj.brand : defaultForm.brand,
-            model: typeof dataObj.model === 'string' ? dataObj.model : defaultForm.model,
-            serial: typeof dataObj.serial === 'string' ? dataObj.serial : defaultForm.serial,
-            capacity: typeof dataObj.capacity === 'string' ? dataObj.capacity : defaultForm.capacity,
-            locationPg: typeof dataObj.locationPg === 'string' ? dataObj.locationPg : defaultForm.locationPg,
-            voltage: typeof dataObj.voltage === 'string' ? dataObj.voltage : defaultForm.voltage,
-            initialState: typeof dataObj.initialState === 'string' ? dataObj.initialState : defaultForm.initialState,
-            recommendations: typeof dataObj.recommendations === 'string' ? dataObj.recommendations : defaultForm.recommendations,
+            ...correctDefaultForm,
+            startDate: typeof dataObj.startDate === 'string' ? dataObj.startDate : correctDefaultForm.startDate,
+            endDate: typeof dataObj.endDate === 'string' ? dataObj.endDate : correctDefaultForm.endDate,
+            company: typeof dataObj.company === 'string' ? dataObj.company : correctDefaultForm.company,
+            address: typeof dataObj.address === 'string' ? dataObj.address : correctDefaultForm.address,
+            phone: typeof dataObj.phone === 'string' ? dataObj.phone : correctDefaultForm.phone,
+            contact: typeof dataObj.contact === 'string' ? dataObj.contact : correctDefaultForm.contact,
+            technicianName: typeof dataObj.technicianName === 'string' ? dataObj.technicianName : correctDefaultForm.technicianName,
+            equipment: typeof dataObj.equipment === 'string' ? dataObj.equipment : correctDefaultForm.equipment,
+            brand: typeof dataObj.brand === 'string' ? dataObj.brand : correctDefaultForm.brand,
+            model: typeof dataObj.model === 'string' ? dataObj.model : correctDefaultForm.model,
+            serial: typeof dataObj.serial === 'string' ? dataObj.serial : correctDefaultForm.serial,
+            capacity: typeof dataObj.capacity === 'string' ? dataObj.capacity : correctDefaultForm.capacity,
+            locationPg: typeof dataObj.locationPg === 'string' ? dataObj.locationPg : correctDefaultForm.locationPg,
+            voltage: typeof dataObj.voltage === 'string' ? dataObj.voltage : correctDefaultForm.voltage,
+            initialState: typeof dataObj.initialState === 'string' ? dataObj.initialState : correctDefaultForm.initialState,
+            recommendations: typeof dataObj.recommendations === 'string' ? dataObj.recommendations : correctDefaultForm.recommendations,
             checklist: (() => {
-              // IMPORTANTE: Preservar el checklist guardado TAL CUAL para no perder datos
-              // Solo usar el checklist por defecto si no hay datos guardados
+              // IMPORTANTE: Verificar y migrar el checklist si es necesario
               if (Array.isArray(dataObj.checklist) && dataObj.checklist.length > 0) {
-                console.log(`[ElevatorMaintenanceReportWizard] Usando checklist guardado con ${dataObj.checklist.length} items`);
+                console.log(`[ElevatorMaintenanceReportWizard] Checklist guardado con ${dataObj.checklist.length} items`);
+                
+                // Si es puentes-grua, verificar si los items tienen nombres de elevadores
+                // y migrarlos si es necesario
+                if (equipmentType === "puentes-grua") {
+                  const firstItemName = dataObj.checklist[0]?.name;
+                  const hasElevatorNames = firstItemName === "Motor elevación" || 
+                                           firstItemName === "Freno elevación" ||
+                                           Object.keys(ELEVATOR_TO_BRIDGE_NAME_MAP).includes(firstItemName);
+                  
+                  if (hasElevatorNames) {
+                    console.log(`[ElevatorMaintenanceReportWizard] ⚠️ Detectados nombres de elevadores en informe de puente grúa. Migrando...`);
+                    const migrated = migrateChecklistToBridgeCrane(dataObj.checklist);
+                    console.log(`[ElevatorMaintenanceReportWizard] ✅ Migrado a ${migrated.length} items de puente grúa`);
+                    return migrated;
+                  }
+                }
+                
                 return dataObj.checklist;
               }
               
@@ -1002,19 +1074,19 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             procedimientos: Array.isArray(dataObj.procedimientos) ? dataObj.procedimientos : [],
             tests: typeof dataObj.tests === 'object' && dataObj.tests !== null 
               ? {
-                  voltage: typeof dataObj.tests.voltage === 'string' ? dataObj.tests.voltage : defaultForm.tests.voltage,
+                  voltage: typeof dataObj.tests.voltage === 'string' ? dataObj.tests.voltage : correctDefaultForm.tests.voltage,
                   polipasto: typeof dataObj.tests.polipasto === 'object' && dataObj.tests.polipasto !== null
                     ? dataObj.tests.polipasto
-                    : defaultForm.tests.polipasto,
+                    : correctDefaultForm.tests.polipasto,
                 }
-              : defaultForm.tests,
-            photos: Array.isArray(dataObj.photos) ? dataObj.photos : defaultForm.photos,
+              : correctDefaultForm.tests,
+            photos: Array.isArray(dataObj.photos) ? dataObj.photos : correctDefaultForm.photos,
           };
         }
       } catch (parseError) {
         console.error("Error parseando datos del informe:", parseError);
-        // Continuar con defaultForm si hay error
-        parsedData = { ...defaultForm };
+        // Continuar con correctDefaultForm si hay error
+        parsedData = { ...correctDefaultForm };
       }
 
       // Normalizar fechas desde la base de datos

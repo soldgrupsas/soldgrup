@@ -29,13 +29,12 @@ const ELEVATOR_CHECKLIST_ITEMS = [
 ];
 
 // Items para PUENTES GRÚA
-// NOTA: "Trolley" tiene sub-items: Motor Trolley, Freno motor Trolley, Guías de Trolley, Ruedas de Trolley
-// NOTA: "Carros testeros" tiene sub-items: Motorreductor, Freno, Ruedas y palanquilla, Chumaceras
+// NOTA: Esta lista DEBE coincidir con la del frontend (ElevatorMaintenanceReportWizard.tsx)
+// NOTA: "Trolley" y "Carros testeros" NO están en esta lista porque se manejan como pasos especiales
+//       con sub-items (trolleyData y carrosTesterosData) y se agregan dinámicamente después
 const BRIDGE_CRANE_CHECKLIST_ITEMS = [
   'Motor de elevación',
   'Freno motor de elevación',
-  'Trolley',
-  'Carros testeros',
   'Estructura',
   'Gancho',
   'Cadena',
@@ -73,6 +72,33 @@ const isGeneralMaintenance = (equipmentType?: string): boolean => {
 
 // Mantener checklistFallback para compatibilidad
 const checklistFallback = ELEVATOR_CHECKLIST_ITEMS;
+
+// Mapeo de nombres de elevadores a puentes grúa (para datos guardados incorrectamente)
+// Esto permite encontrar datos aunque se hayan guardado con nombres de elevadores
+const ELEVATOR_TO_BRIDGE_CRANE_MAP: Record<string, string> = {
+  'motor elevacion': 'motor de elevacion',
+  'motor elevación': 'motor de elevación',
+  'freno elevacion': 'freno motor de elevacion',
+  'freno elevación': 'freno motor de elevación',
+  'guias laterales': 'sistema de cables planos',
+  'guías laterales': 'sistema de cables planos',
+  'finales de carrera': 'polipasto',
+  'botoneras': 'botonera',
+  'cabina o canasta': 'limite de elevacion',
+  'puertas': 'limitador de carga',
+};
+
+// Función para normalizar nombres con mapeo adicional
+const normalizeNameWithMapping = (str: string, equipmentType?: string): string => {
+  const normalized = str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  
+  // Si es puentes-grua, intentar mapear nombres de elevadores
+  if (equipmentType === 'puentes-grua' && ELEVATOR_TO_BRIDGE_CRANE_MAP[normalized]) {
+    return ELEVATOR_TO_BRIDGE_CRANE_MAP[normalized].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+  
+  return normalized;
+};
 
 const inferContentTypeByPath = (path: string): string => {
   const lower = path.toLowerCase();
@@ -254,11 +280,45 @@ Deno.serve(async (req) => {
     
     // Detectar el tipo de equipo para usar la lista correcta de items
     // Puede estar en reportData.equipmentType o inferirse de la ruta/contexto
-    // Por ahora, detectar desde reportData.equipmentType si existe
-    const equipmentType = reportData.equipmentType || nestedData?.equipmentType || undefined;
+    let equipmentType = reportData.equipmentType || nestedData?.equipmentType || undefined;
+    
+    // Si no hay equipmentType explícito, intentar inferirlo de los items del checklist
+    if (!equipmentType) {
+      const checklistToCheck = Array.isArray(reportData.checklist) ? reportData.checklist : 
+                               (nestedData && Array.isArray(nestedData.checklist) ? nestedData.checklist : []);
+      
+      // Buscar items característicos de cada tipo
+      const hasMotorDeElevacion = checklistToCheck.some((item: any) => 
+        item?.name?.toLowerCase()?.includes('motor de elevación') || 
+        item?.name?.toLowerCase()?.includes('motor de elevacion')
+      );
+      const hasMotorElevacion = checklistToCheck.some((item: any) => 
+        item?.name?.toLowerCase() === 'motor elevación' || 
+        item?.name?.toLowerCase() === 'motor elevacion'
+      );
+      const hasProcedimientos = Array.isArray(reportData.procedimientos) || 
+                                (nestedData && Array.isArray(nestedData.procedimientos));
+      
+      if (hasProcedimientos && checklistToCheck.length === 0) {
+        equipmentType = 'mantenimientos-generales';
+      } else if (hasMotorDeElevacion) {
+        equipmentType = 'puentes-grua';
+      } else if (hasMotorElevacion) {
+        equipmentType = 'elevadores';
+      }
+      
+      console.log('[maintenance-pdf] ⚠️ equipmentType inferido de los datos:', equipmentType);
+    }
+    
     const dynamicChecklistFallback = getChecklistItems(equipmentType);
-    console.log('[maintenance-pdf] Equipment type detected:', equipmentType);
-    console.log('[maintenance-pdf] Using checklist with', dynamicChecklistFallback.length, 'items');
+    console.log('[maintenance-pdf] ========== DETECCIÓN EQUIPMENT TYPE ==========');
+    console.log('[maintenance-pdf] reportData.equipmentType:', reportData.equipmentType);
+    console.log('[maintenance-pdf] nestedData?.equipmentType:', nestedData?.equipmentType);
+    console.log('[maintenance-pdf] Equipment type final:', equipmentType);
+    console.log('[maintenance-pdf] Es puentes-grua?', equipmentType === 'puentes-grua');
+    console.log('[maintenance-pdf] Using checklist con', dynamicChecklistFallback.length, 'items');
+    console.log('[maintenance-pdf] Items de la lista:', dynamicChecklistFallback.join(', '));
+    console.log('[maintenance-pdf] ==================================================');
     
     const reportPhotosArray = Array.isArray(reportData.photos) ? reportData.photos : [];
     const descriptionByStoragePath = new Map<string, string>();
@@ -738,103 +798,149 @@ Deno.serve(async (req) => {
       if (entry && typeof entry.name === 'string') {
         const key = normalizeName(entry.name);
         savedItemsMap.set(key, entry);
+        
+        // Si es puentes-grua, también agregar con el nombre mapeado
+        // Esto permite encontrar "Motor de elevación" aunque esté guardado como "Motor elevación"
+        if (equipmentType === 'puentes-grua') {
+          const mappedKey = normalizeNameWithMapping(entry.name, equipmentType);
+          if (mappedKey !== key) {
+            console.log(`[maintenance-pdf] 🔄 Mapeando "${entry.name}" (${key}) -> (${mappedKey})`);
+            savedItemsMap.set(mappedKey, entry);
+          }
+        }
       }
     });
     
+    // DEBUG: Verificar items problemáticos específicos
+    console.log('[maintenance-pdf] ========== DEBUG ITEMS PROBLEMÁTICOS ==========');
+    const itemsProblematicos = [
+      'Motor de elevación',
+      'Freno motor de elevación',
+      'Sistema de cables planos',
+      'Polipasto',
+      'Límite de elevación',
+      'Limitador de carga'
+    ];
+    itemsProblematicos.forEach(itemName => {
+      const key = normalizeName(itemName);
+      const found = savedItemsMap.get(key);
+      console.log(`[maintenance-pdf] "${itemName}" (key: "${key}"): ${found ? `✅ status=${found.status}, obs=${found.observation?.substring(0, 30) || 'vacío'}` : '❌ NO ENCONTRADO'}`);
+    });
+    console.log('[maintenance-pdf] Todos los keys en savedItemsMap:', Array.from(savedItemsMap.keys()).join(', '));
+    console.log('[maintenance-pdf] ==================================================');
+    
     // Determinar si este tipo de equipo tiene items especiales (Trolley, Carros testeros)
     const useSpecialItems = hasSpecialItems(equipmentType);
+    
+    // Función auxiliar para agregar Trolley y sus sub-items
+    const addTrolleyItems = () => {
+      if (!useSpecialItems) return;
+      
+      // Obtener datos de trolleyData
+      const mainStatus = trolleyData?.mainStatus || null;
+      const mainObservation = trolleyData?.observation || '';
+      
+      // Agregar "Trolley" principal
+      checklist.push({
+        index: checklist.length,
+        name: 'Trolley',
+        status: mainStatus === 'good' ? 'good' : mainStatus === 'bad' ? 'bad' : mainStatus === 'na' ? 'na' : null,
+        observation: typeof mainObservation === 'string' ? mainObservation : '',
+      });
+      
+      // Solo agregar sub-items si el estado principal NO es 'na'
+      if (mainStatus !== 'na') {
+        const trolleySubItemNames = ['Motor Trolley', 'Freno motor Trolley', 'Guías de Trolley', 'Ruedas de Trolley'];
+        const subItemsFromData = Array.isArray(trolleyData?.subItems) ? trolleyData.subItems : [];
+        
+        trolleySubItemNames.forEach((subName) => {
+          const subItemData = subItemsFromData.find((si: any) => 
+            si && si.name && normalizeName(si.name) === normalizeName(subName)
+          );
+          
+          if (subItemData) {
+            checklist.push({
+              index: checklist.length,
+              name: subName,
+              status: subItemData.status === 'good' ? 'good' : subItemData.status === 'bad' ? 'bad' : subItemData.status === 'na' ? 'na' : null,
+              observation: typeof subItemData.observation === 'string' ? subItemData.observation : '',
+            });
+          }
+        });
+      }
+    };
+    
+    // Función auxiliar para agregar Carros testeros y sus sub-items
+    const addCarrosTesterosItems = () => {
+      if (!useSpecialItems) return;
+      
+      // Obtener datos de carrosTesterosData
+      const mainStatus = carrosTesterosData?.mainStatus || null;
+      const mainObservation = carrosTesterosData?.observation || '';
+      
+      // Agregar "Carros testeros" principal
+      checklist.push({
+        index: checklist.length,
+        name: 'Carros testeros',
+        status: mainStatus === 'good' ? 'good' : mainStatus === 'bad' ? 'bad' : mainStatus === 'na' ? 'na' : null,
+        observation: typeof mainObservation === 'string' ? mainObservation : '',
+      });
+      
+      // Solo agregar sub-items si el estado principal NO es 'na'
+      if (mainStatus !== 'na') {
+        const carrosTesterosSubItemNames = ['Motorreductor', 'Freno', 'Ruedas y palanquilla', 'Chumaceras'];
+        const subItemsFromData = Array.isArray(carrosTesterosData?.subItems) ? carrosTesterosData.subItems : [];
+        
+        carrosTesterosSubItemNames.forEach((subName) => {
+          const subItemData = subItemsFromData.find((si: any) => 
+            si && si.name && normalizeName(si.name) === normalizeName(subName)
+          );
+          
+          if (subItemData) {
+            checklist.push({
+              index: checklist.length,
+              name: subName,
+              status: subItemData.status === 'good' ? 'good' : subItemData.status === 'bad' ? 'bad' : subItemData.status === 'na' ? 'na' : null,
+              observation: typeof subItemData.observation === 'string' ? subItemData.observation : '',
+            });
+          }
+        });
+      }
+    };
     
     // Iterar sobre fallbackList para mantener el orden correcto
     for (let i = 0; i < fallbackList.length; i++) {
       const name = fallbackList[i];
       const nameLower = normalizeName(name);
-      const savedItem = savedItemsMap.get(nameLower);
       
-      // Manejar "Trolley" con sus sub-items (SOLO para puentes grúa)
-      if (useSpecialItems && nameLower === 'trolley') {
-        // Obtener el estado principal de trolley
-        const mainStatus = trolleyData?.mainStatus || savedItem?.status || null;
-        const mainObservation = trolleyData?.observation || savedItem?.observation || '';
-        
-        // Agregar "Trolley" principal
-        checklist.push({
-          index: checklist.length,
-          name,
-          status: mainStatus === 'good' ? 'good' : mainStatus === 'bad' ? 'bad' : mainStatus === 'na' ? 'na' : null,
-          observation: typeof mainObservation === 'string' ? mainObservation : '',
-        });
-        
-        // Solo agregar sub-items si el estado principal NO es 'na'
-        if (mainStatus !== 'na') {
-          // Nombres de sub-items de Trolley
-          const trolleySubItemNames = ['Motor Trolley', 'Freno motor Trolley', 'Guías de Trolley', 'Ruedas de Trolley'];
-          
-          // Obtener sub-items desde trolleyData si existen
-          const subItemsFromData = Array.isArray(trolleyData?.subItems) ? trolleyData.subItems : [];
-          
-          trolleySubItemNames.forEach((subName) => {
-            // Buscar en los sub-items guardados
-            const subItemData = subItemsFromData.find((si: any) => 
-              si && si.name && normalizeName(si.name) === normalizeName(subName)
-            );
-            
-            if (subItemData) {
-              checklist.push({
-                index: checklist.length,
-                name: subName,
-                status: subItemData.status === 'good' ? 'good' : subItemData.status === 'bad' ? 'bad' : subItemData.status === 'na' ? 'na' : null,
-                observation: typeof subItemData.observation === 'string' ? subItemData.observation : '',
-              });
-            }
-          });
+      // Buscar el item guardado por nombre normalizado
+      let savedItem = savedItemsMap.get(nameLower);
+      
+      // Si no se encontró por nombre, intentar buscar por índice en checklistEntriesRaw
+      // (esto maneja casos donde los nombres pueden estar ligeramente diferentes)
+      if (!savedItem && i < checklistEntriesRaw.length) {
+        const itemByIndex = checklistEntriesRaw[i];
+        if (itemByIndex && typeof itemByIndex === 'object') {
+          // Verificar si el item por índice tiene datos válidos (status no null o observation no vacía)
+          if (itemByIndex.status || (itemByIndex.observation && itemByIndex.observation.trim())) {
+            console.log(`[maintenance-pdf] ⚡ Usando item por índice ${i} para "${name}":`, itemByIndex.name, 'status:', itemByIndex.status);
+            savedItem = itemByIndex;
+          }
         }
       }
-      // Manejar "Carros testeros" con sus sub-items (SOLO para puentes grúa)
-      else if (useSpecialItems && nameLower.includes('carros') && nameLower.includes('testeros')) {
-        // Obtener el estado principal de carrosTesteros
-        const mainStatus = carrosTesterosData?.mainStatus || savedItem?.status || null;
-        const mainObservation = carrosTesterosData?.observation || savedItem?.observation || '';
-        
-        // Agregar "Carros testeros" principal
-        checklist.push({
-          index: checklist.length,
-          name,
-          status: mainStatus === 'good' ? 'good' : mainStatus === 'bad' ? 'bad' : mainStatus === 'na' ? 'na' : null,
-          observation: typeof mainObservation === 'string' ? mainObservation : '',
-        });
-        
-        // Solo agregar sub-items si el estado principal NO es 'na'
-        if (mainStatus !== 'na') {
-          // Nombres de sub-items de Carros testeros
-          const carrosTesterosSubItemNames = ['Motorreductor', 'Freno', 'Ruedas y palanquilla', 'Chumaceras'];
-          
-          // Obtener sub-items desde carrosTesterosData si existen
-          const subItemsFromData = Array.isArray(carrosTesterosData?.subItems) ? carrosTesterosData.subItems : [];
-          
-          carrosTesterosSubItemNames.forEach((subName) => {
-            // Buscar en los sub-items guardados
-            const subItemData = subItemsFromData.find((si: any) => 
-              si && si.name && normalizeName(si.name) === normalizeName(subName)
-            );
-            
-            if (subItemData) {
-              checklist.push({
-                index: checklist.length,
-                name: subName,
-                status: subItemData.status === 'good' ? 'good' : subItemData.status === 'bad' ? 'bad' : subItemData.status === 'na' ? 'na' : null,
-                observation: typeof subItemData.observation === 'string' ? subItemData.observation : '',
-              });
-            }
-          });
-        }
-      } else {
-        // Agregar item normal (elevadores y otros items de puentes grúa)
-        checklist.push({
-          index: checklist.length,
-          name,
-          status: savedItem?.status === 'good' ? 'good' : savedItem?.status === 'bad' ? 'bad' : savedItem?.status === 'na' ? 'na' : null,
-          observation: typeof savedItem?.observation === 'string' ? savedItem.observation : '',
-        });
+      
+      // Agregar item normal
+      checklist.push({
+        index: checklist.length,
+        name,
+        status: savedItem?.status === 'good' ? 'good' : savedItem?.status === 'bad' ? 'bad' : savedItem?.status === 'na' ? 'na' : null,
+        observation: typeof savedItem?.observation === 'string' ? savedItem.observation : '',
+      });
+      
+      // Después de "Freno motor de elevación", insertar Trolley y Carros testeros (solo para puentes grúa)
+      if (useSpecialItems && nameLower === normalizeName('Freno motor de elevación')) {
+        addTrolleyItems();
+        addCarrosTesterosItems();
       }
     }
     } // Fin del else (elevadores y puentes grúa)
@@ -845,8 +951,13 @@ Deno.serve(async (req) => {
       index: idx,
     }));
 
+    console.log('[maintenance-pdf] ========== CHECKLIST FINAL ==========');
     console.log('[maintenance-pdf] Checklist final:', finalChecklist.length, 'items');
-    console.log('[maintenance-pdf] Items:', finalChecklist.map(i => `${i.index}: ${i.name}`).join(', '));
+    console.log('[maintenance-pdf] Items con status:');
+    finalChecklist.forEach(item => {
+      console.log(`[maintenance-pdf]   ${item.index}: "${item.name}" -> status=${item.status || 'NULL'}, obs=${item.observation?.substring(0, 20) || 'vacío'}`);
+    });
+    console.log('[maintenance-pdf] =====================================');
 
     const payload: MaintenanceReportPdfPayload = {
       title: 'Informe de Mantenimiento',
