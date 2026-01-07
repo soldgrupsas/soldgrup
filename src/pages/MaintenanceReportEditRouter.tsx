@@ -59,39 +59,40 @@ const MaintenanceReportEditRouter = () => {
         // Detectar el tipo de equipo desde los datos guardados
         const reportData = data.data as any;
         
-        // Verificar si tiene datos de puente grúa (en columnas dedicadas o en data)
-        const hasBridgeCraneData = 
-          // Verificar columnas dedicadas
-          (data.trolley_group && typeof data.trolley_group === 'object' && Object.keys(data.trolley_group as object).length > 0) ||
-          (data.carros_testeros && typeof data.carros_testeros === 'object' && Object.keys(data.carros_testeros as object).length > 0) ||
-          (data.motorreductor && typeof data.motorreductor === 'object' && Object.keys(data.motorreductor as object).length > 0) ||
-          // Verificar en el campo data
-          (reportData?.trolleyGroup && typeof reportData.trolleyGroup === 'object') ||
-          (reportData?.trolleyData && typeof reportData.trolleyData === 'object' && reportData.trolleyData.mainStatus !== null) ||
-          (reportData?.carrosTesteros && typeof reportData.carrosTesteros === 'object' && 
-           (reportData.carrosTesteros.mainStatus !== null || 
-            (Array.isArray(reportData.carrosTesteros.subItems) && reportData.carrosTesteros.subItems.some((item: any) => item.status !== null))));
+        console.log("[MaintenanceReportEditRouter] reportData.equipmentType:", reportData?.equipmentType);
         
-        console.log("[MaintenanceReportEditRouter] hasBridgeCraneData:", hasBridgeCraneData);
+        // LÓGICA SIMPLE Y DIRECTA:
+        // 1. Si tiene equipmentType = "puentes-grua" → usar puentes-grua
+        // 2. Si tiene equipmentType = "elevadores" → verificar si tiene datos de puente grúa
+        // 3. Si tiene equipmentType = "mantenimientos-generales" → usar ese tipo
+        // 4. Si no tiene equipmentType → usar legacy
         
-        // LÓGICA MEJORADA:
-        // 1. Si tiene datos de puente grúa → SIEMPRE usar puentes-grua (incluso si equipmentType dice elevadores)
-        // 2. Si tiene equipmentType guardado y NO tiene datos de puente grúa → usar el tipo guardado
-        // 3. Si NO tiene equipmentType ni datos de puente grúa → usar legacy
-        
-        if (hasBridgeCraneData) {
-          // IMPORTANTE: Si tiene datos de puente grúa, usar el wizard de puentes grúa
-          // Esto corrige informes que fueron convertidos incorrectamente
-          console.log("[MaintenanceReportEditRouter] Detectados datos de puente grúa, usando wizard puentes-grua");
+        if (reportData?.equipmentType === "puentes-grua") {
+          // Tipo explícito: puentes-grua
+          console.log("[MaintenanceReportEditRouter] equipmentType es puentes-grua, usando wizard puentes-grua");
           setEquipmentType("puentes-grua");
-        } else if (reportData?.equipmentType) {
-          // Informe con equipmentType guardado y sin datos de puente grúa
-          console.log("[MaintenanceReportEditRouter] Usando tipo guardado:", reportData.equipmentType);
-          setEquipmentType(reportData.equipmentType);
+        } else if (reportData?.equipmentType === "mantenimientos-generales") {
+          // Tipo explícito: mantenimientos-generales
+          console.log("[MaintenanceReportEditRouter] equipmentType es mantenimientos-generales");
+          setEquipmentType("mantenimientos-generales");
+        } else if (reportData?.equipmentType === "elevadores") {
+          // Verificar si realmente es elevador o si tiene datos de puente grúa
+          const hasBridgeCraneData = 
+            (data.trolley_group && typeof data.trolley_group === 'object' && Object.keys(data.trolley_group as object).length > 0) ||
+            (data.carros_testeros && typeof data.carros_testeros === 'object' && Object.keys(data.carros_testeros as object).length > 0) ||
+            (reportData?.trolleyGroup && typeof reportData.trolleyGroup === 'object') ||
+            (reportData?.trolleyData && typeof reportData.trolleyData === 'object');
+          
+          if (hasBridgeCraneData) {
+            console.log("[MaintenanceReportEditRouter] Dice elevadores pero tiene datos de puente grúa, corrigiendo...");
+            setEquipmentType("puentes-grua");
+          } else {
+            console.log("[MaintenanceReportEditRouter] equipmentType es elevadores");
+            setEquipmentType("elevadores");
+          }
         } else {
-          // Informe EXISTENTE sin equipmentType ni datos de puente grúa
-          // Usar el wizard original para no perder datos
-          console.log("[MaintenanceReportEditRouter] Informe sin tipo definido, usando wizard legacy");
+          // Sin equipmentType definido - usar legacy para no perder datos
+          console.log("[MaintenanceReportEditRouter] Sin equipmentType, usando wizard legacy");
           setEquipmentType("legacy");
         }
 
