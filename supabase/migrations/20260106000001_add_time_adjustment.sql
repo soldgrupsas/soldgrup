@@ -14,3 +14,4 @@ COMMENT ON COLUMN public.attendance_records.adjustment_note IS 'Note explaining 
 
 
 
+

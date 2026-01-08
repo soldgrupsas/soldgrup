@@ -93,7 +93,7 @@ const MaintenanceReportTypeSelector = () => {
             </div>
           </Card>
 
-          {/* Generales */}
+          {/* General */}
           <Card className={`p-6 transition-shadow h-full ${
             GENERAL_BLOCKED
               ? "opacity-60 cursor-not-allowed"
@@ -108,9 +108,9 @@ const MaintenanceReportTypeSelector = () => {
               <div className="p-4 rounded-full bg-gray-500/10">
                 <Settings className="h-12 w-12 text-gray-500" />
               </div>
-              <h3 className="text-xl font-semibold mt-4">Generales</h3>
+              <h3 className="text-xl font-semibold mt-4">General</h3>
               <p className="text-sm text-muted-foreground mt-2 min-h-[40px] flex items-center">
-                Informe de mantenimientos generales
+                Informe de mantenimiento general
               </p>
               <Button className="w-full mt-auto" disabled={GENERAL_BLOCKED}>
                 Seleccionar

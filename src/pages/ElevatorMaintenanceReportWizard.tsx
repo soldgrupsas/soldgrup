@@ -998,13 +998,26 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             initialState: typeof dataObj.initialState === 'string' ? dataObj.initialState : correctDefaultForm.initialState,
             recommendations: typeof dataObj.recommendations === 'string' ? dataObj.recommendations : correctDefaultForm.recommendations,
             checklist: (() => {
-              // IMPORTANTE: Verificar y migrar el checklist si es necesario
+              // IMPORTANTE: Respetar el checklist guardado sin modificarlo
+              // NUNCA migrar el checklist si el equipmentType guardado difiere del prop
+              const savedEquipmentType = dataObj.equipmentType;
+              
               if (Array.isArray(dataObj.checklist) && dataObj.checklist.length > 0) {
                 console.log(`[ElevatorMaintenanceReportWizard] Checklist guardado con ${dataObj.checklist.length} items`);
+                console.log(`[ElevatorMaintenanceReportWizard] equipmentType guardado: ${savedEquipmentType}, prop: ${equipmentType}`);
                 
-                // Si es puentes-grua, verificar si los items tienen nombres de elevadores
-                // y migrarlos si es necesario
-                if (equipmentType === "puentes-grua") {
+                // PROTECCIÓN: Si hay un equipmentType guardado diferente al prop, 
+                // SIEMPRE respetar el checklist guardado sin migrar
+                if (savedEquipmentType && savedEquipmentType !== equipmentType) {
+                  console.warn(`[ElevatorMaintenanceReportWizard] ⚠️ equipmentType guardado (${savedEquipmentType}) difiere del prop (${equipmentType}). Respetando checklist guardado SIN migrar.`);
+                  return dataObj.checklist;
+                }
+                
+                // Solo migrar si:
+                // 1. El informe es de puentes-grua (según prop Y guardado)
+                // 2. El checklist tiene nombres de elevadores (error de datos históricos)
+                // 3. NO hay equipmentType guardado (informe legacy siendo convertido intencionalmente)
+                if (equipmentType === "puentes-grua" && (!savedEquipmentType || savedEquipmentType === "puentes-grua")) {
                   const firstItemName = dataObj.checklist[0]?.name;
                   const hasElevatorNames = firstItemName === "Motor elevación" || 
                                            firstItemName === "Freno elevación" ||
@@ -1018,6 +1031,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                   }
                 }
                 
+                // Por defecto: devolver el checklist guardado sin modificar
                 return dataObj.checklist;
               }
               
@@ -2667,7 +2681,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             </Button>
             <div>
               <h1 className="text-3xl font-bold">
-                Informe de Mantenimiento - {equipmentType === "puentes-grua" ? "Puentes Grúa" : "Elevadores"}
+                Informe de Mantenimiento {equipmentType === "puentes-grua" ? "- Puentes Grúa" : equipmentType === "mantenimientos-generales" ? "General" : "- Elevadores"}
               </h1>
               <p className="text-muted-foreground">
                 {isEditMode ? "Editando informe existente" : "Nuevo informe"}

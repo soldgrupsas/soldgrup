@@ -12,11 +12,13 @@ type EquipmentType = "elevadores" | "puentes-grua" | "mantenimientos-generales" 
 /**
  * Este componente detecta el tipo de informe y renderiza el wizard correcto.
  * 
+ * IMPORTANTE: Los informes NUEVOS (con equipmentType definido) SIEMPRE respetan su tipo original.
+ * NO se cambia el tipo de informes nuevos - el equipmentType es la fuente de verdad.
+ * 
  * - Informes con equipmentType "puentes-grua" -> ElevatorMaintenanceReportWizard con equipmentType="puentes-grua"
  * - Informes con equipmentType "elevadores" -> ElevatorMaintenanceReportWizard con equipmentType="elevadores"
  * - Informes con equipmentType "mantenimientos-generales" -> ElevatorMaintenanceReportWizard con equipmentType="mantenimientos-generales"
- * - Informes antiguos sin equipmentType -> Se detecta automáticamente basándose en los datos (trolleyGroup, carrosTesteros)
- * - Si tiene datos de puente grúa pero equipmentType="elevadores" -> Se corrige a "puentes-grua"
+ * - Informes LEGACY (sin equipmentType) -> MaintenanceReportWizard original para preservar formato
  */
 const MaintenanceReportEditRouter = () => {
   const params = useParams<{ id: string }>();
@@ -62,10 +64,13 @@ const MaintenanceReportEditRouter = () => {
         console.log("[MaintenanceReportEditRouter] reportData.equipmentType:", reportData?.equipmentType);
         
         // LÓGICA SIMPLE Y DIRECTA:
+        // Los informes NUEVOS (con equipmentType definido) SIEMPRE respetan su tipo original.
+        // NO se debe cambiar el tipo de informes nuevos, solo de informes legacy.
+        // 
         // 1. Si tiene equipmentType = "puentes-grua" → usar puentes-grua
-        // 2. Si tiene equipmentType = "elevadores" → verificar si tiene datos de puente grúa
+        // 2. Si tiene equipmentType = "elevadores" → usar elevadores (SIN cambiar)
         // 3. Si tiene equipmentType = "mantenimientos-generales" → usar ese tipo
-        // 4. Si no tiene equipmentType → usar legacy
+        // 4. Si NO tiene equipmentType → informe legacy, detectar automáticamente
         
         if (reportData?.equipmentType === "puentes-grua") {
           // Tipo explícito: puentes-grua
@@ -76,23 +81,29 @@ const MaintenanceReportEditRouter = () => {
           console.log("[MaintenanceReportEditRouter] equipmentType es mantenimientos-generales");
           setEquipmentType("mantenimientos-generales");
         } else if (reportData?.equipmentType === "elevadores") {
-          // Verificar si realmente es elevador o si tiene datos de puente grúa
+          // Tipo explícito: elevadores - RESPETAR sin cambiar
+          // Los informes nuevos de elevadores también tienen trolleyData, pero eso no significa
+          // que sean puentes grúa. El equipmentType es la fuente de verdad.
+          console.log("[MaintenanceReportEditRouter] equipmentType es elevadores, respetando tipo original");
+          setEquipmentType("elevadores");
+        } else if (!reportData?.equipmentType) {
+          // Sin equipmentType definido - SOLO aquí aplicar detección automática para informes legacy
+          // Verificar si tiene datos de puente grúa (trolleyGroup del wizard antiguo)
           const hasBridgeCraneData = 
             (data.trolley_group && typeof data.trolley_group === 'object' && Object.keys(data.trolley_group as object).length > 0) ||
             (data.carros_testeros && typeof data.carros_testeros === 'object' && Object.keys(data.carros_testeros as object).length > 0) ||
-            (reportData?.trolleyGroup && typeof reportData.trolleyGroup === 'object') ||
-            (reportData?.trolleyData && typeof reportData.trolleyData === 'object');
+            (reportData?.trolleyGroup && typeof reportData.trolleyGroup === 'object');
           
           if (hasBridgeCraneData) {
-            console.log("[MaintenanceReportEditRouter] Dice elevadores pero tiene datos de puente grúa, corrigiendo...");
-            setEquipmentType("puentes-grua");
+            console.log("[MaintenanceReportEditRouter] Informe legacy con datos de puente grúa, usando wizard legacy para preservar formato");
+            setEquipmentType("legacy");
           } else {
-            console.log("[MaintenanceReportEditRouter] equipmentType es elevadores");
-            setEquipmentType("elevadores");
+            console.log("[MaintenanceReportEditRouter] Informe legacy sin datos especiales, usando wizard legacy");
+            setEquipmentType("legacy");
           }
         } else {
-          // Sin equipmentType definido - usar legacy para no perder datos
-          console.log("[MaintenanceReportEditRouter] Sin equipmentType, usando wizard legacy");
+          // Otro valor de equipmentType desconocido - usar legacy para no perder datos
+          console.log("[MaintenanceReportEditRouter] equipmentType desconocido:", reportData?.equipmentType, ", usando wizard legacy");
           setEquipmentType("legacy");
         }
 

@@ -792,39 +792,75 @@ Deno.serve(async (req) => {
     } else {
       // PARA ELEVADORES Y PUENTES GRÚA: usar lista de chequeo normal
     
+    // IMPORTANTE: Guardar una copia del checklist original ANTES de agregar items del trolley/carros testeros
+    // Esto asegura que los índices correspondan correctamente a los items del fallbackList
+    const originalChecklistItems = checklistEntriesRaw.slice(0, Math.min(checklistEntriesRaw.length, fallbackList.length));
+    
+    console.log('[maintenance-pdf] ========== CHECKLIST ORIGINAL (sin trolley/carros) ==========');
+    console.log('[maintenance-pdf] originalChecklistItems tiene', originalChecklistItems.length, 'items');
+    originalChecklistItems.forEach((entry: any, idx: number) => {
+      const name = entry?.name || 'SIN NOMBRE';
+      const status = entry?.status || 'null';
+      console.log(`[maintenance-pdf]   ${idx}: "${name}" -> status=${status}`);
+    });
+    console.log('[maintenance-pdf] ==============================================================');
+    
     // Crear un mapa de todos los items guardados por nombre normalizado
     const savedItemsMap = new Map<string, any>();
-    checklistEntriesRaw.forEach((entry: any) => {
-      if (entry && typeof entry.name === 'string') {
-        const key = normalizeName(entry.name);
-        savedItemsMap.set(key, entry);
-        
-        // Si es puentes-grua, también agregar con el nombre mapeado
-        // Esto permite encontrar "Motor de elevación" aunque esté guardado como "Motor elevación"
-        if (equipmentType === 'puentes-grua') {
-          const mappedKey = normalizeNameWithMapping(entry.name, equipmentType);
-          if (mappedKey !== key) {
-            console.log(`[maintenance-pdf] 🔄 Mapeando "${entry.name}" (${key}) -> (${mappedKey})`);
-            savedItemsMap.set(mappedKey, entry);
+    // También crear un mapa por índice para fallback (usando el checklist original)
+    const savedItemsByIndex = new Map<number, any>();
+    
+    // Primero, agregar los items del checklist original por índice
+    originalChecklistItems.forEach((entry: any, idx: number) => {
+      if (entry) {
+        savedItemsByIndex.set(idx, entry);
+        if (typeof entry.name === 'string') {
+          const key = normalizeName(entry.name);
+          savedItemsMap.set(key, entry);
+          
+          // Si es puentes-grua, también agregar con el nombre mapeado
+          if (equipmentType === 'puentes-grua') {
+            const mappedKey = normalizeNameWithMapping(entry.name, equipmentType);
+            if (mappedKey !== key) {
+              console.log(`[maintenance-pdf] 🔄 Mapeando "${entry.name}" (${key}) -> (${mappedKey})`);
+              savedItemsMap.set(mappedKey, entry);
+            }
           }
         }
       }
     });
     
+    // También agregar items adicionales (trolley, carros testeros) al mapa por nombre
+    checklistEntriesRaw.forEach((entry: any) => {
+      if (entry && typeof entry.name === 'string') {
+        const key = normalizeName(entry.name);
+        if (!savedItemsMap.has(key)) {
+          savedItemsMap.set(key, entry);
+        }
+      }
+    });
+    
+    console.log('[maintenance-pdf] savedItemsByIndex tiene', savedItemsByIndex.size, 'items');
+    
+    // DEBUG: Verificar TODOS los items del checklist guardado
+    console.log('[maintenance-pdf] ========== DEBUG ITEMS DEL CHECKLIST ==========');
+    console.log('[maintenance-pdf] Total items en checklistEntriesRaw:', checklistEntriesRaw.length);
+    console.log('[maintenance-pdf] Items guardados (primeros 20):');
+    checklistEntriesRaw.slice(0, 20).forEach((entry: any, idx: number) => {
+      const name = entry?.name || 'SIN NOMBRE';
+      const status = entry?.status || 'null';
+      const obs = entry?.observation?.substring(0, 20) || '';
+      console.log(`[maintenance-pdf]   ${idx}: "${name}" -> status=${status}${obs ? `, obs="${obs}..."` : ''}`);
+    });
+    
     // DEBUG: Verificar items problemáticos específicos
-    console.log('[maintenance-pdf] ========== DEBUG ITEMS PROBLEMÁTICOS ==========');
-    const itemsProblematicos = [
-      'Motor de elevación',
-      'Freno motor de elevación',
-      'Sistema de cables planos',
-      'Polipasto',
-      'Límite de elevación',
-      'Limitador de carga'
-    ];
-    itemsProblematicos.forEach(itemName => {
+    console.log('[maintenance-pdf] -----');
+    console.log('[maintenance-pdf] Verificando items de fallbackList en savedItemsMap:');
+    fallbackList.forEach((itemName: string, idx: number) => {
       const key = normalizeName(itemName);
       const found = savedItemsMap.get(key);
-      console.log(`[maintenance-pdf] "${itemName}" (key: "${key}"): ${found ? `✅ status=${found.status}, obs=${found.observation?.substring(0, 30) || 'vacío'}` : '❌ NO ENCONTRADO'}`);
+      const rawItem = checklistEntriesRaw[idx];
+      console.log(`[maintenance-pdf]   ${idx}: "${itemName}" (key: "${key}"): ${found ? `✅ mapa` : '❌ mapa'} | raw[${idx}]: ${rawItem?.name ? `"${rawItem.name}"` : 'undefined'}`);
     });
     console.log('[maintenance-pdf] Todos los keys en savedItemsMap:', Array.from(savedItemsMap.keys()).join(', '));
     console.log('[maintenance-pdf] ==================================================');
@@ -913,20 +949,47 @@ Deno.serve(async (req) => {
       const name = fallbackList[i];
       const nameLower = normalizeName(name);
       
-      // Buscar el item guardado por nombre normalizado
-      let savedItem = savedItemsMap.get(nameLower);
+      // ESTRATEGIA DE BÚSQUEDA MEJORADA:
+      // 1. Primero usar el índice directo (más confiable para puentes grúa)
+      // 2. Luego buscar por nombre normalizado
+      // 3. Finalmente buscar por coincidencia parcial
       
-      // Si no se encontró por nombre, intentar buscar por índice en checklistEntriesRaw
-      // (esto maneja casos donde los nombres pueden estar ligeramente diferentes)
-      if (!savedItem && i < checklistEntriesRaw.length) {
-        const itemByIndex = checklistEntriesRaw[i];
-        if (itemByIndex && typeof itemByIndex === 'object') {
-          // Verificar si el item por índice tiene datos válidos (status no null o observation no vacía)
-          if (itemByIndex.status || (itemByIndex.observation && itemByIndex.observation.trim())) {
-            console.log(`[maintenance-pdf] ⚡ Usando item por índice ${i} para "${name}":`, itemByIndex.name, 'status:', itemByIndex.status);
-            savedItem = itemByIndex;
-          }
+      let savedItem: any = null;
+      
+      // 1. BÚSQUEDA POR ÍNDICE DIRECTO (prioridad máxima para puentes grúa)
+      if (savedItemsByIndex.has(i)) {
+        savedItem = savedItemsByIndex.get(i);
+        if (savedItem) {
+          console.log(`[maintenance-pdf] 📌 Item ${i} "${name}" encontrado por índice: name="${savedItem.name}", status=${savedItem.status || 'null'}`);
         }
+      }
+      
+      // 2. Si no se encontró por índice, buscar por nombre normalizado
+      if (!savedItem) {
+        savedItem = savedItemsMap.get(nameLower);
+        if (savedItem) {
+          console.log(`[maintenance-pdf] ✅ Item ${i} "${name}" encontrado por nombre: status=${savedItem.status || 'null'}`);
+        }
+      }
+      
+      // 3. Si aún no se encontró, buscar por coincidencia parcial
+      if (!savedItem) {
+        const partialMatch = originalChecklistItems.find((entry: any) => {
+          if (!entry || typeof entry.name !== 'string') return false;
+          const entryNameNorm = normalizeName(entry.name);
+          const firstWord = nameLower.split(' ')[0];
+          return entryNameNorm.startsWith(firstWord) || nameLower.startsWith(entryNameNorm.split(' ')[0]);
+        });
+        
+        if (partialMatch) {
+          console.log(`[maintenance-pdf] 🔍 Item ${i} "${name}" encontrado por coincidencia parcial: "${partialMatch.name}", status=${partialMatch.status || 'null'}`);
+          savedItem = partialMatch;
+        }
+      }
+      
+      // Si no se encontró, log de advertencia
+      if (!savedItem) {
+        console.log(`[maintenance-pdf] ❌ Item ${i} "${name}" NO ENCONTRADO en ninguna búsqueda`);
       }
       
       // Agregar item normal
