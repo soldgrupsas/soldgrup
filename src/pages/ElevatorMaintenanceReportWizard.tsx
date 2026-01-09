@@ -1346,8 +1346,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
   const handleNext = () => {
     console.log('[handleNext] Called. currentStepIndex:', currentStepIndex, 'totalSteps:', totalSteps, 'steps.length:', steps.length);
+    console.log('[handleNext] Current step key:', steps[currentStepIndex]?.key);
+    console.log('[handleNext] Next step key:', steps[currentStepIndex + 1]?.key);
     setCurrentStepIndex((prev) => {
-      const next = Math.min(prev + 1, totalSteps - 1);
+      const next = Math.min(prev + 1, steps.length - 1);
       console.log('[handleNext] Moving from step', prev, 'to', next);
       return next;
     });
