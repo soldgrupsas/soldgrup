@@ -122,3 +122,4 @@ FROM maintenance_reports
 ORDER BY created_at DESC
 LIMIT 1;
 
+

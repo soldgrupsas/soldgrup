@@ -108,3 +108,4 @@ WHERE (data->>'equipmentType') = 'elevadores'
 ORDER BY created_at DESC
 LIMIT 1;
 
+
