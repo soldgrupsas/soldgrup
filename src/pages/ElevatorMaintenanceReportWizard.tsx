@@ -502,14 +502,19 @@ const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
   ];
 };
 
-const steps: StepDefinition[] = buildSteps();
-const totalSteps = steps.length;
+// NOTA: NO crear constantes globales steps/totalSteps aquí
+// Cada instancia del componente debe construir sus propios steps basados en equipmentType
 
 interface MaintenanceReportWizardProps {
   equipmentType?: EquipmentType;
 }
 
 const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceReportWizardProps = {}) => {
+  // LOG IMPORTANTE: Ver qué equipmentType recibe el componente
+  console.log('[MaintenanceReportWizard] ========== INICIO COMPONENTE ==========');
+  console.log('[MaintenanceReportWizard] equipmentType prop recibido:', equipmentType);
+  console.log('[MaintenanceReportWizard] typeof equipmentType:', typeof equipmentType);
+  
   const navigate = useNavigate();
   const params = useParams<{ id?: string }>();
   const isEditMode = Boolean(params.id);
@@ -517,8 +522,14 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const { user, session, loading: authLoading } = useAuth();
 
   // Construir steps y formData según el tipo de equipo
-  const [steps] = useState<StepDefinition[]>(() => buildSteps(equipmentType));
-  const [totalSteps] = useState(() => steps.length);
+  const [steps] = useState<StepDefinition[]>(() => {
+    console.log('[MaintenanceReportWizard] buildSteps llamado con equipmentType:', equipmentType);
+    const builtSteps = buildSteps(equipmentType);
+    console.log('[MaintenanceReportWizard] steps construidos:', builtSteps.length, 'pasos');
+    console.log('[MaintenanceReportWizard] primer paso:', builtSteps[0]?.key);
+    return builtSteps;
+  });
+  const totalSteps = steps.length; // Derivar directamente, no usar useState
   
   const [formData, setFormData] = useState<MaintenanceReportForm>(() => buildDefaultForm(equipmentType));
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
