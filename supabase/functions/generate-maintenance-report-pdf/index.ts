@@ -278,14 +278,39 @@ Deno.serve(async (req) => {
     
     console.log('[maintenance-pdf] =========================================');
     
-    // Detectar el tipo de equipo para usar la lista correcta de items
-    // Puede estar en reportData.equipmentType o inferirse de la ruta/contexto
-    let equipmentType = reportData.equipmentType || nestedData?.equipmentType || undefined;
+    // ========== DETECCIÓN DE EQUIPMENT TYPE ==========
+    // IMPORTANTE: El equipmentType guardado es la FUENTE DE VERDAD
+    // NO inferir ni cambiar el tipo si ya existe uno guardado
     
-    // Si no hay equipmentType explícito, intentar inferirlo de los items del checklist
-    if (!equipmentType) {
+    // Buscar equipmentType en todos los lugares posibles
+    const savedEquipmentType = 
+      reportData.equipmentType ||  // Nivel principal (informes nuevos)
+      nestedData?.equipmentType || // Por si hay doble anidación
+      undefined;
+    
+    console.log('[maintenance-pdf] ========== BÚSQUEDA DE EQUIPMENT TYPE ==========');
+    console.log('[maintenance-pdf] reportData.equipmentType:', reportData.equipmentType);
+    console.log('[maintenance-pdf] nestedData?.equipmentType:', nestedData?.equipmentType);
+    console.log('[maintenance-pdf] savedEquipmentType encontrado:', savedEquipmentType);
+    
+    let equipmentType: string | undefined = undefined;
+    
+    // Si hay un equipmentType guardado, usarlo SIEMPRE sin modificar
+    if (savedEquipmentType && typeof savedEquipmentType === 'string' && savedEquipmentType.trim() !== '') {
+      equipmentType = savedEquipmentType;
+      console.log('[maintenance-pdf] ✅ Usando equipmentType GUARDADO:', equipmentType);
+    } else {
+      // SOLO para informes LEGACY (sin equipmentType): intentar inferir
+      console.log('[maintenance-pdf] ⚠️ No hay equipmentType guardado, inferiendo para informe legacy...');
+      
       const checklistToCheck = Array.isArray(reportData.checklist) ? reportData.checklist : 
                                (nestedData && Array.isArray(nestedData.checklist) ? nestedData.checklist : []);
+      
+      // Verificar procedimientos para mantenimientos generales
+      const hasProcedimientos = Array.isArray(reportData.procedimientos) || 
+                                (nestedData && Array.isArray(nestedData.procedimientos));
+      const procedimientosCount = Array.isArray(reportData.procedimientos) ? reportData.procedimientos.length :
+                                  (nestedData && Array.isArray(nestedData.procedimientos) ? nestedData.procedimientos.length : 0);
       
       // Buscar items característicos de cada tipo
       const hasMotorDeElevacion = checklistToCheck.some((item: any) => 
@@ -296,10 +321,15 @@ Deno.serve(async (req) => {
         item?.name?.toLowerCase() === 'motor elevación' || 
         item?.name?.toLowerCase() === 'motor elevacion'
       );
-      const hasProcedimientos = Array.isArray(reportData.procedimientos) || 
-                                (nestedData && Array.isArray(nestedData.procedimientos));
       
-      if (hasProcedimientos && checklistToCheck.length === 0) {
+      console.log('[maintenance-pdf] Inferencia - checklistToCheck.length:', checklistToCheck.length);
+      console.log('[maintenance-pdf] Inferencia - hasProcedimientos:', hasProcedimientos);
+      console.log('[maintenance-pdf] Inferencia - procedimientosCount:', procedimientosCount);
+      console.log('[maintenance-pdf] Inferencia - hasMotorDeElevacion:', hasMotorDeElevacion);
+      console.log('[maintenance-pdf] Inferencia - hasMotorElevacion:', hasMotorElevacion);
+      
+      // Inferir tipo solo para informes legacy
+      if (hasProcedimientos && procedimientosCount > 0 && checklistToCheck.length === 0) {
         equipmentType = 'mantenimientos-generales';
       } else if (hasMotorDeElevacion) {
         equipmentType = 'puentes-grua';
@@ -307,17 +337,16 @@ Deno.serve(async (req) => {
         equipmentType = 'elevadores';
       }
       
-      console.log('[maintenance-pdf] ⚠️ equipmentType inferido de los datos:', equipmentType);
+      console.log('[maintenance-pdf] ⚠️ equipmentType INFERIDO para legacy:', equipmentType);
     }
     
     const dynamicChecklistFallback = getChecklistItems(equipmentType);
-    console.log('[maintenance-pdf] ========== DETECCIÓN EQUIPMENT TYPE ==========');
-    console.log('[maintenance-pdf] reportData.equipmentType:', reportData.equipmentType);
-    console.log('[maintenance-pdf] nestedData?.equipmentType:', nestedData?.equipmentType);
-    console.log('[maintenance-pdf] Equipment type final:', equipmentType);
+    console.log('[maintenance-pdf] ========== RESULTADO FINAL EQUIPMENT TYPE ==========');
+    console.log('[maintenance-pdf] Equipment type FINAL:', equipmentType);
     console.log('[maintenance-pdf] Es puentes-grua?', equipmentType === 'puentes-grua');
+    console.log('[maintenance-pdf] Es elevadores?', equipmentType === 'elevadores');
+    console.log('[maintenance-pdf] Es mantenimientos-generales?', equipmentType === 'mantenimientos-generales');
     console.log('[maintenance-pdf] Using checklist con', dynamicChecklistFallback.length, 'items');
-    console.log('[maintenance-pdf] Items de la lista:', dynamicChecklistFallback.join(', '));
     console.log('[maintenance-pdf] ==================================================');
     
     const reportPhotosArray = Array.isArray(reportData.photos) ? reportData.photos : [];
