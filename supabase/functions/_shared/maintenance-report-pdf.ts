@@ -66,6 +66,45 @@ const pageWidth = 612; // Letter
 const pageHeight = 792;
 const contentWidth = pageWidth - margin * 2;
 
+// Función para convertir HTML a texto plano preservando formato básico
+function stripHtmlToText(html: string | null | undefined): string {
+  if (!html) return '';
+  
+  let text = html;
+  
+  // Reemplazar <br> y <br/> con saltos de línea
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  
+  // Reemplazar </p> y </div> con saltos de línea
+  text = text.replace(/<\/(p|div)>/gi, '\n');
+  
+  // Reemplazar </li> con salto de línea
+  text = text.replace(/<\/li>/gi, '\n');
+  
+  // Reemplazar <li> con viñeta
+  text = text.replace(/<li[^>]*>/gi, '• ');
+  
+  // Eliminar otras etiquetas HTML
+  text = text.replace(/<[^>]+>/g, '');
+  
+  // Decodificar entidades HTML comunes
+  text = text.replace(/&nbsp;/gi, ' ');
+  text = text.replace(/&amp;/gi, '&');
+  text = text.replace(/&lt;/gi, '<');
+  text = text.replace(/&gt;/gi, '>');
+  text = text.replace(/&quot;/gi, '"');
+  text = text.replace(/&#39;/gi, "'");
+  text = text.replace(/&#10;/gi, '\n');
+  
+  // Limpiar múltiples saltos de línea consecutivos
+  text = text.replace(/\n{3,}/g, '\n\n');
+  
+  // Limpiar espacios al inicio y final de cada línea
+  text = text.split('\n').map(line => line.trim()).join('\n');
+  
+  return text.trim();
+}
+
 const headingColor = rgb(0, 0, 0);
 const textColor = rgb(0.2, 0.2, 0.2);
 const mutedColor = rgb(0.5, 0.5, 0.5);
@@ -679,7 +718,10 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
 
   const drawParagraph = (text: string | null | undefined) => {
     if (!text?.trim()) return;
-    const chunks = text.replace(/\r\n/g, '\n').split('\n');
+    // Convertir HTML a texto plano si es necesario
+    const plainText = stripHtmlToText(text);
+    if (!plainText.trim()) return;
+    const chunks = plainText.replace(/\r\n/g, '\n').split('\n');
     const lines: string[] = [];
     chunks.forEach((chunk, index) => {
       const trimmed = chunk.trim();
@@ -921,7 +963,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         const values = [
           String(entry.index + 1),
           entry.name,
-          entry.observation ?? '',
+          stripHtmlToText(entry.observation) ?? '',
         ];
         drawTableRow(values, colWidthsGen, 14, false, undefined, true);
       });
@@ -948,7 +990,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         entry.status === 'good' ? 'X' : '',
         entry.status === 'bad' ? 'X' : '',
         entry.status === 'na' ? 'X' : '',
-        entry.observation ?? '',
+        stripHtmlToText(entry.observation) ?? '',
       ];
       // Si el estado es "bad", la observación se muestra en rojo
       const cellColors = entry.status === 'bad' 

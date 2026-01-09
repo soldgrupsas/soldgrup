@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -1701,15 +1702,13 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         </RadioGroup>
 
         <div className="space-y-2">
-          <Label htmlFor={`observation-${entry.id}`}>Observación</Label>
-          <Textarea
-            id={`observation-${entry.id}`}
-            rows={5}
-            placeholder="Escriba observaciones relevantes del estado del componente."
+          <Label>Observación</Label>
+          <RichTextEditor
             value={entry.observation}
-            onChange={(event) =>
-              updateChecklistEntry(index, { observation: event.target.value })
+            onChange={(value) =>
+              updateChecklistEntry(index, { observation: value })
             }
+            placeholder="Escriba observaciones relevantes del estado del componente."
           />
         </div>
       </div>
@@ -1786,13 +1785,11 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor={`obs-${proc.id}`}>Observación</Label>
-                  <Textarea
-                    id={`obs-${proc.id}`}
-                    placeholder="Ej: Se cambia la carcaza debido a que presentaba fisuras..."
-                    rows={2}
+                  <Label>Observación</Label>
+                  <RichTextEditor
                     value={proc.observacion}
-                    onChange={(e) => updateProcedimiento(proc.id, "observacion", e.target.value)}
+                    onChange={(value) => updateProcedimiento(proc.id, "observacion", value)}
+                    placeholder="Ej: Se cambia la carcaza debido a que presentaba fisuras..."
                   />
                 </div>
               </div>
@@ -1961,12 +1958,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                     N/A
                   </Label>
                 </RadioGroup>
-                <Textarea
-                  placeholder={`Observación de ${subItem.name}`}
-                  rows={2}
+                <RichTextEditor
                   value={subItem.observation}
-                  onChange={(e) => updateSubItemObservation(subItem.id, e.target.value)}
-                  className="text-sm"
+                  onChange={(value) => updateSubItemObservation(subItem.id, value)}
+                  placeholder={`Observación de ${subItem.name}`}
                 />
               </div>
             ))}
@@ -1975,13 +1970,11 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
         {/* Observación general */}
         <div className="space-y-2">
-          <Label htmlFor="trolley-observation">Observaciones generales del Trolley</Label>
-          <Textarea
-            id="trolley-observation"
-            rows={4}
-            placeholder="Escriba observaciones generales sobre el Trolley."
+          <Label>Observaciones generales del Trolley</Label>
+          <RichTextEditor
             value={safeTrolley.observation}
-            onChange={(event) => updateObservation(event.target.value)}
+            onChange={(value) => updateObservation(value)}
+            placeholder="Escriba observaciones generales sobre el Trolley."
           />
         </div>
       </div>
@@ -2142,12 +2135,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                     N/A
                   </Label>
                 </RadioGroup>
-                <Textarea
-                  placeholder={`Observación de ${subItem.name}`}
-                  rows={2}
+                <RichTextEditor
                   value={subItem.observation}
-                  onChange={(e) => updateSubItemObservation(subItem.id, e.target.value)}
-                  className="text-sm"
+                  onChange={(value) => updateSubItemObservation(subItem.id, value)}
+                  placeholder={`Observación de ${subItem.name}`}
                 />
               </div>
             ))}
@@ -2156,13 +2147,11 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
         {/* Observación general */}
         <div className="space-y-2">
-          <Label htmlFor="carros-testeros-observation">Observaciones generales de Carros testeros</Label>
-          <Textarea
-            id="carros-testeros-observation"
-            rows={4}
-            placeholder="Escriba observaciones generales sobre Carros testeros."
+          <Label>Observaciones generales de Carros testeros</Label>
+          <RichTextEditor
             value={safeCarrosTesteros.observation}
-            onChange={(event) => updateObservation(event.target.value)}
+            onChange={(value) => updateObservation(value)}
+            placeholder="Escriba observaciones generales sobre Carros testeros."
           />
         </div>
       </div>
@@ -2425,11 +2414,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             <p className="text-sm text-muted-foreground">
               Describa cómo encontró el equipo antes de iniciar las labores de mantenimiento.
             </p>
-            <Textarea
-              rows={5}
+            <RichTextEditor
               value={formData.initialState}
-              onChange={(event) =>
-                setFormData((prev) => ({ ...prev, initialState: event.target.value }))
+              onChange={(value) =>
+                setFormData((prev) => ({ ...prev, initialState: value }))
               }
               placeholder="Ejemplo: El polipasto presentaba ruidos inusuales en el motor de elevación y se observaron fugas de aceite en la carcasa."
             />
@@ -2439,23 +2427,18 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         return (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente. Separe
-              diferentes recomendaciones por líneas y enumeradas. Ejemplo:
+              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente.
+              Use los botones de formato para aplicar negrita, cursiva o crear listas.
             </p>
-            <pre className="rounded-md bg-muted/70 p-4 text-sm text-muted-foreground">
-              1. Se debe reemplazar el botón del paro de emergencia.
-              {"\n"}2. Revisar fuga de aceite del Polipasto.
-            </pre>
-            <Textarea
-              rows={10}
+            <RichTextEditor
               value={formData.recommendations}
-              onChange={(event) =>
+              onChange={(value) =>
                 setFormData((prev) => ({
                   ...prev,
-                  recommendations: event.target.value,
+                  recommendations: value,
                 }))
               }
-              placeholder="1. ...&#10;2. ..."
+              placeholder="Escriba las recomendaciones aquí..."
             />
           </div>
         );

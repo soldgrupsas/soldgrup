@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
@@ -1614,15 +1615,13 @@ const MaintenanceReportWizard = () => {
         </RadioGroup>
 
         <div className="space-y-2">
-          <Label htmlFor={`observation-${entry.id}`}>Observación</Label>
-          <Textarea
-            id={`observation-${entry.id}`}
-            rows={5}
-            placeholder="Escriba observaciones relevantes del estado del componente."
+          <Label>Observación</Label>
+          <RichTextEditor
             value={entry.observation}
-            onChange={(event) =>
-              updateChecklistEntry(index, { observation: event.target.value })
+            onChange={(value) =>
+              updateChecklistEntry(index, { observation: value })
             }
+            placeholder="Escriba observaciones relevantes del estado del componente."
           />
         </div>
       </div>
@@ -1770,13 +1769,11 @@ const MaintenanceReportWizard = () => {
         {renderTrolleyItem("ruedasTrolley", displayGroup.ruedasTrolley)}
 
         <div className="space-y-2">
-          <Label htmlFor="trolley-observation">Observaciones generales del Trolley</Label>
-          <Textarea
-            id="trolley-observation"
-            rows={5}
-            placeholder="Escriba observaciones relevantes sobre el Trolley y sus componentes."
+          <Label>Observaciones generales del Trolley</Label>
+          <RichTextEditor
             value={displayGroup.observation}
-            onChange={(event) => updateTrolleyObservation(event.target.value)}
+            onChange={(value) => updateTrolleyObservation(value)}
+            placeholder="Escriba observaciones relevantes sobre el Trolley y sus componentes."
           />
         </div>
       </div>
@@ -1941,13 +1938,11 @@ const MaintenanceReportWizard = () => {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="carros-observation">Observaciones generales de Carros testeros</Label>
-          <Textarea
-            id="carros-observation"
-            rows={5}
-            placeholder="Escriba observaciones relevantes sobre los Carros testeros y sus componentes."
+          <Label>Observaciones generales de Carros testeros</Label>
+          <RichTextEditor
             value={displayCarrosTesteros.observation}
-            onChange={(event) => updateObservation(event.target.value)}
+            onChange={(value) => updateObservation(value)}
+            placeholder="Escriba observaciones relevantes sobre los Carros testeros y sus componentes."
           />
         </div>
       </div>
@@ -2128,11 +2123,10 @@ const MaintenanceReportWizard = () => {
             <p className="text-sm text-muted-foreground">
               Describa cómo encontró el equipo antes de iniciar las labores de mantenimiento.
             </p>
-            <Textarea
-              rows={5}
+            <RichTextEditor
               value={formData.initialState}
-              onChange={(event) =>
-                setFormData((prev) => ({ ...prev, initialState: event.target.value }))
+              onChange={(value) =>
+                setFormData((prev) => ({ ...prev, initialState: value }))
               }
               placeholder="Ejemplo: El polipasto presentaba ruidos inusuales en el motor de elevación y se observaron fugas de aceite en la carcasa."
             />
@@ -2142,23 +2136,18 @@ const MaintenanceReportWizard = () => {
         return (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente. Separe
-              diferentes recomendaciones por líneas y enumeradas. Ejemplo:
+              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente.
+              Use los botones de formato para aplicar negrita, cursiva o crear listas.
             </p>
-            <pre className="rounded-md bg-muted/70 p-4 text-sm text-muted-foreground">
-              1. Se debe reemplazar el botón del paro de emergencia.
-              {"\n"}2. Revisar fuga de aceite del Polipasto.
-            </pre>
-            <Textarea
-              rows={10}
+            <RichTextEditor
               value={formData.recommendations}
-              onChange={(event) =>
+              onChange={(value) =>
                 setFormData((prev) => ({
                   ...prev,
-                  recommendations: event.target.value,
+                  recommendations: value,
                 }))
               }
-              placeholder="1. ...&#10;2. ..."
+              placeholder="Escriba las recomendaciones aquí..."
             />
           </div>
         );
