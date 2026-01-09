@@ -1166,7 +1166,13 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       // Esto evita errores cuando se editan informes creados con versiones anteriores del wizard
       const savedStepIndex = Math.max((data.current_step ?? 1) - 1, 0);
       const maxValidStepIndex = steps.length - 1;
-      setCurrentStepIndex(Math.min(savedStepIndex, maxValidStepIndex));
+      const finalStepIndex = Math.min(savedStepIndex, maxValidStepIndex);
+      console.log('[loadExistingReport] data.current_step:', data.current_step);
+      console.log('[loadExistingReport] savedStepIndex:', savedStepIndex);
+      console.log('[loadExistingReport] maxValidStepIndex:', maxValidStepIndex);
+      console.log('[loadExistingReport] finalStepIndex:', finalStepIndex);
+      console.log('[loadExistingReport] steps.length:', steps.length);
+      setCurrentStepIndex(finalStepIndex);
       if (data.updated_at) {
         try {
           setLastSavedAt(new Date(data.updated_at));
@@ -1591,9 +1597,16 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const progressValue = ((currentStepIndex + 1) / totalSteps) * 100;
   const currentStep = steps[currentStepIndex];
   
+  // DEBUG: Log para diagnosticar el problema
+  console.log('[Render] currentStepIndex:', currentStepIndex, 'totalSteps:', totalSteps);
+  console.log('[Render] currentStep:', currentStep?.key, currentStep?.title);
+  console.log('[Render] steps[0]:', steps[0]?.key, 'steps[1]:', steps[1]?.key, 'steps[24]:', steps[24]?.key);
+  
   // Validación defensiva: si currentStep es undefined (por ejemplo, si currentStepIndex está fuera de rango)
   // usar el primer paso como fallback para evitar errores
   const safeCurrentStep = currentStep ?? steps[0] ?? { key: "intro", title: "Informe de Mantenimiento" };
+  
+  console.log('[Render] safeCurrentStep.key:', safeCurrentStep.key);
 
   const isLastStep = currentStepIndex === totalSteps - 1;
   const isFirstStep = currentStepIndex === 0;
