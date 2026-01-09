@@ -1039,8 +1039,15 @@ const MaintenanceReportWizard = () => {
       console.log('[MaintenanceReportWizard] carrosTesteros.subItems count:', data.carrosTesteros.subItems?.length ?? 0);
     }
     
+    // IMPORTANTE: El wizard legacy se usa para puentes grúa antiguos
+    // Incluir equipmentType para que el PDF lo detecte correctamente
+    const dataWithEquipmentType = {
+      ...data,
+      equipmentType: 'puentes-grua' as const, // Este wizard legacy es SOLO para puentes grúa
+    };
+    
     const payload = {
-      data,
+      data: dataWithEquipmentType,
       current_step: stepIndex + 1,
       start_date: data.startDate || null,
       end_date: data.endDate || null,
