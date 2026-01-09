@@ -502,6 +502,9 @@ const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
   ];
 };
 
+const steps: StepDefinition[] = buildSteps();
+const totalSteps = steps.length;
+
 interface MaintenanceReportWizardProps {
   equipmentType?: EquipmentType;
 }
@@ -514,14 +517,8 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const { user, session, loading: authLoading } = useAuth();
 
   // Construir steps y formData según el tipo de equipo
-  // IMPORTANTE: Calculamos steps una vez y derivamos totalSteps de él
-  const [steps] = useState<StepDefinition[]>(() => {
-    const builtSteps = buildSteps(equipmentType);
-    console.log('[ElevatorMaintenanceReportWizard] buildSteps para', equipmentType, '- Total pasos:', builtSteps.length);
-    return builtSteps;
-  });
-  // Derivar totalSteps directamente de steps para evitar desincronización
-  const totalSteps = steps.length;
+  const [steps] = useState<StepDefinition[]>(() => buildSteps(equipmentType));
+  const [totalSteps] = useState(() => steps.length);
   
   const [formData, setFormData] = useState<MaintenanceReportForm>(() => buildDefaultForm(equipmentType));
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -1166,13 +1163,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       // Esto evita errores cuando se editan informes creados con versiones anteriores del wizard
       const savedStepIndex = Math.max((data.current_step ?? 1) - 1, 0);
       const maxValidStepIndex = steps.length - 1;
-      const finalStepIndex = Math.min(savedStepIndex, maxValidStepIndex);
-      console.log('[loadExistingReport] data.current_step:', data.current_step);
-      console.log('[loadExistingReport] savedStepIndex:', savedStepIndex);
-      console.log('[loadExistingReport] maxValidStepIndex:', maxValidStepIndex);
-      console.log('[loadExistingReport] finalStepIndex:', finalStepIndex);
-      console.log('[loadExistingReport] steps.length:', steps.length);
-      setCurrentStepIndex(finalStepIndex);
+      setCurrentStepIndex(Math.min(savedStepIndex, maxValidStepIndex));
       if (data.updated_at) {
         try {
           setLastSavedAt(new Date(data.updated_at));
@@ -1345,14 +1336,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   };
 
   const handleNext = () => {
-    console.log('[handleNext] Called. currentStepIndex:', currentStepIndex, 'totalSteps:', totalSteps, 'steps.length:', steps.length);
-    console.log('[handleNext] Current step key:', steps[currentStepIndex]?.key);
-    console.log('[handleNext] Next step key:', steps[currentStepIndex + 1]?.key);
-    setCurrentStepIndex((prev) => {
-      const next = Math.min(prev + 1, steps.length - 1);
-      console.log('[handleNext] Moving from step', prev, 'to', next);
-      return next;
-    });
+    setCurrentStepIndex((prev) => Math.min(prev + 1, totalSteps - 1));
   };
 
   const handlePrev = () => {
@@ -1599,16 +1583,9 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const progressValue = ((currentStepIndex + 1) / totalSteps) * 100;
   const currentStep = steps[currentStepIndex];
   
-  // DEBUG: Log para diagnosticar el problema
-  console.log('[Render] currentStepIndex:', currentStepIndex, 'totalSteps:', totalSteps);
-  console.log('[Render] currentStep:', currentStep?.key, currentStep?.title);
-  console.log('[Render] steps[0]:', steps[0]?.key, 'steps[1]:', steps[1]?.key, 'steps[24]:', steps[24]?.key);
-  
   // Validación defensiva: si currentStep es undefined (por ejemplo, si currentStepIndex está fuera de rango)
   // usar el primer paso como fallback para evitar errores
   const safeCurrentStep = currentStep ?? steps[0] ?? { key: "intro", title: "Informe de Mantenimiento" };
-  
-  console.log('[Render] safeCurrentStep.key:', safeCurrentStep.key);
 
   const isLastStep = currentStepIndex === totalSteps - 1;
   const isFirstStep = currentStepIndex === 0;
