@@ -514,8 +514,15 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const { user, session, loading: authLoading } = useAuth();
 
   // Construir steps y formData según el tipo de equipo
-  const [steps] = useState<StepDefinition[]>(() => buildSteps(equipmentType));
-  const [totalSteps] = useState(() => steps.length);
+  const [steps] = useState<StepDefinition[]>(() => {
+    const builtSteps = buildSteps(equipmentType);
+    console.log('[ElevatorMaintenanceReportWizard] buildSteps para', equipmentType, '- Total pasos:', builtSteps.length);
+    return builtSteps;
+  });
+  const [totalSteps] = useState(() => {
+    console.log('[ElevatorMaintenanceReportWizard] totalSteps inicializado con:', steps.length);
+    return steps.length;
+  });
   
   const [formData, setFormData] = useState<MaintenanceReportForm>(() => buildDefaultForm(equipmentType));
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -1333,7 +1340,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   };
 
   const handleNext = () => {
-    setCurrentStepIndex((prev) => Math.min(prev + 1, totalSteps - 1));
+    console.log('[handleNext] Called. currentStepIndex:', currentStepIndex, 'totalSteps:', totalSteps, 'steps.length:', steps.length);
+    setCurrentStepIndex((prev) => {
+      const next = Math.min(prev + 1, totalSteps - 1);
+      console.log('[handleNext] Moving from step', prev, 'to', next);
+      return next;
+    });
   };
 
   const handlePrev = () => {
