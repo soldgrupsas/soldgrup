@@ -61,7 +61,13 @@ const MaintenanceReportEditRouter = () => {
         // Detectar el tipo de equipo desde los datos guardados
         const reportData = data.data as any;
         
+        console.log("[MaintenanceReportEditRouter] ========== DIAGNÓSTICO DE TIPO ==========");
+        console.log("[MaintenanceReportEditRouter] reportData completo:", JSON.stringify(reportData, null, 2));
         console.log("[MaintenanceReportEditRouter] reportData.equipmentType:", reportData?.equipmentType);
+        console.log("[MaintenanceReportEditRouter] typeof reportData.equipmentType:", typeof reportData?.equipmentType);
+        console.log("[MaintenanceReportEditRouter] checklist length:", reportData?.checklist?.length);
+        console.log("[MaintenanceReportEditRouter] primer item checklist:", reportData?.checklist?.[0]?.name);
+        console.log("[MaintenanceReportEditRouter] ===========================================");
         
         // LÓGICA SIMPLE Y DIRECTA:
         // Los informes NUEVOS (con equipmentType definido) SIEMPRE respetan su tipo original.

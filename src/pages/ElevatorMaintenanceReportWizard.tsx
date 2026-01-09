@@ -1225,13 +1225,19 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     });
     
     // Incluir equipmentType en los datos para que el PDF pueda detectarlo
+    console.log('[buildDbPayload] ========== GUARDANDO INFORME ==========');
     console.log('[buildDbPayload] equipmentType prop value:', equipmentType);
+    console.log('[buildDbPayload] typeof equipmentType:', typeof equipmentType);
     const finalEquipmentType = equipmentType || 'elevadores';
-    console.log('[buildDbPayload] Guardando con equipmentType:', finalEquipmentType);
+    console.log('[buildDbPayload] finalEquipmentType (lo que se guarda):', finalEquipmentType);
+    console.log('[buildDbPayload] checklist length:', data.checklist?.length);
+    console.log('[buildDbPayload] primer item checklist:', data.checklist?.[0]?.name);
     const dataWithEquipmentType = {
       ...data,
       equipmentType: finalEquipmentType,
     };
+    console.log('[buildDbPayload] dataWithEquipmentType.equipmentType:', dataWithEquipmentType.equipmentType);
+    console.log('[buildDbPayload] =======================================');
     
     const payload = {
       data: dataWithEquipmentType,
