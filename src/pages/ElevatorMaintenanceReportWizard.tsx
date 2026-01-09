@@ -514,15 +514,14 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const { user, session, loading: authLoading } = useAuth();
 
   // Construir steps y formData según el tipo de equipo
+  // IMPORTANTE: Calculamos steps una vez y derivamos totalSteps de él
   const [steps] = useState<StepDefinition[]>(() => {
     const builtSteps = buildSteps(equipmentType);
     console.log('[ElevatorMaintenanceReportWizard] buildSteps para', equipmentType, '- Total pasos:', builtSteps.length);
     return builtSteps;
   });
-  const [totalSteps] = useState(() => {
-    console.log('[ElevatorMaintenanceReportWizard] totalSteps inicializado con:', steps.length);
-    return steps.length;
-  });
+  // Derivar totalSteps directamente de steps para evitar desincronización
+  const totalSteps = steps.length;
   
   const [formData, setFormData] = useState<MaintenanceReportForm>(() => buildDefaultForm(equipmentType));
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
