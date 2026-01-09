@@ -502,9 +502,6 @@ const buildSteps = (equipmentType?: EquipmentType): StepDefinition[] => {
   ];
 };
 
-const steps: StepDefinition[] = buildSteps();
-const totalSteps = steps.length;
-
 interface MaintenanceReportWizardProps {
   equipmentType?: EquipmentType;
 }
