@@ -70,7 +70,7 @@ const App = () => (
           <Route path="/maintenance-reports" element={<ProtectedRoute><MaintenanceReports /></ProtectedRoute>} />
           <Route path="/maintenance-reports/new" element={<ProtectedRoute><MaintenanceReportTypeSelector /></ProtectedRoute>} />
           <Route path="/maintenance-reports/new/puentes-grua" element={<ProtectedRoute><BridgeCraneMaintenanceReport /></ProtectedRoute>} />
-          <Route path="/maintenance-reports/new/elevadores" element={<ProtectedRoute><ElevatorMaintenanceReportWizard /></ProtectedRoute>} />
+          <Route path="/maintenance-reports/new/elevadores" element={<ProtectedRoute><ElevatorMaintenanceReportWizard equipmentType="elevadores" /></ProtectedRoute>} />
           <Route path="/maintenance-reports/new/mantenimientos-generales" element={<ProtectedRoute><GeneralMaintenanceReport /></ProtectedRoute>} />
           <Route path="/maintenance-reports/:id/edit" element={<ProtectedRoute><MaintenanceReportEditRouter /></ProtectedRoute>} />
           <Route path="/time-control" element={<ProtectedRoute><TimeControl /></ProtectedRoute>} />

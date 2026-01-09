@@ -533,8 +533,9 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
   const uploadQueueRef = useRef<UploadTask[]>([]);
   const activeUploadRef = useRef<{ task: UploadTask; controller: AbortController } | null>(null);
   const reportIdRef = useRef<string | null>(null);
-  const formDataRef = useRef<MaintenanceReportForm>(defaultForm);
-  const initialFormDataRef = useRef<MaintenanceReportForm>(defaultForm);
+  // IMPORTANTE: Usar buildDefaultForm con equipmentType, no el defaultForm global
+  const formDataRef = useRef<MaintenanceReportForm>(buildDefaultForm(equipmentType));
+  const initialFormDataRef = useRef<MaintenanceReportForm>(buildDefaultForm(equipmentType));
   const hasBeenModifiedRef = useRef(false);
 
   useEffect(() => {
@@ -1224,9 +1225,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     });
     
     // Incluir equipmentType en los datos para que el PDF pueda detectarlo
+    console.log('[buildDbPayload] equipmentType prop value:', equipmentType);
+    const finalEquipmentType = equipmentType || 'elevadores';
+    console.log('[buildDbPayload] Guardando con equipmentType:', finalEquipmentType);
     const dataWithEquipmentType = {
       ...data,
-      equipmentType: equipmentType || 'elevadores',
+      equipmentType: finalEquipmentType,
     };
     
     const payload = {
