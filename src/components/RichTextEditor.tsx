@@ -27,8 +27,11 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     const currentContent = editorRef.current.innerHTML;
     const normalizedValue = value || "";
     
+    // Limpiar el valor cargado si contiene HTML antiguo
+    const cleanedValue = normalizedValue ? cleanHtml(normalizedValue) : "";
+    
     // Solo actualizar si el contenido es diferente y no es una actualización interna
-    if (currentContent !== normalizedValue && lastValueRef.current !== normalizedValue) {
+    if (currentContent !== cleanedValue && lastValueRef.current !== cleanedValue) {
       // Preservar el cursor si es posible
       const selection = window.getSelection();
       const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
@@ -40,8 +43,13 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       } : null;
       
       isUpdatingRef.current = true;
-      editorRef.current.innerHTML = normalizedValue;
-      lastValueRef.current = normalizedValue;
+      editorRef.current.innerHTML = cleanedValue;
+      lastValueRef.current = cleanedValue;
+      
+      // Si el valor se limpió, actualizar el estado padre
+      if (cleanedValue !== normalizedValue && cleanedValue) {
+        onChange(cleanedValue);
+      }
       
       // Restaurar el cursor si estaba dentro del editor
       if (savedRange) {
@@ -62,11 +70,83 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     }
   }, [value]);
 
+  // Función para limpiar y normalizar el HTML
+  const cleanHtml = (html: string): string => {
+    if (!html) return "";
+    
+    // Crear un elemento temporal para procesar el HTML
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = html;
+    
+    // Reemplazar tags <font> antiguos con tags modernos
+    const fontTags = tempDiv.querySelectorAll("font");
+    fontTags.forEach((font) => {
+      const parent = font.parentNode;
+      if (parent) {
+        // Extraer el contenido y estilos
+        const content = font.innerHTML;
+        const style = font.getAttribute("style") || "";
+        const isBold = style.includes("font-weight: 700") || style.includes("font-weight:bold") || 
+                       font.getAttribute("face")?.toLowerCase().includes("bold");
+        const isItalic = style.includes("font-style: italic") || style.includes("font-style:italic");
+        
+        // Crear elemento apropiado
+        let replacement: HTMLElement;
+        if (isBold && isItalic) {
+          replacement = document.createElement("strong");
+          const em = document.createElement("em");
+          em.innerHTML = content;
+          replacement.appendChild(em);
+        } else if (isBold) {
+          replacement = document.createElement("strong");
+          replacement.innerHTML = content;
+        } else if (isItalic) {
+          replacement = document.createElement("em");
+          replacement.innerHTML = content;
+        } else {
+          replacement = document.createElement("span");
+          replacement.innerHTML = content;
+        }
+        
+        parent.replaceChild(replacement, font);
+      }
+    });
+    
+    // Limpiar atributos innecesarios de otros elementos
+    const allElements = tempDiv.querySelectorAll("*");
+    allElements.forEach((el) => {
+      // Remover atributos dir="auto" y style="vertical-align: inherit;" innecesarios
+      if (el.getAttribute("dir") === "auto") {
+        el.removeAttribute("dir");
+      }
+      const style = el.getAttribute("style");
+      if (style === "vertical-align: inherit;" || style === "vertical-align: inherit") {
+        el.removeAttribute("style");
+      } else if (style && style.includes("vertical-align: inherit")) {
+        // Remover solo la parte de vertical-align
+        const newStyle = style.replace(/vertical-align:\s*inherit;?/g, "").trim();
+        if (newStyle) {
+          el.setAttribute("style", newStyle);
+        } else {
+          el.removeAttribute("style");
+        }
+      }
+    });
+    
+    return tempDiv.innerHTML;
+  };
+
   const handleInput = () => {
     if (editorRef.current && !isUpdatingRef.current) {
       isUpdatingRef.current = true;
-      const htmlContent = editorRef.current.innerHTML;
-      onChange(htmlContent);
+      const rawHtml = editorRef.current.innerHTML;
+      // Limpiar el HTML antes de guardarlo
+      const cleanedHtml = cleanHtml(rawHtml);
+      onChange(cleanedHtml);
+      // Actualizar el contenido del editor con el HTML limpio
+      if (editorRef.current.innerHTML !== cleanedHtml) {
+        editorRef.current.innerHTML = cleanedHtml;
+      }
       // Reset flag after a short delay to allow the onChange to propagate
       setTimeout(() => {
         isUpdatingRef.current = false;
