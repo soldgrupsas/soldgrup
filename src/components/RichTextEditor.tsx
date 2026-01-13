@@ -151,18 +151,26 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       } : null;
       
       isUpdatingRef.current = true;
-      editorRef.current.innerHTML = cleanedValue;
+      
+      // Usar textContent temporalmente para limpiar, luego establecer innerHTML
+      // Esto asegura que el contenido se establezca correctamente
+      if (cleanedValue) {
+        editorRef.current.textContent = "";
+        editorRef.current.innerHTML = cleanedValue;
+      } else {
+        editorRef.current.innerHTML = "";
+      }
+      
       lastValueRef.current = cleanedValue;
       
       // Si el valor se limpió, actualizar el estado padre (pero evitar loop infinito)
       if (cleanedValue !== normalizedValue && cleanedValue && cleanedValue !== value) {
         // Usar setTimeout para evitar actualizaciones síncronas que causen loops
-        const timeoutId = setTimeout(() => {
+        setTimeout(() => {
           if (!isUpdatingRef.current) {
             onChange(cleanedValue);
           }
         }, 50);
-        return () => clearTimeout(timeoutId);
       }
       
       // Restaurar el cursor si estaba dentro del editor
