@@ -16,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { RichTextEditor } from "@/components/RichTextEditor";
 import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -26,6 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 // Función helper para extraer solo la parte de fecha (YYYY-MM-DD) de un valor
 // Sin crear objetos Date para evitar problemas de zona horaria
@@ -991,6 +991,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       try {
         if (typeof data.data === "object" && data.data !== null) {
           const dataObj = data.data as any;
+          console.log('[DEBUG] Datos RAW cargados de la DB:', {
+            initialState: dataObj.initialState?.substring(0, 100),
+            recommendations: dataObj.recommendations?.substring(0, 100),
+            checklistLength: dataObj.checklist?.length,
+            checklistFirstItem: dataObj.checklist?.[0],
+          });
           // Validar y asignar cada campo de manera segura
           parsedData = {
             ...correctDefaultForm,
@@ -1008,8 +1014,16 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             capacity: typeof dataObj.capacity === 'string' ? dataObj.capacity : correctDefaultForm.capacity,
             locationPg: typeof dataObj.locationPg === 'string' ? dataObj.locationPg : correctDefaultForm.locationPg,
             voltage: typeof dataObj.voltage === 'string' ? dataObj.voltage : correctDefaultForm.voltage,
-            initialState: typeof dataObj.initialState === 'string' ? dataObj.initialState : correctDefaultForm.initialState,
-            recommendations: typeof dataObj.recommendations === 'string' ? dataObj.recommendations : correctDefaultForm.recommendations,
+            initialState: (() => {
+              const val = typeof dataObj.initialState === 'string' ? dataObj.initialState : correctDefaultForm.initialState;
+              console.log('[DEBUG] initialState cargado:', val?.substring(0, 100));
+              return val;
+            })(),
+            recommendations: (() => {
+              const val = typeof dataObj.recommendations === 'string' ? dataObj.recommendations : correctDefaultForm.recommendations;
+              console.log('[DEBUG] recommendations cargado:', val?.substring(0, 100));
+              return val;
+            })(),
             checklist: (() => {
               // IMPORTANTE: Respetar el checklist guardado sin modificarlo
               // NUNCA migrar el checklist si el equipmentType guardado difiere del prop
@@ -1270,6 +1284,8 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       voltage: data.voltage || null,
       initial_state: data.initialState || null,
       recommendations: data.recommendations || null,
+      // DEBUG: Verificar qué se está guardando
+      ...(console.log('[DEBUG] Guardando - initialState:', data.initialState?.substring(0, 100), 'recommendations:', data.recommendations?.substring(0, 100)), {}),
       tests: data.tests,
     } as Record<string, unknown>;
     
@@ -1702,13 +1718,15 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         </RadioGroup>
 
         <div className="space-y-2">
-          <Label>Observación</Label>
-          <RichTextEditor
-            value={entry.observation}
-            onChange={(value) =>
-              updateChecklistEntry(index, { observation: value })
-            }
+          <Label htmlFor={`observation-${entry.id}`}>Observación</Label>
+          <Textarea
+            id={`observation-${entry.id}`}
+            rows={5}
             placeholder="Escriba observaciones relevantes del estado del componente."
+            value={entry.observation}
+            onChange={(event) =>
+              updateChecklistEntry(index, { observation: event.target.value })
+            }
           />
         </div>
       </div>
@@ -1785,11 +1803,13 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Observación</Label>
-                  <RichTextEditor
-                    value={proc.observacion}
-                    onChange={(value) => updateProcedimiento(proc.id, "observacion", value)}
+                  <Label htmlFor={`obs-${proc.id}`}>Observación</Label>
+                  <Textarea
+                    id={`obs-${proc.id}`}
                     placeholder="Ej: Se cambia la carcaza debido a que presentaba fisuras..."
+                    rows={2}
+                    value={proc.observacion}
+                    onChange={(e) => updateProcedimiento(proc.id, "observacion", e.target.value)}
                   />
                 </div>
               </div>
@@ -1958,10 +1978,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                     N/A
                   </Label>
                 </RadioGroup>
-                <RichTextEditor
-                  value={subItem.observation}
-                  onChange={(value) => updateSubItemObservation(subItem.id, value)}
+                <Textarea
                   placeholder={`Observación de ${subItem.name}`}
+                  rows={2}
+                  value={subItem.observation}
+                  onChange={(e) => updateSubItemObservation(subItem.id, e.target.value)}
+                  className="text-sm"
                 />
               </div>
             ))}
@@ -1970,11 +1992,13 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
         {/* Observación general */}
         <div className="space-y-2">
-          <Label>Observaciones generales del Trolley</Label>
-          <RichTextEditor
-            value={safeTrolley.observation}
-            onChange={(value) => updateObservation(value)}
+          <Label htmlFor="trolley-observation">Observaciones generales del Trolley</Label>
+          <Textarea
+            id="trolley-observation"
+            rows={4}
             placeholder="Escriba observaciones generales sobre el Trolley."
+            value={safeTrolley.observation}
+            onChange={(event) => updateObservation(event.target.value)}
           />
         </div>
       </div>
@@ -2135,10 +2159,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                     N/A
                   </Label>
                 </RadioGroup>
-                <RichTextEditor
-                  value={subItem.observation}
-                  onChange={(value) => updateSubItemObservation(subItem.id, value)}
+                <Textarea
                   placeholder={`Observación de ${subItem.name}`}
+                  rows={2}
+                  value={subItem.observation}
+                  onChange={(e) => updateSubItemObservation(subItem.id, e.target.value)}
+                  className="text-sm"
                 />
               </div>
             ))}
@@ -2147,11 +2173,13 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
         {/* Observación general */}
         <div className="space-y-2">
-          <Label>Observaciones generales de Carros testeros</Label>
-          <RichTextEditor
-            value={safeCarrosTesteros.observation}
-            onChange={(value) => updateObservation(value)}
+          <Label htmlFor="carros-testeros-observation">Observaciones generales de Carros testeros</Label>
+          <Textarea
+            id="carros-testeros-observation"
+            rows={4}
             placeholder="Escriba observaciones generales sobre Carros testeros."
+            value={safeCarrosTesteros.observation}
+            onChange={(event) => updateObservation(event.target.value)}
           />
         </div>
       </div>
@@ -2415,7 +2443,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
               Describa cómo encontró el equipo antes de iniciar las labores de mantenimiento.
             </p>
             <RichTextEditor
-              value={formData.initialState}
+              value={formData.initialState || ""}
               onChange={(value) =>
                 setFormData((prev) => ({ ...prev, initialState: value }))
               }
@@ -2427,18 +2455,22 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         return (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente.
-              Use los botones de formato para aplicar negrita, cursiva o crear listas.
+              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente. Separe
+              diferentes recomendaciones por líneas y enumeradas. Ejemplo:
             </p>
+            <pre className="rounded-md bg-muted/70 p-4 text-sm text-muted-foreground">
+              1. Se debe reemplazar el botón del paro de emergencia.
+              {"\n"}2. Revisar fuga de aceite del Polipasto.
+            </pre>
             <RichTextEditor
-              value={formData.recommendations}
+              value={formData.recommendations || ""}
               onChange={(value) =>
                 setFormData((prev) => ({
                   ...prev,
                   recommendations: value,
                 }))
               }
-              placeholder="Escriba las recomendaciones aquí..."
+              placeholder="1. ...&#10;2. ..."
             />
           </div>
         );

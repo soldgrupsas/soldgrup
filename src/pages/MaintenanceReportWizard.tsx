@@ -15,12 +15,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { RichTextEditor } from "@/components/RichTextEditor";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 const CHECKLIST_ITEMS = [
   "Motor de elevación",
@@ -1615,13 +1615,15 @@ const MaintenanceReportWizard = () => {
         </RadioGroup>
 
         <div className="space-y-2">
-          <Label>Observación</Label>
-          <RichTextEditor
-            value={entry.observation}
-            onChange={(value) =>
-              updateChecklistEntry(index, { observation: value })
-            }
+          <Label htmlFor={`observation-${entry.id}`}>Observación</Label>
+          <Textarea
+            id={`observation-${entry.id}`}
+            rows={5}
             placeholder="Escriba observaciones relevantes del estado del componente."
+            value={entry.observation}
+            onChange={(event) =>
+              updateChecklistEntry(index, { observation: event.target.value })
+            }
           />
         </div>
       </div>
@@ -1769,11 +1771,13 @@ const MaintenanceReportWizard = () => {
         {renderTrolleyItem("ruedasTrolley", displayGroup.ruedasTrolley)}
 
         <div className="space-y-2">
-          <Label>Observaciones generales del Trolley</Label>
-          <RichTextEditor
-            value={displayGroup.observation}
-            onChange={(value) => updateTrolleyObservation(value)}
+          <Label htmlFor="trolley-observation">Observaciones generales del Trolley</Label>
+          <Textarea
+            id="trolley-observation"
+            rows={5}
             placeholder="Escriba observaciones relevantes sobre el Trolley y sus componentes."
+            value={displayGroup.observation}
+            onChange={(event) => updateTrolleyObservation(event.target.value)}
           />
         </div>
       </div>
@@ -1938,11 +1942,13 @@ const MaintenanceReportWizard = () => {
         </div>
 
         <div className="space-y-2">
-          <Label>Observaciones generales de Carros testeros</Label>
-          <RichTextEditor
-            value={displayCarrosTesteros.observation}
-            onChange={(value) => updateObservation(value)}
+          <Label htmlFor="carros-observation">Observaciones generales de Carros testeros</Label>
+          <Textarea
+            id="carros-observation"
+            rows={5}
             placeholder="Escriba observaciones relevantes sobre los Carros testeros y sus componentes."
+            value={displayCarrosTesteros.observation}
+            onChange={(event) => updateObservation(event.target.value)}
           />
         </div>
       </div>
@@ -2124,7 +2130,7 @@ const MaintenanceReportWizard = () => {
               Describa cómo encontró el equipo antes de iniciar las labores de mantenimiento.
             </p>
             <RichTextEditor
-              value={formData.initialState}
+              value={formData.initialState || ""}
               onChange={(value) =>
                 setFormData((prev) => ({ ...prev, initialState: value }))
               }
@@ -2136,18 +2142,22 @@ const MaintenanceReportWizard = () => {
         return (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente.
-              Use los botones de formato para aplicar negrita, cursiva o crear listas.
+              Ponga en la siguiente caja de texto todas las recomendaciones para el cliente. Separe
+              diferentes recomendaciones por líneas y enumeradas. Ejemplo:
             </p>
+            <pre className="rounded-md bg-muted/70 p-4 text-sm text-muted-foreground">
+              1. Se debe reemplazar el botón del paro de emergencia.
+              {"\n"}2. Revisar fuga de aceite del Polipasto.
+            </pre>
             <RichTextEditor
-              value={formData.recommendations}
+              value={formData.recommendations || ""}
               onChange={(value) =>
                 setFormData((prev) => ({
                   ...prev,
                   recommendations: value,
                 }))
               }
-              placeholder="Escriba las recomendaciones aquí..."
+              placeholder="1. ...&#10;2. ..."
             />
           </div>
         );
