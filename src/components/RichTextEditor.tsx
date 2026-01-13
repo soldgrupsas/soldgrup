@@ -89,6 +89,68 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     // Reemplazar todos los tags font
     replaceFontTags(tempDiv);
     
+    // Convertir <div> a <br> para mantener saltos de línea
+    // Procesar todos los divs de adentro hacia afuera
+    const processDivs = () => {
+      const divs = Array.from(tempDiv.querySelectorAll("div"));
+      if (divs.length === 0) return;
+      
+      // Ordenar por profundidad (más profundo primero)
+      divs.sort((a, b) => {
+        let depthA = 0;
+        let depthB = 0;
+        let currentA: Node | null = a;
+        let currentB: Node | null = b;
+        while (currentA?.parentNode && currentA.parentNode !== tempDiv) {
+          depthA++;
+          currentA = currentA.parentNode;
+        }
+        while (currentB?.parentNode && currentB.parentNode !== tempDiv) {
+          depthB++;
+          currentB = currentB.parentNode;
+        }
+        return depthB - depthA; // Más profundo primero
+      });
+      
+      divs.forEach((div) => {
+        // Si el div es el contenedor principal (tempDiv), no hacer nada
+        if (div === tempDiv) return;
+        
+        const parent = div.parentNode;
+        if (parent) {
+          // Crear un fragmento para el contenido
+          const fragment = document.createDocumentFragment();
+          
+          // Si el div tiene contenido, agregar un <br> antes del contenido
+          // (excepto si es el primer hijo y no hay contenido antes)
+          const hasPreviousSibling = div.previousSibling !== null;
+          const hasContent = div.textContent?.trim() || div.children.length > 0;
+          
+          if (hasContent && (hasPreviousSibling || div !== parent.firstChild)) {
+            const br = document.createElement("br");
+            fragment.appendChild(br);
+          }
+          
+          // Mover todo el contenido del div al fragmento
+          while (div.firstChild) {
+            fragment.appendChild(div.firstChild);
+          }
+          
+          // Reemplazar el div con el fragmento
+          if (parent !== tempDiv) {
+            parent.replaceChild(fragment, div);
+          }
+        }
+      });
+      
+      // Si aún hay divs, procesar de nuevo (puede haber divs anidados que quedaron)
+      if (tempDiv.querySelectorAll("div").length > 0) {
+        processDivs();
+      }
+    };
+    
+    processDivs();
+    
     // Limpiar atributos innecesarios de todos los elementos
     const allElements = tempDiv.querySelectorAll("*");
     allElements.forEach((el) => {
