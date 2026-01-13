@@ -15,9 +15,16 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
 
   // Inicializar el contenido cuando el componente se monta
   useEffect(() => {
-    if (editorRef.current && !editorRef.current.innerHTML && value) {
-      editorRef.current.innerHTML = value;
-      lastValueRef.current = value;
+    if (editorRef.current && value) {
+      const cleanedValue = cleanHtml(value);
+      if (cleanedValue !== editorRef.current.innerHTML) {
+        editorRef.current.innerHTML = cleanedValue;
+        lastValueRef.current = cleanedValue;
+        // Si se limpió, actualizar el estado padre
+        if (cleanedValue !== value) {
+          onChange(cleanedValue);
+        }
+      }
     }
   }, []);
 
@@ -78,57 +85,103 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = html;
     
-    // Reemplazar tags <font> antiguos con tags modernos
-    const fontTags = tempDiv.querySelectorAll("font");
-    fontTags.forEach((font) => {
-      const parent = font.parentNode;
-      if (parent) {
-        // Extraer el contenido y estilos
-        const content = font.innerHTML;
-        const style = font.getAttribute("style") || "";
-        const isBold = style.includes("font-weight: 700") || style.includes("font-weight:bold") || 
-                       font.getAttribute("face")?.toLowerCase().includes("bold");
-        const isItalic = style.includes("font-style: italic") || style.includes("font-style:italic");
-        
-        // Crear elemento apropiado
-        let replacement: HTMLElement;
-        if (isBold && isItalic) {
-          replacement = document.createElement("strong");
-          const em = document.createElement("em");
-          em.innerHTML = content;
-          replacement.appendChild(em);
-        } else if (isBold) {
-          replacement = document.createElement("strong");
-          replacement.innerHTML = content;
-        } else if (isItalic) {
-          replacement = document.createElement("em");
-          replacement.innerHTML = content;
-        } else {
-          replacement = document.createElement("span");
-          replacement.innerHTML = content;
+    // Función recursiva para reemplazar tags <font> anidados
+    const replaceFontTags = (element: Element | DocumentFragment) => {
+      // Buscar todos los tags font, incluso los anidados
+      const fontTags = Array.from(element.querySelectorAll("font"));
+      
+      // Procesar de adentro hacia afuera (más anidados primero)
+      fontTags.sort((a, b) => {
+        let depthA = 0;
+        let depthB = 0;
+        let currentA: Node | null = a;
+        let currentB: Node | null = b;
+        while (currentA?.parentNode) {
+          depthA++;
+          currentA = currentA.parentNode;
         }
-        
-        parent.replaceChild(replacement, font);
-      }
-    });
+        while (currentB?.parentNode) {
+          depthB++;
+          currentB = currentB.parentNode;
+        }
+        return depthB - depthA; // Más profundo primero
+      });
+      
+      fontTags.forEach((font) => {
+        const parent = font.parentNode;
+        if (parent && parent !== tempDiv) {
+          // Extraer el contenido (ya procesado si tenía tags font anidados)
+          const content = font.innerHTML;
+          const style = font.getAttribute("style") || "";
+          const isBold = style.includes("font-weight: 700") || 
+                        style.includes("font-weight:bold") || 
+                        style.includes("font-weight: 600") ||
+                        font.getAttribute("face")?.toLowerCase().includes("bold");
+          const isItalic = style.includes("font-style: italic") || 
+                          style.includes("font-style:italic");
+          
+          // Crear elemento apropiado
+          let replacement: HTMLElement;
+          if (isBold && isItalic) {
+            replacement = document.createElement("strong");
+            const em = document.createElement("em");
+            em.innerHTML = content;
+            replacement.appendChild(em);
+          } else if (isBold) {
+            replacement = document.createElement("strong");
+            replacement.innerHTML = content;
+          } else if (isItalic) {
+            replacement = document.createElement("em");
+            replacement.innerHTML = content;
+          } else {
+            // Si no tiene formato especial, solo extraer el contenido sin el tag
+            replacement = document.createElement("span");
+            replacement.innerHTML = content;
+          }
+          
+          parent.replaceChild(replacement, font);
+        }
+      });
+    };
     
-    // Limpiar atributos innecesarios de otros elementos
+    // Reemplazar todos los tags font
+    replaceFontTags(tempDiv);
+    
+    // Limpiar atributos innecesarios de todos los elementos
     const allElements = tempDiv.querySelectorAll("*");
     allElements.forEach((el) => {
-      // Remover atributos dir="auto" y style="vertical-align: inherit;" innecesarios
+      // Remover atributos dir="auto" innecesarios
       if (el.getAttribute("dir") === "auto") {
         el.removeAttribute("dir");
       }
+      
+      // Limpiar estilos innecesarios
       const style = el.getAttribute("style");
-      if (style === "vertical-align: inherit;" || style === "vertical-align: inherit") {
-        el.removeAttribute("style");
-      } else if (style && style.includes("vertical-align: inherit")) {
-        // Remover solo la parte de vertical-align
-        const newStyle = style.replace(/vertical-align:\s*inherit;?/g, "").trim();
-        if (newStyle) {
-          el.setAttribute("style", newStyle);
+      if (style) {
+        // Remover vertical-align: inherit
+        let cleanedStyle = style.replace(/vertical-align:\s*inherit;?/gi, "").trim();
+        // Remover estilos vacíos o solo con punto y coma
+        cleanedStyle = cleanedStyle.replace(/^;+\s*|;+\s*$/g, "").trim();
+        
+        if (cleanedStyle) {
+          el.setAttribute("style", cleanedStyle);
         } else {
           el.removeAttribute("style");
+        }
+      }
+      
+      // Remover spans vacíos o sin atributos importantes
+      if (el.tagName.toLowerCase() === "span" && 
+          !el.getAttribute("style") && 
+          !el.getAttribute("class") &&
+          !el.getAttribute("id")) {
+        const parent = el.parentNode;
+        if (parent && parent !== tempDiv) {
+          const fragment = document.createDocumentFragment();
+          while (el.firstChild) {
+            fragment.appendChild(el.firstChild);
+          }
+          parent.replaceChild(fragment, el);
         }
       }
     });
