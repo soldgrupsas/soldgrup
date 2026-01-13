@@ -72,8 +72,29 @@ function stripHtmlToText(html: string | null | undefined): string {
   
   let text = html;
   
-  // Reemplazar <br> y <br/> con saltos de línea
+  // Decodificar entidades HTML primero (antes de procesar etiquetas)
+  text = text.replace(/&nbsp;/gi, ' ');
+  text = text.replace(/&amp;/gi, '&');
+  text = text.replace(/&lt;/gi, '<');
+  text = text.replace(/&gt;/gi, '>');
+  text = text.replace(/&quot;/gi, '"');
+  text = text.replace(/&#39;/gi, "'");
+  text = text.replace(/&#10;/gi, '\n');
+  text = text.replace(/&lt;br\s*\/?&gt;/gi, '\n'); // Manejar &lt;br&gt; codificado
+  
+  // Reemplazar <br> y <br/> con saltos de línea (múltiples variaciones)
+  // IMPORTANTE: Hacer esto ANTES de eliminar otras etiquetas HTML
+  // Manejar todas las variaciones posibles de <br>
   text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<br\s*\/?\s*>/gi, '\n');
+  text = text.replace(/<BR\s*\/?>/gi, '\n'); // También mayúsculas
+  text = text.replace(/<Br\s*\/?>/gi, '\n'); // Mixto
+  text = text.replace(/<bR\s*\/?>/gi, '\n'); // Mixto
+  
+  // También manejar casos donde <br> podría estar como texto literal (sin ser etiqueta HTML válida)
+  // Esto captura patrones como "texto<br>más texto" incluso si no es HTML válido
+  text = text.replace(/<br>/gi, '\n');
+  text = text.replace(/<BR>/gi, '\n');
   
   // Reemplazar </p> y </div> con saltos de línea
   text = text.replace(/<\/(p|div)>/gi, '\n');
@@ -84,23 +105,17 @@ function stripHtmlToText(html: string | null | undefined): string {
   // Reemplazar <li> con viñeta
   text = text.replace(/<li[^>]*>/gi, '• ');
   
-  // Eliminar otras etiquetas HTML
+  // Eliminar otras etiquetas HTML (después de procesar <br>)
+  // Esto NO afectará los \n que ya insertamos
   text = text.replace(/<[^>]+>/g, '');
   
-  // Decodificar entidades HTML comunes
-  text = text.replace(/&nbsp;/gi, ' ');
-  text = text.replace(/&amp;/gi, '&');
-  text = text.replace(/&lt;/gi, '<');
-  text = text.replace(/&gt;/gi, '>');
-  text = text.replace(/&quot;/gi, '"');
-  text = text.replace(/&#39;/gi, "'");
-  text = text.replace(/&#10;/gi, '\n');
-  
-  // Limpiar múltiples saltos de línea consecutivos
+  // Limpiar múltiples saltos de línea consecutivos (máximo 2 seguidos)
   text = text.replace(/\n{3,}/g, '\n\n');
   
   // Limpiar espacios al inicio y final de cada línea
-  text = text.split('\n').map(line => line.trim()).join('\n');
+  const lines = text.split('\n');
+  const cleanedLines = lines.map(line => line.trim());
+  text = cleanedLines.join('\n');
   
   return text.trim();
 }
@@ -718,25 +733,39 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
 
   const drawParagraph = (text: string | null | undefined) => {
     if (!text?.trim()) return;
-    // Convertir HTML a texto plano si es necesario
-    const plainText = stripHtmlToText(text);
+    
+    // Primero, manejar casos donde <br> aparece como texto literal (no como etiqueta HTML)
+    // Esto puede pasar si el texto fue escapado o codificado incorrectamente
+    let processedText = text;
+    if (processedText.includes('<br>') || processedText.includes('<BR>') || processedText.includes('<br/>')) {
+      // Si contiene <br> como texto, reemplazarlo directamente
+      processedText = processedText.replace(/<br\s*\/?>/gi, '\n');
+    }
+    
+    // Convertir HTML a texto plano
+    const plainText = stripHtmlToText(processedText);
     if (!plainText.trim()) return;
-    const chunks = plainText.replace(/\r\n/g, '\n').split('\n');
+    
+    // Normalizar saltos de línea
+    const normalizedText = plainText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const chunks = normalizedText.split('\n');
+    
     const lines: string[] = [];
-    chunks.forEach((chunk, index) => {
+    chunks.forEach((chunk) => {
       const trimmed = chunk.trim();
-      if (!trimmed) {
-        if (index !== chunks.length - 1) lines.push('');
-        return;
+      if (trimmed) {
+        // Cada línea con contenido se agrega (con wrap si es necesario)
+        const wrapped = wrapText(trimmed, fontRegular, 11, contentWidth);
+        lines.push(...wrapped);
       }
-      const wrapped = wrapText(trimmed, fontRegular, 11, contentWidth);
-      lines.push(...wrapped);
-      if (index !== chunks.length - 1) lines.push('');
+      // Ignorar líneas vacías - cada recomendación va en su propia línea
     });
-    const effectiveLines = lines.length ? lines : [''];
-    const height = effectiveLines.length * 14 + 8;
+    
+    if (lines.length === 0) return;
+    
+    const height = lines.length * 14 + 8;
     ensureSpace(height);
-    drawWrappedText(current.page, effectiveLines, { x: margin, y: current.cursorY, font: fontRegular, size: 11, color: textColor, lineHeight: 14 });
+    drawWrappedText(current.page, lines, { x: margin, y: current.cursorY, font: fontRegular, size: 11, color: textColor, lineHeight: 14 });
     current.cursorY -= height;
   };
 
