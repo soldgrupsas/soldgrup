@@ -232,15 +232,17 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     if (!editorRef.current || isUpdatingRef.current) return;
     
     const normalizedValue = value || "";
-    // Siempre limpiar el HTML, incluso si parece estar bien
-    const cleanedValue = normalizedValue ? cleanHtml(normalizedValue) : "";
     
-    // Comparar el contenido actual con el valor limpio
+    // Solo limpiar si hay tags problemáticos o si es la primera carga
+    const hasProblematicTags = normalizedValue ? /<font[^>]*>|<div[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(normalizedValue) : false;
+    const cleanedValue = (normalizedValue && hasProblematicTags) ? cleanHtml(normalizedValue) : normalizedValue;
+    
+    // Comparar el contenido actual con el valor
     const currentContent = editorRef.current.innerHTML.trim();
-    const cleanedValueTrimmed = cleanedValue.trim();
+    const targetValue = cleanedValue.trim();
     
-    // Solo actualizar si el contenido es diferente
-    if (currentContent !== cleanedValueTrimmed && lastValueRef.current !== cleanedValue) {
+    // Solo actualizar si el contenido es diferente y no es una actualización interna
+    if (currentContent !== targetValue && lastValueRef.current !== cleanedValue) {
       // Preservar el cursor si es posible
       const selection = window.getSelection();
       const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
@@ -270,15 +272,17 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       
       lastValueRef.current = cleanedValue;
       
-      // Si el valor se limpió, actualizar el estado padre (pero evitar loop infinito)
+      // Si el valor se limpió y hay tags problemáticos, actualizar el estado padre
       // Esto asegura que el HTML limpio se guarde en la base de datos
-      if (cleanedValue !== normalizedValue && cleanedValue) {
+      // Pero solo hacerlo una vez, no en cada render
+      if (hasProblematicTags && cleanedValue !== normalizedValue && cleanedValue) {
         // Usar setTimeout para evitar actualizaciones síncronas que causen loops
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           if (!isUpdatingRef.current && cleanedValue !== value) {
             onChange(cleanedValue);
           }
         }, 100);
+        return () => clearTimeout(timeoutId);
       }
       
       // Restaurar el cursor si estaba dentro del editor
@@ -304,48 +308,58 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
 
   const handleInput = () => {
     if (editorRef.current && !isUpdatingRef.current) {
-      isUpdatingRef.current = true;
       const rawHtml = editorRef.current.innerHTML;
-      // Limpiar el HTML antes de guardarlo
-      const cleanedHtml = cleanHtml(rawHtml);
-      lastValueRef.current = cleanedHtml;
       
-      // Actualizar el contenido del editor con el HTML limpio si es diferente
-      // Esto asegura que el editor siempre muestre HTML limpio
-      if (editorRef.current.innerHTML.trim() !== cleanedHtml.trim()) {
-        const selection = window.getSelection();
-        const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
-        const savedRange = range && editorRef.current.contains(range.startContainer) ? {
-          startContainer: range.startContainer,
-          startOffset: range.startOffset,
-          endContainer: range.endContainer,
-          endOffset: range.endOffset,
-        } : null;
+      // Solo limpiar si hay tags problemáticos (font, divs innecesarios, etc.)
+      // Esto evita loops cuando el usuario está escribiendo normalmente
+      const hasProblematicTags = /<font[^>]*>|<div[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(rawHtml);
+      
+      if (hasProblematicTags) {
+        isUpdatingRef.current = true;
+        // Limpiar el HTML antes de guardarlo
+        const cleanedHtml = cleanHtml(rawHtml);
+        lastValueRef.current = cleanedHtml;
         
-        editorRef.current.innerHTML = cleanedHtml;
-        
-        // Restaurar el cursor si es posible
-        if (savedRange) {
-          try {
-            requestAnimationFrame(() => {
-              const newRange = document.createRange();
-              newRange.setStart(savedRange.startContainer, savedRange.startOffset);
-              newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
-              selection?.removeAllRanges();
-              selection?.addRange(newRange);
-            });
-          } catch (e) {
-            // Si falla, simplemente continuar
+        // Solo actualizar el contenido si realmente cambió
+        if (editorRef.current.innerHTML.trim() !== cleanedHtml.trim()) {
+          const selection = window.getSelection();
+          const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
+          const savedRange = range && editorRef.current.contains(range.startContainer) ? {
+            startContainer: range.startContainer,
+            startOffset: range.startOffset,
+            endContainer: range.endContainer,
+            endOffset: range.endOffset,
+          } : null;
+          
+          editorRef.current.innerHTML = cleanedHtml;
+          
+          // Restaurar el cursor si es posible
+          if (savedRange) {
+            try {
+              requestAnimationFrame(() => {
+                const newRange = document.createRange();
+                newRange.setStart(savedRange.startContainer, savedRange.startOffset);
+                newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
+                selection?.removeAllRanges();
+                selection?.addRange(newRange);
+              });
+            } catch (e) {
+              // Si falla, simplemente continuar
+            }
           }
         }
+        
+        onChange(cleanedHtml);
+        
+        // Reset flag after a short delay to allow the onChange to propagate
+        setTimeout(() => {
+          isUpdatingRef.current = false;
+        }, 0);
+      } else {
+        // Si no hay tags problemáticos, solo actualizar el estado sin modificar el editor
+        lastValueRef.current = rawHtml;
+        onChange(rawHtml);
       }
-      
-      onChange(cleanedHtml);
-      
-      // Reset flag after a short delay to allow the onChange to propagate
-      setTimeout(() => {
-        isUpdatingRef.current = false;
-      }, 0);
     }
   };
 
