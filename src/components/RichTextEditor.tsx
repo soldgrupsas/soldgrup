@@ -10,16 +10,67 @@ interface RichTextEditorProps {
 
 export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorProps) => {
   const editorRef = useRef<HTMLDivElement>(null);
+  const isUpdatingRef = useRef(false);
+  const lastValueRef = useRef<string>("");
+
+  // Inicializar el contenido cuando el componente se monta
+  useEffect(() => {
+    if (editorRef.current && !editorRef.current.innerHTML && value) {
+      editorRef.current.innerHTML = value;
+      lastValueRef.current = value;
+    }
+  }, []);
 
   useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== value) {
-      editorRef.current.innerHTML = value || "";
+    if (!editorRef.current || isUpdatingRef.current) return;
+    
+    const currentContent = editorRef.current.innerHTML;
+    const normalizedValue = value || "";
+    
+    // Solo actualizar si el contenido es diferente y no es una actualización interna
+    if (currentContent !== normalizedValue && lastValueRef.current !== normalizedValue) {
+      // Preservar el cursor si es posible
+      const selection = window.getSelection();
+      const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const savedRange = range && editorRef.current.contains(range.startContainer) ? {
+        startContainer: range.startContainer,
+        startOffset: range.startOffset,
+        endContainer: range.endContainer,
+        endOffset: range.endOffset,
+      } : null;
+      
+      isUpdatingRef.current = true;
+      editorRef.current.innerHTML = normalizedValue;
+      lastValueRef.current = normalizedValue;
+      
+      // Restaurar el cursor si estaba dentro del editor
+      if (savedRange) {
+        try {
+          const newRange = document.createRange();
+          newRange.setStart(savedRange.startContainer, savedRange.startOffset);
+          newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
+          selection?.removeAllRanges();
+          selection?.addRange(newRange);
+        } catch (e) {
+          // Si falla restaurar el cursor, simplemente continuar
+        }
+      }
+      
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 0);
     }
   }, [value]);
 
   const handleInput = () => {
-    if (editorRef.current) {
-      onChange(editorRef.current.innerHTML);
+    if (editorRef.current && !isUpdatingRef.current) {
+      isUpdatingRef.current = true;
+      const htmlContent = editorRef.current.innerHTML;
+      onChange(htmlContent);
+      // Reset flag after a short delay to allow the onChange to propagate
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 0);
     }
   };
 
