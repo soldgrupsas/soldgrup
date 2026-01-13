@@ -14,29 +14,19 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
   const lastValueRef = useRef<string>("");
 
   // Función para limpiar y normalizar el HTML
+  // Solo limpia tags problemáticos (font, atributos innecesarios), no toca el HTML normal
   const cleanHtml = useCallback((html: string): string => {
     if (!html) return "";
     
-    // Primero, decodificar cualquier HTML escapado (si el HTML viene como texto plano)
-    // Esto maneja casos donde el HTML está escapado como &lt;font&gt; en lugar de <font>
-    let decodedHtml = html;
-    try {
-      // Crear un elemento temporal para decodificar
-      const decodeDiv = document.createElement("div");
-      decodeDiv.textContent = html;
-      decodedHtml = decodeDiv.innerHTML;
-      // Si no cambió, significa que no estaba escapado, usar el original
-      if (decodedHtml === html) {
-        decodedHtml = html;
-      }
-    } catch (e) {
-      // Si falla, usar el HTML original
-      decodedHtml = html;
+    // Si no hay tags problemáticos, devolver el HTML tal cual
+    const hasProblematicTags = /<font[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(html);
+    if (!hasProblematicTags) {
+      return html;
     }
     
     // Crear un elemento temporal para procesar el HTML
     const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = decodedHtml;
+    tempDiv.innerHTML = html;
     
     // Función recursiva para reemplazar tags <font> anidados
     const replaceFontTags = (element: Element | DocumentFragment) => {
@@ -106,85 +96,6 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     // Reemplazar todos los tags font
     replaceFontTags(tempDiv);
     
-    // Convertir <div> a <br> para mantener saltos de línea
-    // Procesar todos los divs de adentro hacia afuera
-    const processDivs = () => {
-      const divs = Array.from(tempDiv.querySelectorAll("div"));
-      if (divs.length === 0) return;
-      
-      // Ordenar por profundidad (más profundo primero)
-      divs.sort((a, b) => {
-        let depthA = 0;
-        let depthB = 0;
-        let currentA: Node | null = a;
-        let currentB: Node | null = b;
-        while (currentA?.parentNode && currentA.parentNode !== tempDiv) {
-          depthA++;
-          currentA = currentA.parentNode;
-        }
-        while (currentB?.parentNode && currentB.parentNode !== tempDiv) {
-          depthB++;
-          currentB = currentB.parentNode;
-        }
-        return depthB - depthA; // Más profundo primero
-      });
-      
-      divs.forEach((div) => {
-        // Si el div es el contenedor principal (tempDiv), no hacer nada
-        if (div === tempDiv) return;
-        
-        const parent = div.parentNode;
-        if (parent) {
-          // Crear un fragmento para el contenido
-          const fragment = document.createDocumentFragment();
-          
-          // Si el div tiene contenido, agregar un <br> antes del contenido
-          // (excepto si es el primer hijo y no hay contenido antes)
-          const hasPreviousSibling = div.previousSibling !== null;
-          const hasContent = div.textContent?.trim() || div.children.length > 0;
-          
-          // Verificar si hay un elemento hermano anterior que sea texto o elemento
-          const prevSibling = div.previousSibling;
-          const shouldAddBr = hasContent && (
-            hasPreviousSibling || 
-            (prevSibling && prevSibling.nodeType === Node.TEXT_NODE && prevSibling.textContent?.trim())
-          );
-          
-          if (shouldAddBr) {
-            const br = document.createElement("br");
-            fragment.appendChild(br);
-          }
-          
-          // Mover todo el contenido del div al fragmento
-          while (div.firstChild) {
-            fragment.appendChild(div.firstChild);
-          }
-          
-          // Reemplazar el div con el fragmento
-          if (parent !== tempDiv) {
-            parent.replaceChild(fragment, div);
-          }
-        }
-      });
-      
-      // Si aún hay divs, procesar de nuevo (puede haber divs anidados que quedaron)
-      const remainingDivs = tempDiv.querySelectorAll("div");
-      if (remainingDivs.length > 0) {
-        // Limitar recursión para evitar loops infinitos
-        const maxIterations = 10;
-        let iterations = 0;
-        const processAgain = () => {
-          iterations++;
-          if (iterations < maxIterations) {
-            processDivs();
-          }
-        };
-        processAgain();
-      }
-    };
-    
-    processDivs();
-    
     // Limpiar atributos innecesarios de todos los elementos
     const allElements = tempDiv.querySelectorAll("*");
     allElements.forEach((el) => {
@@ -233,15 +144,16 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     
     const normalizedValue = value || "";
     
-    // Solo limpiar si hay tags problemáticos o si es la primera carga
-    const hasProblematicTags = normalizedValue ? /<font[^>]*>|<div[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(normalizedValue) : false;
+    // Solo limpiar si hay tags problemáticos (font, atributos innecesarios)
+    // NO limpiar divs normales
+    const hasProblematicTags = normalizedValue ? /<font[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(normalizedValue) : false;
     const cleanedValue = (normalizedValue && hasProblematicTags) ? cleanHtml(normalizedValue) : normalizedValue;
     
     // Comparar el contenido actual con el valor
     const currentContent = editorRef.current.innerHTML.trim();
     const targetValue = cleanedValue.trim();
     
-    // Solo actualizar si el contenido es diferente y no es una actualización interna
+    // Solo actualizar si el contenido es diferente
     if (currentContent !== targetValue && lastValueRef.current !== cleanedValue) {
       // Preservar el cursor si es posible
       const selection = window.getSelection();
@@ -310,17 +222,16 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     if (editorRef.current && !isUpdatingRef.current) {
       const rawHtml = editorRef.current.innerHTML;
       
-      // Solo limpiar si hay tags problemáticos (font, divs innecesarios, etc.)
-      // Esto evita loops cuando el usuario está escribiendo normalmente
-      const hasProblematicTags = /<font[^>]*>|<div[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(rawHtml);
+      // Solo limpiar si hay tags problemáticos (font tags, atributos innecesarios)
+      // NO limpiar divs normales que contentEditable crea al presionar Enter
+      const hasProblematicTags = /<font[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(rawHtml);
       
       if (hasProblematicTags) {
         isUpdatingRef.current = true;
-        // Limpiar el HTML antes de guardarlo
         const cleanedHtml = cleanHtml(rawHtml);
         lastValueRef.current = cleanedHtml;
         
-        // Solo actualizar el contenido si realmente cambió
+        // Solo actualizar si realmente cambió
         if (editorRef.current.innerHTML.trim() !== cleanedHtml.trim()) {
           const selection = window.getSelection();
           const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
@@ -333,7 +244,7 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
           
           editorRef.current.innerHTML = cleanedHtml;
           
-          // Restaurar el cursor si es posible
+          // Restaurar el cursor
           if (savedRange) {
             try {
               requestAnimationFrame(() => {
@@ -344,19 +255,18 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
                 selection?.addRange(newRange);
               });
             } catch (e) {
-              // Si falla, simplemente continuar
+              // Ignorar errores al restaurar cursor
             }
           }
         }
         
         onChange(cleanedHtml);
         
-        // Reset flag after a short delay to allow the onChange to propagate
         setTimeout(() => {
           isUpdatingRef.current = false;
         }, 0);
       } else {
-        // Si no hay tags problemáticos, solo actualizar el estado sin modificar el editor
+        // HTML normal, solo actualizar el estado
         lastValueRef.current = rawHtml;
         onChange(rawHtml);
       }
