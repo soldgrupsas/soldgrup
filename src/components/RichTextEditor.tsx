@@ -152,13 +152,19 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       
       isUpdatingRef.current = true;
       
-      // Usar textContent temporalmente para limpiar, luego establecer innerHTML
-      // Esto asegura que el contenido se establezca correctamente
+      // Limpiar el contenido primero
+      editorRef.current.textContent = "";
+      
+      // Establecer el HTML limpio usando insertAdjacentHTML para asegurar renderizado correcto
       if (cleanedValue) {
-        editorRef.current.textContent = "";
-        editorRef.current.innerHTML = cleanedValue;
-      } else {
-        editorRef.current.innerHTML = "";
+        // Crear un elemento temporal para parsear el HTML
+        const tempContainer = document.createElement("div");
+        tempContainer.innerHTML = cleanedValue;
+        
+        // Mover todos los nodos al editor
+        while (tempContainer.firstChild) {
+          editorRef.current.appendChild(tempContainer.firstChild);
+        }
       }
       
       lastValueRef.current = cleanedValue;
