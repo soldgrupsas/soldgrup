@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Bold, Italic, List } from "lucide-react";
 
@@ -13,72 +13,8 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
   const isUpdatingRef = useRef(false);
   const lastValueRef = useRef<string>("");
 
-  // Inicializar el contenido cuando el componente se monta
-  useEffect(() => {
-    if (editorRef.current && value) {
-      const cleanedValue = cleanHtml(value);
-      if (cleanedValue !== editorRef.current.innerHTML) {
-        editorRef.current.innerHTML = cleanedValue;
-        lastValueRef.current = cleanedValue;
-        // Si se limpió, actualizar el estado padre
-        if (cleanedValue !== value) {
-          onChange(cleanedValue);
-        }
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!editorRef.current || isUpdatingRef.current) return;
-    
-    const currentContent = editorRef.current.innerHTML;
-    const normalizedValue = value || "";
-    
-    // Limpiar el valor cargado si contiene HTML antiguo
-    const cleanedValue = normalizedValue ? cleanHtml(normalizedValue) : "";
-    
-    // Solo actualizar si el contenido es diferente y no es una actualización interna
-    if (currentContent !== cleanedValue && lastValueRef.current !== cleanedValue) {
-      // Preservar el cursor si es posible
-      const selection = window.getSelection();
-      const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
-      const savedRange = range && editorRef.current.contains(range.startContainer) ? {
-        startContainer: range.startContainer,
-        startOffset: range.startOffset,
-        endContainer: range.endContainer,
-        endOffset: range.endOffset,
-      } : null;
-      
-      isUpdatingRef.current = true;
-      editorRef.current.innerHTML = cleanedValue;
-      lastValueRef.current = cleanedValue;
-      
-      // Si el valor se limpió, actualizar el estado padre
-      if (cleanedValue !== normalizedValue && cleanedValue) {
-        onChange(cleanedValue);
-      }
-      
-      // Restaurar el cursor si estaba dentro del editor
-      if (savedRange) {
-        try {
-          const newRange = document.createRange();
-          newRange.setStart(savedRange.startContainer, savedRange.startOffset);
-          newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
-          selection?.removeAllRanges();
-          selection?.addRange(newRange);
-        } catch (e) {
-          // Si falla restaurar el cursor, simplemente continuar
-        }
-      }
-      
-      setTimeout(() => {
-        isUpdatingRef.current = false;
-      }, 0);
-    }
-  }, [value]);
-
   // Función para limpiar y normalizar el HTML
-  const cleanHtml = (html: string): string => {
+  const cleanHtml = useCallback((html: string): string => {
     if (!html) return "";
     
     // Crear un elemento temporal para procesar el HTML
@@ -135,8 +71,14 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
             replacement.innerHTML = content;
           } else {
             // Si no tiene formato especial, solo extraer el contenido sin el tag
-            replacement = document.createElement("span");
-            replacement.innerHTML = content;
+            const fragment = document.createDocumentFragment();
+            const tempContent = document.createElement("div");
+            tempContent.innerHTML = content;
+            while (tempContent.firstChild) {
+              fragment.appendChild(tempContent.firstChild);
+            }
+            parent.replaceChild(fragment, font);
+            return; // Ya reemplazamos, continuar con el siguiente
           }
           
           parent.replaceChild(replacement, font);
@@ -187,7 +129,62 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     });
     
     return tempDiv.innerHTML;
-  };
+  }, []);
+
+  // Inicializar y actualizar el contenido
+  useEffect(() => {
+    if (!editorRef.current || isUpdatingRef.current) return;
+    
+    const normalizedValue = value || "";
+    const cleanedValue = normalizedValue ? cleanHtml(normalizedValue) : "";
+    
+    // Solo actualizar si el contenido es diferente
+    if (editorRef.current.innerHTML !== cleanedValue && lastValueRef.current !== cleanedValue) {
+      // Preservar el cursor si es posible
+      const selection = window.getSelection();
+      const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const savedRange = range && editorRef.current.contains(range.startContainer) ? {
+        startContainer: range.startContainer,
+        startOffset: range.startOffset,
+        endContainer: range.endContainer,
+        endOffset: range.endOffset,
+      } : null;
+      
+      isUpdatingRef.current = true;
+      editorRef.current.innerHTML = cleanedValue;
+      lastValueRef.current = cleanedValue;
+      
+      // Si el valor se limpió, actualizar el estado padre (pero evitar loop infinito)
+      if (cleanedValue !== normalizedValue && cleanedValue && cleanedValue !== value) {
+        // Usar setTimeout para evitar actualizaciones síncronas que causen loops
+        const timeoutId = setTimeout(() => {
+          if (!isUpdatingRef.current) {
+            onChange(cleanedValue);
+          }
+        }, 50);
+        return () => clearTimeout(timeoutId);
+      }
+      
+      // Restaurar el cursor si estaba dentro del editor
+      if (savedRange) {
+        try {
+          requestAnimationFrame(() => {
+            const newRange = document.createRange();
+            newRange.setStart(savedRange.startContainer, savedRange.startOffset);
+            newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
+            selection?.removeAllRanges();
+            selection?.addRange(newRange);
+          });
+        } catch (e) {
+          // Si falla restaurar el cursor, simplemente continuar
+        }
+      }
+      
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 0);
+    }
+  }, [value, cleanHtml, onChange]);
 
   const handleInput = () => {
     if (editorRef.current && !isUpdatingRef.current) {
@@ -195,8 +192,9 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       const rawHtml = editorRef.current.innerHTML;
       // Limpiar el HTML antes de guardarlo
       const cleanedHtml = cleanHtml(rawHtml);
+      lastValueRef.current = cleanedHtml;
       onChange(cleanedHtml);
-      // Actualizar el contenido del editor con el HTML limpio
+      // Actualizar el contenido del editor con el HTML limpio si es diferente
       if (editorRef.current.innerHTML !== cleanedHtml) {
         editorRef.current.innerHTML = cleanedHtml;
       }
@@ -213,7 +211,7 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
 
     editor.focus();
     const selection = window.getSelection();
-    if (!selection) return;
+    if (!selection || selection.rangeCount === 0) return;
 
     switch (format) {
       case "bold":
@@ -275,6 +273,7 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
         style={{
           whiteSpace: "pre-wrap",
         }}
+        suppressContentEditableWarning={true}
       />
       <div className="text-xs text-muted-foreground">
         Selecciona texto y usa los botones para aplicar formato
