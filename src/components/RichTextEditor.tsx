@@ -17,9 +17,26 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
   const cleanHtml = useCallback((html: string): string => {
     if (!html) return "";
     
+    // Primero, decodificar cualquier HTML escapado (si el HTML viene como texto plano)
+    // Esto maneja casos donde el HTML está escapado como &lt;font&gt; en lugar de <font>
+    let decodedHtml = html;
+    try {
+      // Crear un elemento temporal para decodificar
+      const decodeDiv = document.createElement("div");
+      decodeDiv.textContent = html;
+      decodedHtml = decodeDiv.innerHTML;
+      // Si no cambió, significa que no estaba escapado, usar el original
+      if (decodedHtml === html) {
+        decodedHtml = html;
+      }
+    } catch (e) {
+      // Si falla, usar el HTML original
+      decodedHtml = html;
+    }
+    
     // Crear un elemento temporal para procesar el HTML
     const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = html;
+    tempDiv.innerHTML = decodedHtml;
     
     // Función recursiva para reemplazar tags <font> anidados
     const replaceFontTags = (element: Element | DocumentFragment) => {
@@ -126,7 +143,14 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
           const hasPreviousSibling = div.previousSibling !== null;
           const hasContent = div.textContent?.trim() || div.children.length > 0;
           
-          if (hasContent && (hasPreviousSibling || div !== parent.firstChild)) {
+          // Verificar si hay un elemento hermano anterior que sea texto o elemento
+          const prevSibling = div.previousSibling;
+          const shouldAddBr = hasContent && (
+            hasPreviousSibling || 
+            (prevSibling && prevSibling.nodeType === Node.TEXT_NODE && prevSibling.textContent?.trim())
+          );
+          
+          if (shouldAddBr) {
             const br = document.createElement("br");
             fragment.appendChild(br);
           }
@@ -144,8 +168,18 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       });
       
       // Si aún hay divs, procesar de nuevo (puede haber divs anidados que quedaron)
-      if (tempDiv.querySelectorAll("div").length > 0) {
-        processDivs();
+      const remainingDivs = tempDiv.querySelectorAll("div");
+      if (remainingDivs.length > 0) {
+        // Limitar recursión para evitar loops infinitos
+        const maxIterations = 10;
+        let iterations = 0;
+        const processAgain = () => {
+          iterations++;
+          if (iterations < maxIterations) {
+            processDivs();
+          }
+        };
+        processAgain();
       }
     };
     
@@ -198,10 +232,15 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     if (!editorRef.current || isUpdatingRef.current) return;
     
     const normalizedValue = value || "";
+    // Siempre limpiar el HTML, incluso si parece estar bien
     const cleanedValue = normalizedValue ? cleanHtml(normalizedValue) : "";
     
+    // Comparar el contenido actual con el valor limpio
+    const currentContent = editorRef.current.innerHTML.trim();
+    const cleanedValueTrimmed = cleanedValue.trim();
+    
     // Solo actualizar si el contenido es diferente
-    if (editorRef.current.innerHTML !== cleanedValue && lastValueRef.current !== cleanedValue) {
+    if (currentContent !== cleanedValueTrimmed && lastValueRef.current !== cleanedValue) {
       // Preservar el cursor si es posible
       const selection = window.getSelection();
       const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
@@ -232,13 +271,14 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       lastValueRef.current = cleanedValue;
       
       // Si el valor se limpió, actualizar el estado padre (pero evitar loop infinito)
-      if (cleanedValue !== normalizedValue && cleanedValue && cleanedValue !== value) {
+      // Esto asegura que el HTML limpio se guarde en la base de datos
+      if (cleanedValue !== normalizedValue && cleanedValue) {
         // Usar setTimeout para evitar actualizaciones síncronas que causen loops
         setTimeout(() => {
-          if (!isUpdatingRef.current) {
+          if (!isUpdatingRef.current && cleanedValue !== value) {
             onChange(cleanedValue);
           }
-        }, 50);
+        }, 100);
       }
       
       // Restaurar el cursor si estaba dentro del editor
@@ -269,11 +309,39 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
       // Limpiar el HTML antes de guardarlo
       const cleanedHtml = cleanHtml(rawHtml);
       lastValueRef.current = cleanedHtml;
-      onChange(cleanedHtml);
+      
       // Actualizar el contenido del editor con el HTML limpio si es diferente
-      if (editorRef.current.innerHTML !== cleanedHtml) {
+      // Esto asegura que el editor siempre muestre HTML limpio
+      if (editorRef.current.innerHTML.trim() !== cleanedHtml.trim()) {
+        const selection = window.getSelection();
+        const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
+        const savedRange = range && editorRef.current.contains(range.startContainer) ? {
+          startContainer: range.startContainer,
+          startOffset: range.startOffset,
+          endContainer: range.endContainer,
+          endOffset: range.endOffset,
+        } : null;
+        
         editorRef.current.innerHTML = cleanedHtml;
+        
+        // Restaurar el cursor si es posible
+        if (savedRange) {
+          try {
+            requestAnimationFrame(() => {
+              const newRange = document.createRange();
+              newRange.setStart(savedRange.startContainer, savedRange.startOffset);
+              newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
+              selection?.removeAllRanges();
+              selection?.addRange(newRange);
+            });
+          } catch (e) {
+            // Si falla, simplemente continuar
+          }
+        }
       }
+      
+      onChange(cleanedHtml);
+      
       // Reset flag after a short delay to allow the onChange to propagate
       setTimeout(() => {
         isUpdatingRef.current = false;
