@@ -13,20 +13,41 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
   const isUpdatingRef = useRef(false);
   const lastValueRef = useRef<string>("");
 
+  // Función para convertir divs a br (solo divs simples que contentEditable crea al presionar Enter)
+  const convertDivsToBr = useCallback((html: string): string => {
+    if (!html) return "";
+    
+    // Reemplazar <div><br></div> o <div></div> con <br>
+    // Esto maneja los divs que contentEditable crea al presionar Enter
+    let result = html
+      .replace(/<div><br\s*\/?><\/div>/gi, '<br>')
+      .replace(/<div><\/div>/gi, '<br>')
+      .replace(/<div>/gi, '<br>')
+      .replace(/<\/div>/gi, '');
+    
+    // Limpiar múltiples <br> consecutivos (máximo 2)
+    result = result.replace(/(<br\s*\/?>){3,}/gi, '<br><br>');
+    
+    return result;
+  }, []);
+
   // Función para limpiar y normalizar el HTML
   // Solo limpia tags problemáticos (font, atributos innecesarios), no toca el HTML normal
   const cleanHtml = useCallback((html: string): string => {
     if (!html) return "";
     
-    // Si no hay tags problemáticos, devolver el HTML tal cual
-    const hasProblematicTags = /<font[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(html);
+    // Primero convertir divs a br si es necesario
+    let processedHtml = convertDivsToBr(html);
+    
+    // Si no hay tags problemáticos, devolver el HTML procesado
+    const hasProblematicTags = /<font[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(processedHtml);
     if (!hasProblematicTags) {
-      return html;
+      return processedHtml;
     }
     
     // Crear un elemento temporal para procesar el HTML
     const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = html;
+    tempDiv.innerHTML = processedHtml;
     
     // Función recursiva para reemplazar tags <font> anidados
     const replaceFontTags = (element: Element | DocumentFragment) => {
@@ -222,54 +243,51 @@ export const RichTextEditor = ({ value, onChange, placeholder }: RichTextEditorP
     if (editorRef.current && !isUpdatingRef.current) {
       const rawHtml = editorRef.current.innerHTML;
       
-      // Solo limpiar si hay tags problemáticos (font tags, atributos innecesarios)
-      // NO limpiar divs normales que contentEditable crea al presionar Enter
+      // Siempre convertir divs a br al guardar (esto asegura que se muestren correctamente)
+      // Pero no actualizar el editor en tiempo real para evitar loops
+      const cleanedHtml = cleanHtml(rawHtml);
+      lastValueRef.current = cleanedHtml;
+      
+      // Solo actualizar el editor si hay tags problemáticos (font, etc.)
+      // No actualizar si solo hay divs normales (para evitar loops)
       const hasProblematicTags = /<font[^>]*>|dir="auto"|vertical-align:\s*inherit/i.test(rawHtml);
       
-      if (hasProblematicTags) {
+      if (hasProblematicTags && editorRef.current.innerHTML.trim() !== cleanedHtml.trim()) {
         isUpdatingRef.current = true;
-        const cleanedHtml = cleanHtml(rawHtml);
-        lastValueRef.current = cleanedHtml;
         
-        // Solo actualizar si realmente cambió
-        if (editorRef.current.innerHTML.trim() !== cleanedHtml.trim()) {
-          const selection = window.getSelection();
-          const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
-          const savedRange = range && editorRef.current.contains(range.startContainer) ? {
-            startContainer: range.startContainer,
-            startOffset: range.startOffset,
-            endContainer: range.endContainer,
-            endOffset: range.endOffset,
-          } : null;
-          
-          editorRef.current.innerHTML = cleanedHtml;
-          
-          // Restaurar el cursor
-          if (savedRange) {
-            try {
-              requestAnimationFrame(() => {
-                const newRange = document.createRange();
-                newRange.setStart(savedRange.startContainer, savedRange.startOffset);
-                newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
-                selection?.removeAllRanges();
-                selection?.addRange(newRange);
-              });
-            } catch (e) {
-              // Ignorar errores al restaurar cursor
-            }
+        const selection = window.getSelection();
+        const range = selection?.rangeCount > 0 ? selection.getRangeAt(0) : null;
+        const savedRange = range && editorRef.current.contains(range.startContainer) ? {
+          startContainer: range.startContainer,
+          startOffset: range.startOffset,
+          endContainer: range.endContainer,
+          endOffset: range.endOffset,
+        } : null;
+        
+        editorRef.current.innerHTML = cleanedHtml;
+        
+        // Restaurar el cursor
+        if (savedRange) {
+          try {
+            requestAnimationFrame(() => {
+              const newRange = document.createRange();
+              newRange.setStart(savedRange.startContainer, savedRange.startOffset);
+              newRange.setEnd(savedRange.endContainer, savedRange.endOffset);
+              selection?.removeAllRanges();
+              selection?.addRange(newRange);
+            });
+          } catch (e) {
+            // Ignorar errores al restaurar cursor
           }
         }
-        
-        onChange(cleanedHtml);
         
         setTimeout(() => {
           isUpdatingRef.current = false;
         }, 0);
-      } else {
-        // HTML normal, solo actualizar el estado
-        lastValueRef.current = rawHtml;
-        onChange(rawHtml);
       }
+      
+      // Siempre guardar el HTML limpio (con divs convertidos a br)
+      onChange(cleanedHtml);
     }
   };
 
