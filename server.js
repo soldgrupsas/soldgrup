@@ -130,38 +130,24 @@ server.on('error', (err) => {
   }
 });
 
-// Función para iniciar el servidor
-function startServer() {
-  try {
-    console.log(`Attempting to start server on port ${PORT}...`);
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log(`✓ Server running on http://0.0.0.0:${PORT}`);
-      console.log(`✓ Serving files from: ${PUBLIC_DIR}`);
-      console.log('✓ Server started successfully');
-      console.log('✓ Server is ready to accept connections');
-    });
-    
-    // Verificar que el servidor está escuchando después de un breve delay
-    setTimeout(() => {
-      if (server.listening) {
-        console.log('✓ Server is listening and ready');
-      } else {
-        console.error('✗ Server failed to start listening');
-      }
-    }, 1000);
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    console.error('Error stack:', error.stack);
-    // No salir del proceso, intentar reiniciar después de un delay
-    setTimeout(() => {
-      console.log('Attempting to restart server...');
-      startServer();
-    }, 5000);
-  }
-}
-
 // Iniciar el servidor
-startServer();
+console.log(`Starting server on port ${PORT}...`);
+console.log(`Serving files from: ${PUBLIC_DIR}`);
+console.log(`Current working directory: ${process.cwd()}`);
+console.log(`__dirname: ${__dirname}`);
+
+try {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`✓ Server running on http://0.0.0.0:${PORT}`);
+    console.log(`✓ Serving files from: ${PUBLIC_DIR}`);
+    console.log('✓ Server started successfully');
+    console.log('✓ Server is ready to accept connections');
+  });
+} catch (error) {
+  console.error('Failed to start server:', error);
+  console.error('Error stack:', error.stack);
+  process.exit(1);
+}
 
 // Manejar señales de terminación
 process.on('SIGTERM', () => {
@@ -180,8 +166,14 @@ process.on('SIGINT', () => {
   });
 });
 
-// Keep the process alive
+// Keep the process alive - asegurar que el proceso no se cierre
 setInterval(() => {
   // Heartbeat para mantener el proceso vivo
+  if (!server.listening) {
+    console.log('Warning: Server is not listening, attempting to restart...');
+  }
 }, 30000);
+
+// Asegurar que el proceso no se cierre inesperadamente
+process.stdin.resume();
 
