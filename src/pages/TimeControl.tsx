@@ -12,6 +12,7 @@ import {
   X,
   Calendar,
   Filter,
+  Camera,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -811,6 +812,13 @@ const TimeControl = () => {
   const [lunchWasNormal, setLunchWasNormal] = useState<boolean>(true);
   const [lunchMinutesTaken, setLunchMinutesTaken] = useState<string>("60");
   
+  // Estados para cámara nativa (modal de captura directa)
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [cameraType, setCameraType] = useState<"entry" | "exit" | null>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  
   // Timeout para resetear estados de uploading si se quedan atascados
   useEffect(() => {
     if (uploadingEntry || uploadingExit) {
@@ -1348,13 +1356,167 @@ const TimeControl = () => {
     return age;
   };
 
+  // Función para abrir la cámara y capturar foto del nuevo trabajador
+  const openCameraForNewWorkerPhoto = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "user"; // Cámara frontal para fotos de perfil
+    input.style.position = "fixed";
+    input.style.top = "-9999px";
+    input.style.left = "-9999px";
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+
+    const cleanup = () => {
+      try {
+        if (input && input.parentNode && document.body.contains(input)) {
+          input.parentNode.removeChild(input);
+        }
+      } catch (e) {
+        // Ignorar errores de limpieza
+      }
+    };
+
+    input.onchange = (e) => {
+      try {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          // Validar tamaño (máx 5MB)
+          if (file.size > 5 * 1024 * 1024) {
+            toast({
+              title: "Error",
+              description: "La imagen es muy grande. El tamaño máximo es 5MB.",
+              variant: "destructive",
+            });
+            cleanup();
+            return;
+          }
+          
+          setNewWorkerPhoto(file);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setNewWorkerPhotoPreview(reader.result as string);
+          };
+          reader.onerror = () => {
+            toast({
+              title: "Error",
+              description: "No se pudo procesar la imagen. Intenta de nuevo.",
+              variant: "destructive",
+            });
+          };
+          reader.readAsDataURL(file);
+        }
+        cleanup();
+      } catch (error) {
+        console.error("Error al capturar foto:", error);
+        toast({
+          title: "Error",
+          description: "Ocurrió un error al capturar la foto.",
+          variant: "destructive",
+        });
+        cleanup();
+      }
+    };
+
+    input.oncancel = cleanup;
+    
+    document.body.appendChild(input);
+    input.click();
+  };
+
+  // Función para abrir la cámara y capturar foto del trabajador en edición
+  const openCameraForEditingWorkerPhoto = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "user"; // Cámara frontal para fotos de perfil
+    input.style.position = "fixed";
+    input.style.top = "-9999px";
+    input.style.left = "-9999px";
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+
+    const cleanup = () => {
+      try {
+        if (input && input.parentNode && document.body.contains(input)) {
+          input.parentNode.removeChild(input);
+        }
+      } catch (e) {
+        // Ignorar errores de limpieza
+      }
+    };
+
+    input.onchange = (e) => {
+      try {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          // Validar tamaño (máx 5MB)
+          if (file.size > 5 * 1024 * 1024) {
+            toast({
+              title: "Error",
+              description: "La imagen es muy grande. El tamaño máximo es 5MB.",
+              variant: "destructive",
+            });
+            cleanup();
+            return;
+          }
+          
+          setEditingWorkerPhoto(file);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setEditingWorkerPhotoPreview(reader.result as string);
+          };
+          reader.onerror = () => {
+            toast({
+              title: "Error",
+              description: "No se pudo procesar la imagen. Intenta de nuevo.",
+              variant: "destructive",
+            });
+          };
+          reader.readAsDataURL(file);
+        }
+        cleanup();
+      } catch (error) {
+        console.error("Error al capturar foto:", error);
+        toast({
+          title: "Error",
+          description: "Ocurrió un error al capturar la foto.",
+          variant: "destructive",
+        });
+        cleanup();
+      }
+    };
+
+    input.oncancel = cleanup;
+    
+    document.body.appendChild(input);
+    input.click();
+  };
+
+  // Mantener funciones legacy por si hay inputs directos
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "Error",
+          description: "La imagen es muy grande. El tamaño máximo es 5MB.",
+          variant: "destructive",
+        });
+        return;
+      }
       setNewWorkerPhoto(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setNewWorkerPhotoPreview(reader.result as string);
+      };
+      reader.onerror = () => {
+        toast({
+          title: "Error",
+          description: "No se pudo procesar la imagen.",
+          variant: "destructive",
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -1363,10 +1525,25 @@ const TimeControl = () => {
   const handleEditingPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "Error",
+          description: "La imagen es muy grande. El tamaño máximo es 5MB.",
+          variant: "destructive",
+        });
+        return;
+      }
       setEditingWorkerPhoto(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setEditingWorkerPhotoPreview(reader.result as string);
+      };
+      reader.onerror = () => {
+        toast({
+          title: "Error",
+          description: "No se pudo procesar la imagen.",
+          variant: "destructive",
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -1759,9 +1936,250 @@ const TimeControl = () => {
     return `${hours}h ${mins}m`;
   };
 
+  // Funciones para cámara nativa
+  const openNativeCamera = async (type: "entry" | "exit") => {
+    try {
+      // Solicitar acceso a la cámara trasera (environment)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: "environment", // Cámara trasera
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+      
+      setCameraStream(stream);
+      setCameraType(type);
+      setShowCameraModal(true);
+      
+      // Conectar el stream al video element después de que el modal se muestre
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(console.error);
+        }
+      }, 100);
+      
+    } catch (error: any) {
+      console.error("Error al acceder a la cámara:", error);
+      // Si falla getUserMedia, intentar con el método tradicional
+      toast({
+        title: "Cámara no disponible",
+        description: "Usando método alternativo para capturar foto...",
+      });
+      fallbackToFileInput(type);
+    }
+  };
+
+  const capturePhotoFromCamera = async () => {
+    if (!videoRef.current || !canvasRef.current || !cameraType) return;
+    
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // Configurar canvas con las dimensiones del video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Capturar frame del video
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    
+    ctx.drawImage(video, 0, 0);
+    
+    // Convertir a blob
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        toast({
+          title: "Error",
+          description: "No se pudo capturar la foto. Intenta de nuevo.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      // Crear File desde blob
+      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
+      
+      // Cerrar cámara
+      closeCameraModal();
+      
+      // Procesar la foto capturada
+      await processPhotoCapture(file, cameraType);
+    }, "image/jpeg", 0.85);
+  };
+
+  const closeCameraModal = () => {
+    // Detener el stream de la cámara
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowCameraModal(false);
+    setCameraType(null);
+    
+    // Limpiar video element
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  // Método de respaldo usando input file tradicional
+  const fallbackToFileInput = (type: "entry" | "exit") => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.setAttribute("capture", "environment");
+    input.setAttribute("accept", "image/*");
+    (input as any).capture = "environment";
+    input.style.position = "fixed";
+    input.style.top = "-9999px";
+    input.style.opacity = "0";
+    
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        await processPhotoCapture(file, type);
+      }
+      try {
+        if (input.parentNode) input.parentNode.removeChild(input);
+      } catch (e) { /* ignore */ }
+    };
+    
+    document.body.appendChild(input);
+    input.click();
+  };
+
+  // Función para procesar la foto capturada (tanto de cámara nativa como de input)
+  const processPhotoCapture = async (file: File, type: "entry" | "exit") => {
+    if (type === "entry") {
+      setUploadingEntry(true);
+    } else {
+      setUploadingExit(true);
+    }
+
+    try {
+      // Obtener ubicación GPS
+      toast({
+        title: "Obteniendo ubicación...",
+        description: "Procesando foto y obteniendo ubicación GPS.",
+      });
+
+      const locationPromise = getCurrentLocation().catch((error) => {
+        console.error("Error obteniendo ubicación:", error);
+        return { latitude: null, longitude: null, error: "Error al obtener ubicación" };
+      });
+
+      // Si es salida, mostrar diálogo de ajuste de almuerzo
+      if (type === "exit") {
+        const location = await locationPromise;
+        setPendingExitFile(file);
+        setPendingExitLocation({
+          latitude: location.latitude,
+          longitude: location.longitude,
+        });
+        setLunchWasNormal(true);
+        setLunchMinutesTaken("60");
+        setShowExitAdjustmentDialog(true);
+        return;
+      }
+
+      // Para entrada, procesar directamente
+      const [photoUrl, location] = await Promise.all([
+        uploadPhoto(file, type),
+        locationPromise
+      ]);
+
+      const today = toDateKey(new Date());
+      const now = new Date().toISOString();
+
+      // Verificar si existe registro para hoy
+      const { data: existingRecords, error: queryError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("worker_id", selectedWorkerId)
+        .eq("date", today);
+
+      if (queryError && queryError.code !== "PGRST116") {
+        throw queryError;
+      }
+
+      const existingRecord = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+      if (existingRecord) {
+        const updateData = {
+          entry_time: now,
+          entry_photo_url: photoUrl,
+          entry_latitude: location?.latitude ?? null,
+          entry_longitude: location?.longitude ?? null,
+          exit_time: existingRecord.exit_time || null,
+          exit_photo_url: existingRecord.exit_photo_url || null,
+          exit_latitude: existingRecord.exit_latitude || null,
+          exit_longitude: existingRecord.exit_longitude || null,
+        };
+
+        const { data: updatedData, error } = await supabase
+          .from("attendance_records")
+          .update(updateData)
+          .eq("id", existingRecord.id)
+          .select();
+
+        if (error) throw error;
+
+        if (updatedData && updatedData[0]) {
+          updateAttendanceRecord(updatedData[0] as unknown as AttendanceRecord);
+        }
+      } else {
+        const newRecord = {
+          worker_id: selectedWorkerId,
+          date: today,
+          entry_time: now,
+          exit_time: null,
+          entry_photo_url: photoUrl,
+          exit_photo_url: null,
+          entry_latitude: location?.latitude ?? null,
+          entry_longitude: location?.longitude ?? null,
+          exit_latitude: null,
+          exit_longitude: null,
+        };
+
+        const { data: insertedData, error } = await supabase
+          .from("attendance_records")
+          .insert(newRecord)
+          .select();
+
+        if (error) throw error;
+
+        if (insertedData && insertedData[0]) {
+          const insertedRecord = insertedData[0] as unknown as AttendanceRecord;
+          setAttendanceRecords(prev => {
+            const exists = prev.some(r => r.id === insertedRecord.id);
+            if (exists) return prev;
+            return [...prev, insertedRecord];
+          });
+        }
+      }
+
+      toast({
+        title: "Entrada registrada",
+        description: "La foto de entrada fue guardada exitosamente.",
+      });
+    } catch (error: any) {
+      console.error("Error al procesar foto:", error);
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo registrar la asistencia.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingEntry(false);
+      setUploadingExit(false);
+    }
+  };
+
   const handlePhotoUpload = async (type: "entry" | "exit") => {
     // Prevenir múltiples llamadas simultáneas
-    if (uploadingEntry || uploadingExit || isFileInputOpenRef.current) {
+    if (uploadingEntry || uploadingExit || isFileInputOpenRef.current || showCameraModal) {
       return;
     }
 
@@ -1820,6 +2238,12 @@ const TimeControl = () => {
       return;
     }
 
+    // Abrir cámara nativa directamente (sin opción de galería)
+    await openNativeCamera(type);
+  };
+
+  // Función legacy que mantiene el código anterior por compatibilidad (no se usa)
+  const handlePhotoUploadLegacy = async (type: "entry" | "exit") => {
     // DESHABILITAR EL BOTÓN INMEDIATAMENTE para prevenir múltiples clics
     if (type === "entry") {
       setUploadingEntry(true);
@@ -1835,8 +2259,11 @@ const TimeControl = () => {
       // Crear el input fuera del DOM de React para evitar conflictos
       input = document.createElement("input");
       input.type = "file";
-      input.accept = "image/*";
-      input.capture = "environment"; // Use camera on mobile
+      // Forzar apertura de cámara - el orden de atributos importa en algunos navegadores
+      input.setAttribute("capture", "environment"); // Cámara trasera
+      input.setAttribute("accept", "image/*");
+      // En algunos dispositivos Android, esto ayuda a forzar la cámara
+      (input as any).capture = "environment";
       input.style.position = "fixed";
       input.style.top = "-9999px";
       input.style.left = "-9999px";
@@ -2688,7 +3115,7 @@ const TimeControl = () => {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
-                  {/* Photo Upload */}
+                  {/* Photo Upload - Cámara directa */}
                   <div>
                     <Label>Foto del Trabajador</Label>
                     <div className="mt-2 flex items-center gap-4">
@@ -2703,15 +3130,18 @@ const TimeControl = () => {
                           <UserPlus className="h-12 w-12 text-muted-foreground" />
                         </div>
                       )}
-                      <div>
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          onChange={handlePhotoChange}
-                          className="cursor-pointer"
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Formatos: JPG, PNG (máx. 5MB)
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={openCameraForNewWorkerPhoto}
+                          className="flex items-center gap-2"
+                        >
+                          <Camera className="h-4 w-4" />
+                          Tomar Foto
+                        </Button>
+                        <p className="text-xs text-muted-foreground">
+                          Se abrirá la cámara para tomar la foto
                         </p>
                       </div>
                     </div>
@@ -2950,6 +3380,7 @@ const TimeControl = () => {
                 <DialogDescription>Modifica la información del trabajador.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
+                {/* Photo Upload - Cámara directa */}
                 <div>
                   <Label>Foto del Trabajador</Label>
                   <div className="mt-2 flex items-center gap-4">
@@ -2970,15 +3401,18 @@ const TimeControl = () => {
                         <UserPlus className="h-12 w-12 text-muted-foreground" />
                       </div>
                     )}
-                    <div>
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleEditingPhotoChange}
-                        className="cursor-pointer"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Reemplaza la foto del trabajador (JPG, PNG, máx. 5MB)
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={openCameraForEditingWorkerPhoto}
+                        className="flex items-center gap-2"
+                      >
+                        <Camera className="h-4 w-4" />
+                        Tomar Foto
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Se abrirá la cámara para tomar la foto
                       </p>
                     </div>
                   </div>
@@ -4025,6 +4459,50 @@ const TimeControl = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Camera Modal - Captura directa de cámara */}
+        {showCameraModal && (
+          <Dialog open={showCameraModal} onOpenChange={() => closeCameraModal()}>
+            <DialogContent className="max-w-lg p-0 overflow-hidden">
+              <DialogHeader className="p-4 pb-0">
+                <DialogTitle className="flex items-center gap-2">
+                  <Camera className="h-5 w-5" />
+                  {cameraType === "entry" ? "Foto de Entrada" : "Foto de Salida"}
+                </DialogTitle>
+                <DialogDescription>
+                  Toma la foto para registrar la asistencia
+                </DialogDescription>
+              </DialogHeader>
+              <div className="relative bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-auto max-h-[60vh] object-cover"
+                />
+                <canvas ref={canvasRef} className="hidden" />
+              </div>
+              <div className="p-4 flex justify-center gap-4">
+                <Button
+                  variant="outline"
+                  onClick={closeCameraModal}
+                  className="flex items-center gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={capturePhotoFromCamera}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
+                >
+                  <Camera className="h-4 w-4" />
+                  Capturar Foto
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
 
         {/* Photo Viewer Dialog */}
         {viewingPhoto && (
