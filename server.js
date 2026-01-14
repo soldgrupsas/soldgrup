@@ -19,20 +19,24 @@ const PUBLIC_DIR = path.join(__dirname, 'docs');
 
 // Verificar que el directorio docs existe
 console.log(`Checking if directory exists: ${PUBLIC_DIR}`);
-if (!fs.existsSync(PUBLIC_DIR)) {
-  console.error(`Error: Directory ${PUBLIC_DIR} does not exist`);
-  console.error(`Current working directory: ${process.cwd()}`);
-  console.error(`__dirname: ${__dirname}`);
-  process.exit(1);
-}
+console.log(`Current working directory: ${process.cwd()}`);
+console.log(`__dirname: ${__dirname}`);
 
-// Verificar que index.html existe
-const indexPath = path.join(PUBLIC_DIR, 'index.html');
-console.log(`Checking if index.html exists: ${indexPath}`);
-if (!fs.existsSync(indexPath)) {
-  console.error(`Error: ${indexPath} does not exist. Please run 'npm run build:coolify' first.`);
-  console.error(`Files in ${PUBLIC_DIR}:`, fs.readdirSync(PUBLIC_DIR).join(', '));
-  process.exit(1);
+if (!fs.existsSync(PUBLIC_DIR)) {
+  console.error(`Warning: Directory ${PUBLIC_DIR} does not exist`);
+  console.error(`Files in current directory:`, fs.existsSync(process.cwd()) ? fs.readdirSync(process.cwd()).join(', ') : 'N/A');
+  console.error('Server will start but may not serve files correctly');
+} else {
+  console.log(`✓ Directory ${PUBLIC_DIR} exists`);
+  
+  // Verificar que index.html existe
+  const indexPath = path.join(PUBLIC_DIR, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    console.log(`✓ index.html exists`);
+  } else {
+    console.error(`Warning: ${indexPath} does not exist`);
+    console.error(`Files in ${PUBLIC_DIR}:`, fs.readdirSync(PUBLIC_DIR).join(', '));
+  }
 }
 
 console.log('All checks passed. Starting server...');
@@ -84,16 +88,23 @@ const server = http.createServer((req, res) => {
       if (err) {
         if (err.code === 'ENOENT') {
           // Si no se encuentra, servir index.html para SPA
-          fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (err, content) => {
-            if (err) {
-              console.error('Error loading index.html:', err);
-              res.writeHead(500);
-              res.end('Error loading index.html');
-            } else {
-              res.writeHead(200, { 'Content-Type': 'text/html' });
-              res.end(content, 'utf-8');
-            }
-          });
+          const fallbackPath = path.join(PUBLIC_DIR, 'index.html');
+          if (fs.existsSync(fallbackPath)) {
+            fs.readFile(fallbackPath, (err, content) => {
+              if (err) {
+                console.error('Error loading index.html:', err);
+                res.writeHead(500);
+                res.end('Error loading index.html');
+              } else {
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(content, 'utf-8');
+              }
+            });
+          } else {
+            console.error('Error: index.html not found and file not found:', filePath);
+            res.writeHead(404);
+            res.end('File not found');
+          }
         } else {
           console.error('Error reading file:', err);
           res.writeHead(500);
