@@ -20,7 +20,12 @@ const Auth = () => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       // Solo redirigir cuando el usuario inicia sesión explícitamente, no si ya hay una sesión
       if (session && event === "SIGNED_IN") {
-        navigate("/home");
+        // Si es el usuario de asistencia, redirigir directamente al control de horas
+        if (session.user.email === "asistencia@soldgrup.com") {
+          navigate("/time-control");
+        } else {
+          navigate("/home");
+        }
       }
     });
 

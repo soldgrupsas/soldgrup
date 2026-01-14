@@ -172,11 +172,11 @@ const MONTHLY_WORK_HOURS = 220; // Intensidad laboral mensual en Colombia
 
 // Recargos según ley colombiana (porcentajes sobre hora ordinaria)
 const SURCHARGES = {
-  EXTRA_DIURNA: 0.25,           // 25% - Hora extra diurna (6am-7pm)
+  EXTRA_DIURNA: 0.25,           // 25% - Hora extra diurna (solo en rangos 6-8am y 5-7pm)
   EXTRA_NOCTURNA: 0.75,         // 75% - Hora extra nocturna (7pm-6am)
   RECARGO_NOCTURNO: 0.35,       // 35% - Recargo por trabajo nocturno ordinario
   DOMINICAL_FESTIVO: 0.80,      // 80% - Recargo dominical o festivo
-  EXTRA_DIURNA_DOMINICAL: 1.15, // 115% - Hora extra diurna dominical/festivo (25% + 100% - descuento)
+  EXTRA_DIURNA_DOMINICAL: 1.15, // 115% - Hora extra diurna dominical/festivo (solo en rangos 6-8am y 5-7pm)
   EXTRA_NOCTURNA_DOMINICAL: 1.65, // 165% - Hora extra nocturna dominical/festivo
 };
 
@@ -187,12 +187,12 @@ const NIGHT_END_HOUR = 6;    // 6 AM
 // Tipo para el desglose detallado de horas
 type HoursBreakdown = {
   // Minutos trabajados por tipo
-  normalMinutes: number;           // Horas ordinarias dentro del horario laboral
-  extraDiurnaMinutes: number;      // Horas extra diurnas (6am-7pm) días normales
+  normalMinutes: number;           // Horas ordinarias dentro del horario laboral (8am-5pm)
+  extraDiurnaMinutes: number;      // Horas extra diurnas (solo en rangos 6-8am y 5-7pm) días normales
   extraNocturnaMinutes: number;    // Horas extra nocturnas (7pm-6am) días normales
   recargoNocturnoMinutes: number;  // Minutos con recargo nocturno (trabajo ordinario nocturno)
-  dominicalFestivoMinutes: number; // Minutos trabajados en dominical/festivo (ordinarios)
-  extraDiurnaDominicalMinutes: number;   // Horas extra diurnas en dominical/festivo
+  dominicalFestivoMinutes: number; // Minutos trabajados en dominical/festivo (horario 8am-5pm)
+  extraDiurnaDominicalMinutes: number;   // Horas extra diurnas en dominical/festivo (solo en rangos 6-8am y 5-7pm)
   extraNocturnaDominicalMinutes: number; // Horas extra nocturnas en dominical/festivo
   totalMinutes: number;            // Total de minutos trabajados
 };
@@ -346,17 +346,101 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
     extraNightMinutes = Math.max(0, totalNightMinutes - recargoNocturnoMinutes);
   }
   
-  const extraDayMinutes = Math.max(0, extraMinutes - extraNightMinutes);
+  // Calcular minutos en rangos de horas extras diurnas (6-8am y 5-7pm) que están fuera del horario normal
+  // Solo estos minutos se cobran como horas extras diurnas
+  let extraDiurnaMinutesInRanges = 0;
+  const current = new Date(entry);
+  while (current < exit) {
+    const hour = current.getHours();
+    const minute = current.getMinutes();
+    const timeInMinutes = hour * 60 + minute;
+    
+    // Verificar si está en los rangos de horas extras diurnas (6-8am y 5-7pm)
+    const isInRange1 = timeInMinutes >= 360 && timeInMinutes < 480; // 6am - 8am
+    const isInRange2 = timeInMinutes >= 1020 && timeInMinutes < 1140; // 5pm - 7pm
+    
+    if (isInRange1 || isInRange2) {
+      // Verificar que este minuto NO está en el horario normal
+      let isInNormalSchedule = false;
+      intervals.forEach((interval) => {
+        const intervalStart = new Date(entry);
+        intervalStart.setHours(
+          Number(interval.start.split(":")[0]),
+          Number(interval.start.split(":")[1]),
+          0, 0
+        );
+        const intervalEnd = new Date(entry);
+        intervalEnd.setHours(
+          Number(interval.end.split(":")[0]),
+          Number(interval.end.split(":")[1]),
+          0, 0
+        );
+        
+        if (current >= intervalStart && current < intervalEnd) {
+          isInNormalSchedule = true;
+        }
+      });
+      
+      // Solo contar si está fuera del horario normal y no es nocturno
+      if (!isInNormalSchedule && !isNightHour(hour)) {
+        extraDiurnaMinutesInRanges++;
+      }
+    }
+    
+    current.setMinutes(current.getMinutes() + 1);
+  }
+  
+  // Las horas extras diurnas son solo las que están en los rangos específicos (6-8am y 5-7pm)
+  // y que no son nocturnas
+  const extraDiurnaMinutes = extraDiurnaMinutesInRanges;
+  
+  // Los minutos restantes fuera del horario normal pero fuera de los rangos de extra diurna
+  // no se cobran como extra diurna (se consideran como tiempo trabajado pero sin recargo extra)
+  const extraDayMinutes = extraDiurnaMinutes;
 
   // Si es dominical o festivo, todo tiene recargo especial
   if (isDomFestivo) {
+    // En días festivos, el horario "normal" conceptual es 8am-5pm (aunque no haya horario laboral)
+    // Las horas extras diurnas solo se cobran en 6-8am y 5-7pm
+    // Calcular minutos en el horario "normal" conceptual (8am-12pm y 1pm-5pm)
+    let normalConceptualMinutes = 0;
+    const conceptualIntervals = [
+      { start: "08:00", end: "12:00" },
+      { start: "13:00", end: "17:00" }
+    ];
+    
+    conceptualIntervals.forEach((interval) => {
+      const intervalStart = new Date(entry);
+      intervalStart.setHours(
+        Number(interval.start.split(":")[0]),
+        Number(interval.start.split(":")[1]),
+        0, 0
+      );
+      const intervalEnd = new Date(entry);
+      intervalEnd.setHours(
+        Number(interval.end.split(":")[0]),
+        Number(interval.end.split(":")[1]),
+        0, 0
+      );
+
+      const overlapStart = new Date(Math.max(entry.getTime(), intervalStart.getTime()));
+      const overlapEnd = new Date(Math.min(exit.getTime(), intervalEnd.getTime()));
+
+      if (overlapEnd > overlapStart) {
+        const overlapMinutes = (overlapEnd.getTime() - overlapStart.getTime()) / 60000;
+        normalConceptualMinutes += overlapMinutes;
+      }
+    });
+    
+    // En festivos, el trabajo en horario "normal" conceptual (8am-5pm) se cobra como dominicalFestivoMinutes
+    // Las horas extras diurnas solo se cobran en los rangos 6-8am y 5-7pm
     return {
       normalMinutes: 0,
       extraDiurnaMinutes: 0,
       extraNocturnaMinutes: 0,
       recargoNocturnoMinutes: 0,
-      dominicalFestivoMinutes: normalMinutes, // Trabajo ordinario en festivo
-      extraDiurnaDominicalMinutes: extraDayMinutes,
+      dominicalFestivoMinutes: normalConceptualMinutes, // Trabajo en horario 8am-5pm en festivo
+      extraDiurnaDominicalMinutes: extraDiurnaMinutes, // Solo en rangos 6-8am y 5-7pm
       extraNocturnaDominicalMinutes: extraNightMinutes,
       totalMinutes,
     };
@@ -492,34 +576,170 @@ const getCurrentLocation = (): Promise<{ latitude: number; longitude: number; er
     }
 
     function requestPosition() {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          console.log("Location obtained:", position.coords.latitude, position.coords.longitude);
+      // Usar watchPosition para obtener la mejor precisión posible
+      let watchId: number | null = null;
+      const positions: Array<{ lat: number; lng: number; accuracy: number; timestamp: number }> = [];
+      let bestPosition: { lat: number; lng: number; accuracy: number } | null = null;
+      let timeoutId: NodeJS.Timeout;
+      let hasResolved = false;
+      let positionCount = 0;
+      let lastImprovementTime = Date.now();
+
+      const cleanup = () => {
+        if (watchId !== null) {
+          navigator.geolocation.clearWatch(watchId);
+          watchId = null;
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      };
+
+      // Timeout total de 15 segundos para dar tiempo suficiente al GPS
+      timeoutId = setTimeout(() => {
+        if (hasResolved) return;
+        cleanup();
+        
+        if (bestPosition) {
+          console.log("Location obtained (timeout, best found):", bestPosition.lat, bestPosition.lng, "accuracy:", bestPosition.accuracy, "m");
+          hasResolved = true;
           resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
+            latitude: bestPosition.lat,
+            longitude: bestPosition.lng,
           });
+        } else if (positions.length > 0) {
+          // Si no tenemos una "mejor" posición, usar el promedio de las últimas 3 lecturas más precisas
+          const sortedPositions = [...positions].sort((a, b) => a.accuracy - b.accuracy);
+          const bestPositions = sortedPositions.slice(0, Math.min(3, sortedPositions.length));
+          const avgLat = bestPositions.reduce((sum, p) => sum + p.lat, 0) / bestPositions.length;
+          const avgLng = bestPositions.reduce((sum, p) => sum + p.lng, 0) / bestPositions.length;
+          console.log("Location obtained (averaged from", positions.length, "readings):", avgLat, avgLng);
+          hasResolved = true;
+          resolve({
+            latitude: avgLat,
+            longitude: avgLng,
+          });
+        } else {
+          // Fallback a getCurrentPosition si watchPosition no funcionó
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              if (hasResolved) return;
+              console.log("Location obtained (fallback):", position.coords.latitude, position.coords.longitude, "accuracy:", position.coords.accuracy, "m");
+              hasResolved = true;
+              resolve({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+              });
+            },
+            (error) => {
+              if (hasResolved) return;
+              console.warn("Error getting location:", error.code, error.message);
+              let errorMsg = "No se pudo obtener la ubicación";
+              switch (error.code) {
+                case error.PERMISSION_DENIED:
+                  errorMsg = "Permiso de ubicación denegado. Actívalo en la configuración del navegador.";
+                  break;
+                case error.POSITION_UNAVAILABLE:
+                  errorMsg = "Ubicación no disponible. Verifica que el GPS esté activado.";
+                  break;
+                case error.TIMEOUT:
+                  errorMsg = "Tiempo de espera agotado. Intenta en un lugar con mejor señal GPS.";
+                  break;
+              }
+              hasResolved = true;
+              resolve({ latitude: null, longitude: null, error: errorMsg });
+            },
+            {
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 0,
+            }
+          );
+        }
+      }, 15000);
+
+      // Usar watchPosition para obtener múltiples lecturas y elegir la más precisa
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const coords = position.coords;
+          positionCount++;
+          
+          const pos = {
+            lat: coords.latitude,
+            lng: coords.longitude,
+            accuracy: coords.accuracy || Infinity,
+            timestamp: Date.now(),
+          };
+
+          positions.push(pos);
+
+          // Actualizar la mejor posición si esta es más precisa (menor accuracy = mejor)
+          if (!bestPosition || pos.accuracy < bestPosition.accuracy) {
+            bestPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy };
+            lastImprovementTime = Date.now();
+            console.log("Better position found:", pos.lat, pos.lng, "accuracy:", pos.accuracy, "m");
+          }
+
+          // Si tenemos una posición con excelente precisión (< 10 metros), usar esa inmediatamente
+          if (bestPosition && bestPosition.accuracy < 10) {
+            cleanup();
+            if (hasResolved) return;
+            console.log("Location obtained (excellent accuracy):", bestPosition.lat, bestPosition.lng, "accuracy:", bestPosition.accuracy, "m");
+            hasResolved = true;
+            resolve({
+              latitude: bestPosition.lat,
+              longitude: bestPosition.lng,
+            });
+            return;
+          }
+
+          // Si tenemos una posición con muy buena precisión (< 20 metros) y al menos 2 lecturas, usar esa
+          if (bestPosition && bestPosition.accuracy < 20 && positionCount >= 2) {
+            cleanup();
+            if (hasResolved) return;
+            console.log("Location obtained (high accuracy):", bestPosition.lat, bestPosition.lng, "accuracy:", bestPosition.accuracy, "m");
+            hasResolved = true;
+            resolve({
+              latitude: bestPosition.lat,
+              longitude: bestPosition.lng,
+            });
+            return;
+          }
+
+          // Si tenemos una posición con buena precisión (< 30 metros) y al menos 3 lecturas, usar esa
+          if (bestPosition && bestPosition.accuracy < 30 && positionCount >= 3) {
+            cleanup();
+            if (hasResolved) return;
+            console.log("Location obtained (good accuracy):", bestPosition.lat, bestPosition.lng, "accuracy:", bestPosition.accuracy, "m");
+            hasResolved = true;
+            resolve({
+              latitude: bestPosition.lat,
+              longitude: bestPosition.lng,
+            });
+            return;
+          }
+
+          // Si no ha habido mejoras en los últimos 2 segundos y tenemos al menos 3 lecturas con precisión aceptable
+          if (bestPosition && positionCount >= 3 && (Date.now() - lastImprovementTime) > 2000 && bestPosition.accuracy < 50) {
+            cleanup();
+            if (hasResolved) return;
+            console.log("Location obtained (stable, acceptable accuracy):", bestPosition.lat, bestPosition.lng, "accuracy:", bestPosition.accuracy, "m");
+            hasResolved = true;
+            resolve({
+              latitude: bestPosition.lat,
+              longitude: bestPosition.lng,
+            });
+            return;
+          }
         },
         (error) => {
-          console.warn("Error getting location:", error.code, error.message);
-          let errorMsg = "No se pudo obtener la ubicación";
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              errorMsg = "Permiso de ubicación denegado. Actívalo en la configuración del navegador.";
-              break;
-            case error.POSITION_UNAVAILABLE:
-              errorMsg = "Ubicación no disponible. Verifica que el GPS esté activado.";
-              break;
-            case error.TIMEOUT:
-              errorMsg = "Tiempo de espera agotado. Intenta en un lugar con mejor señal GPS.";
-              break;
-          }
-          resolve({ latitude: null, longitude: null, error: errorMsg });
+          console.warn("Error in watchPosition:", error.code, error.message);
+          // No resolver aquí, dejar que el timeout maneje el fallback
         },
         {
           enableHighAccuracy: true,
-          timeout: 30000, // 30 seconds timeout for better accuracy
-          maximumAge: 0, // Always get fresh position, no cache
+          timeout: 15000,
+          maximumAge: 0,
         }
       );
     }
@@ -535,6 +755,9 @@ const TimeControl = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading, session } = useAuth();
   const { toast } = useToast();
+  
+  // Verificar si es el usuario de asistencia (solo puede registrar entrada/salida)
+  const isAttendanceUser = user?.email === "asistencia@soldgrup.com";
   const [initialLoading, setInitialLoading] = useState(false); // Cambiado a false para evitar bloqueo
   const initialLoadRef = useRef(true);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -1538,7 +1761,7 @@ const TimeControl = () => {
 
   const handlePhotoUpload = async (type: "entry" | "exit") => {
     // Prevenir múltiples llamadas simultáneas
-    if (uploadingEntry || uploadingExit) {
+    if (uploadingEntry || uploadingExit || isFileInputOpenRef.current) {
       return;
     }
 
@@ -1597,37 +1820,12 @@ const TimeControl = () => {
       return;
     }
 
-    // PRIMERO: Obtener ubicación GPS ANTES de abrir la cámara
-    toast({
-      title: "Obteniendo ubicación...",
-      description: "Por favor espera mientras se obtiene tu ubicación GPS.",
-    });
-    
-    const preLocation = await getCurrentLocation();
-    if (!preLocation.latitude || !preLocation.longitude) {
-      toast({
-        title: "⚠️ Ubicación requerida",
-        description: preLocation.error || "No se pudo obtener la ubicación GPS. El registro requiere ubicación.",
-        variant: "destructive",
-      });
-      // Preguntar si desea continuar sin ubicación
-      const continueWithoutLocation = window.confirm(
-        "No se pudo obtener la ubicación GPS.\n\n" +
-        "¿Deseas continuar sin ubicación?\n\n" +
-        "Nota: Se recomienda tener el GPS activado para validar el lugar de trabajo."
-      );
-      if (!continueWithoutLocation) {
-        return;
-      }
+    // DESHABILITAR EL BOTÓN INMEDIATAMENTE para prevenir múltiples clics
+    if (type === "entry") {
+      setUploadingEntry(true);
     } else {
-      toast({
-        title: "✅ Ubicación obtenida",
-        description: "Ahora puedes tomar la foto.",
-      });
+      setUploadingExit(true);
     }
-
-    // Guardar la ubicación obtenida para usarla después
-    const capturedLocation = preLocation;
 
     // Usar un try-catch global para capturar cualquier error que pueda romper el renderizado
     let input: HTMLInputElement | null = null;
@@ -1667,6 +1865,12 @@ const TimeControl = () => {
           // Ignorar errores de limpieza - el nodo ya fue removido
           input = null;
         }
+        // Restaurar estado si se cancela sin seleccionar archivo
+        if (type === "entry") {
+          setUploadingEntry(false);
+        } else {
+          setUploadingExit(false);
+        }
       };
 
       input.onchange = async (e) => {
@@ -1678,12 +1882,25 @@ const TimeControl = () => {
             return;
           }
 
-          // Si es salida, guardar archivo, ubicación y mostrar diálogo de almuerzo
+          // OBTENER UBICACIÓN AHORA (en paralelo con la subida de la foto)
+          toast({
+            title: "Obteniendo ubicación...",
+            description: "Procesando foto y obteniendo ubicación GPS.",
+          });
+          
+          // Obtener ubicación en paralelo mientras se sube la foto
+          const locationPromise = getCurrentLocation().catch((error) => {
+            console.error("Error obteniendo ubicación:", error);
+            return { latitude: null, longitude: null, error: "Error al obtener ubicación" };
+          });
+
+          // Si es salida, guardar archivo y obtener ubicación, luego mostrar diálogo de almuerzo
           if (type === "exit") {
+            const location = await locationPromise;
             setPendingExitFile(file);
             setPendingExitLocation({
-              latitude: capturedLocation.latitude,
-              longitude: capturedLocation.longitude,
+              latitude: location.latitude,
+              longitude: location.longitude,
             });
             setLunchWasNormal(true);
             setLunchMinutesTaken("60");
@@ -1736,14 +1953,19 @@ const TimeControl = () => {
               console.warn("Error al verificar sesión, continuando:", sessionCheckError);
             }
 
-            const photoUrl = await uploadPhoto(file, type);
+            // Subir foto y obtener ubicación en paralelo
+            const [photoUrl, location] = await Promise.all([
+              uploadPhoto(file, type),
+              locationPromise
+            ]);
+            
             const today = toDateKey(new Date());
             const now = new Date().toISOString();
 
-            // Usar la ubicación capturada ANTES de abrir la cámara
-            const location = capturedLocation;
             if (location.latitude && location.longitude) {
-              console.log("Usando ubicación capturada:", location.latitude, location.longitude);
+              console.log("Ubicación obtenida:", location.latitude, location.longitude);
+            } else {
+              console.warn("No se pudo obtener ubicación:", location.error);
             }
 
             // Check if record exists for today
@@ -1950,6 +2172,12 @@ const TimeControl = () => {
           console.error("Error agregando input al DOM:", appendError);
           input = null;
           isFileInputOpenRef.current = false;
+          // Restaurar estado
+          if (type === "entry") {
+            setUploadingEntry(false);
+          } else {
+            setUploadingExit(false);
+          }
           toast({
             title: "Error",
             description: "No se pudo crear el selector de archivos. Por favor, intenta nuevamente.",
@@ -1996,6 +2224,12 @@ const TimeControl = () => {
           // Ignorar errores de limpieza
         }
         input = null;
+      }
+      // Restaurar estado
+      if (type === "entry") {
+        setUploadingEntry(false);
+      } else {
+        setUploadingExit(false);
       }
       toast({
         title: "Error",
@@ -2375,28 +2609,33 @@ const TimeControl = () => {
       <div className="container mx-auto px-4 py-8 space-y-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <Button 
-              onClick={() => {
-                // Limpiar estados y forzar navegación completa
-                clearAutoSaveTimer();
-                // Usar window.location.href para forzar una recarga completa y evitar problemas de renderizado
-                window.location.href = "/home";
-              }} 
-              variant="outline" 
-              size="icon"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+            {!isAttendanceUser && (
+              <Button 
+                onClick={() => {
+                  // Limpiar estados y forzar navegación completa
+                  clearAutoSaveTimer();
+                  // Usar window.location.href para forzar una recarga completa y evitar problemas de renderizado
+                  window.location.href = "/home";
+                }} 
+                variant="outline" 
+                size="icon"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
             <div>
               <h1 className="text-4xl font-bold mb-1">Control entrada/salida</h1>
               <p className="text-muted-foreground">
-                Gestión de horarios de entrada y salida de trabajadores
+                {isAttendanceUser 
+                  ? "Registra tu entrada y salida" 
+                  : "Gestión de horarios de entrada y salida de trabajadores"}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Worker Management */}
+        {/* Worker Management - Oculto para usuario de asistencia */}
+        {!isAttendanceUser && (
         <Card className="p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
             <h2 className="text-2xl font-semibold">Trabajadores</h2>
@@ -2693,9 +2932,10 @@ const TimeControl = () => {
             </div>
           )}
         </Card>
+        )}
 
         {/* Edit Worker Dialog */}
-        {editingWorker && (
+        {editingWorker && !isAttendanceUser && (
           <Dialog
             open={!!editingWorker}
             onOpenChange={(open) => {
@@ -2886,7 +3126,7 @@ const TimeControl = () => {
         )}
 
         {/* View Worker Profile Dialog */}
-        {viewingWorkerProfile && (
+        {viewingWorkerProfile && !isAttendanceUser && (
           <Dialog open={!!viewingWorkerProfile} onOpenChange={() => setViewingWorkerProfile(null)}>
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
@@ -3122,7 +3362,8 @@ const TimeControl = () => {
           </div>
         </Card>
 
-        {/* Attendance Records Table */}
+        {/* Attendance Records Table - Oculto para usuario de asistencia */}
+        {!isAttendanceUser && (
         <Card className="p-6">
           {Object.entries(weeklyTotals).length > 0 && (
             <div className="mb-6 space-y-4">
@@ -3645,6 +3886,7 @@ const TimeControl = () => {
             </div>
           )}
         </Card>
+        )}
 
         {/* Exit Time Adjustment Dialog - Almuerzo */}
         <Dialog open={showExitAdjustmentDialog} onOpenChange={(open) => !open && cancelExitUpload()}>

@@ -23,6 +23,12 @@ const Home = () => {
   useEffect(() => {
     if (!loading && !user) {
       navigate("/auth");
+      return;
+    }
+    
+    // Si es el usuario de asistencia, redirigir directamente al control de horas
+    if (user && user.email === "asistencia@soldgrup.com") {
+      navigate("/time-control");
     }
   }, [user, loading, navigate]);
 
@@ -80,7 +86,6 @@ const Home = () => {
         path: "/time-control",
         color: "from-blue-500/20 to-blue-500/5",
         moduleKey: MODULES.TIME_CONTROL,
-        disabled: true, // TEMPORALMENTE DESHABILITADO - Quitar esta línea para habilitar
       });
     }
     
