@@ -10,7 +10,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview --base /soldgrup/ --outDir docs",
-    "start": "serve docs -s -l 3000"
+    "start": "vite preview --base / --outDir docs --port 3000 --host 0.0.0.0"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
