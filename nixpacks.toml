@@ -8,5 +8,5 @@ cmds = ["npm ci"]
 cmds = ["npm run build:coolify"]
 
 [start]
-cmd = "npm start"
+cmd = "npx serve docs -s -l 3000"
 
