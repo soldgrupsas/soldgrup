@@ -10,7 +10,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview --base /soldgrup/ --outDir docs",
-    "start": "node server.js"
+    "start": "serve docs -s -l 3000 --no-clipboard"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
