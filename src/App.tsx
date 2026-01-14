@@ -44,16 +44,20 @@ const queryClient = new QueryClient({
 const baseUrl = import.meta.env.BASE_URL || 
                 (import.meta.env.PROD ? (import.meta.env.VITE_COOLIFY_URL ? "/" : "/soldgrup/") : "/");
 
-const App = () => (
-  <ErrorBoundary>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter basename={baseUrl}>
-          <Routes>
-          <Route path="/" element={<Navigate to="/auth" replace />} />
-          <Route path="/auth" element={<Auth />} />
+const App = () => {
+  // Log para debugging
+  console.log("App iniciando...", { baseUrl, env: import.meta.env.MODE });
+  
+  return (
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter basename={baseUrl}>
+            <Routes>
+            <Route path="/" element={<Navigate to="/auth" replace />} />
+            <Route path="/auth" element={<Auth />} />
           <Route path="/view/:slug" element={<PublicProposal />} />
           {/* Protected routes */}
           <Route path="/home" element={<ProtectedRoute><Home /></ProtectedRoute>} />
@@ -76,11 +80,12 @@ const App = () => (
           <Route path="/time-control" element={<ProtectedRoute><TimeControl /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
-  </ErrorBoundary>
-);
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
+  );
+};
 
 export default App;
