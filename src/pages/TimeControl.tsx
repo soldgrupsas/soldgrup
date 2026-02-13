@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -87,6 +88,16 @@ type AttendanceRecord = {
   exit_longitude: number | null;
   time_adjustment_minutes: number | null; // Ajuste de tiempo: + = trabajó más, - = trabajó menos
   adjustment_note: string | null;          // Nota explicativa del ajuste
+  is_manual_entry: boolean | null;        // Indica si la entrada fue agregada manualmente
+  is_manual_exit: boolean | null;         // Indica si la salida fue agregada manualmente
+  entry_conditions_ok: boolean | null;      // Certifica entrar en condiciones adecuadas
+  entry_conditions_notes: string | null;  // Observaciones si no entra en condiciones adecuadas
+  exit_had_injury: boolean | null;         // Indica si tuvo alguna lesión
+  exit_injury_notes: string | null;       // Observaciones sobre la lesión
+  exit_had_incident: boolean | null;       // Indica si hubo algún incidente
+  exit_incident_notes: string | null;      // Observaciones sobre el incidente
+  exit_conditions_ok: boolean | null;       // Certifica salir en buenas condiciones
+  exit_conditions_notes: string | null;    // Observaciones si no sale en buenas condiciones
   worker?: Worker;
 };
 
@@ -95,6 +106,16 @@ type PhotoViewData = {
   latitude: number | null;
   longitude: number | null;
   type: "entry" | "exit";
+  // Datos de certificación de entrada
+  entry_conditions_ok?: boolean | null;
+  entry_conditions_notes?: string | null;
+  // Datos de certificación de salida
+  exit_had_injury?: boolean | null;
+  exit_injury_notes?: string | null;
+  exit_had_incident?: boolean | null;
+  exit_incident_notes?: string | null;
+  exit_conditions_ok?: boolean | null;
+  exit_conditions_notes?: string | null;
 } | null;
 
 const PHOTO_BUCKET = "attendance-photos";
@@ -184,6 +205,34 @@ const SURCHARGES = {
 // Horario nocturno: 7pm (19:00) a 6am (06:00)
 const NIGHT_START_HOUR = 19; // 7 PM
 const NIGHT_END_HOUR = 6;    // 6 AM
+
+// Tipo para configuración de horas extras editable
+type OvertimeConfigItem = {
+  id: string;
+  name: string;
+  startTime: string; // HH:MM format
+  endTime: string;   // HH:MM format
+  percentage: number; // Porcentaje adicional (ej: 25 para +25%)
+  description: string;
+};
+
+type OvertimeConfig = {
+  items: OvertimeConfigItem[];
+  monthlyWorkHours: number; // Intensidad laboral mensual (horas)
+};
+
+// Configuración por defecto de horas extras (ley colombiana)
+const DEFAULT_OVERTIME_CONFIG: OvertimeConfig = {
+  items: [
+    { id: "extra_diurna", name: "Extra Diurna", startTime: "06:00", endTime: "19:00", percentage: 25, description: "Fuera del horario laboral (L-V 8am-5pm, Sáb 8am-12pm)" },
+    { id: "extra_nocturna", name: "Extra Nocturna", startTime: "19:00", endTime: "06:00", percentage: 75, description: "Hora extra nocturna (7pm-6am)" },
+    { id: "recargo_nocturno", name: "Recargo Nocturno", startTime: "19:00", endTime: "06:00", percentage: 35, description: "Recargo por trabajo nocturno ordinario" },
+    { id: "dominical_festivo", name: "Dominical/Festivo", startTime: "00:00", endTime: "23:59", percentage: 80, description: "Recargo dominical o festivo" },
+    { id: "extra_diurna_dominical", name: "Extra Diurna Dominical", startTime: "06:00", endTime: "19:00", percentage: 115, description: "Hora extra diurna en dominical/festivo" },
+    { id: "extra_nocturna_dominical", name: "Extra Nocturna Dominical", startTime: "19:00", endTime: "06:00", percentage: 165, description: "Hora extra nocturna en dominical/festivo" },
+  ],
+  monthlyWorkHours: 220, // Intensidad laboral mensual en Colombia
+};
 
 // Tipo para el desglose detallado de horas
 type HoursBreakdown = {
@@ -278,10 +327,69 @@ const calculateNightMinutes = (startTime: Date, endTime: Date): number => {
   return nightMinutes;
 };
 
+// Función para normalizar las horas de entrada/salida según tolerancias
+// - Entrada: Si marca hasta 20 min antes de las 8am, cuenta desde las 8am
+// - Salida L-V: Si marca hasta 10 min después de las 5pm, cuenta hasta las 5pm
+// - Salida Sábado: Si marca hasta 10 min después de las 12pm, cuenta hasta las 12pm
+const normalizeWorkTime = (entry: Date | null, exit: Date | null): { normalizedEntry: Date | null, normalizedExit: Date | null } => {
+  let normalizedEntry = entry ? new Date(entry) : null;
+  let normalizedExit = exit ? new Date(exit) : null;
+  
+  // Normalizar entrada: si marca entre 7:40 y 8:00, ajustar a 8:00
+  if (normalizedEntry) {
+    const entryHour = normalizedEntry.getHours();
+    const entryMinutes = normalizedEntry.getMinutes();
+    const entryTotalMinutes = entryHour * 60 + entryMinutes;
+    
+    // 7:40 = 460 minutos, 8:00 = 480 minutos
+    const ENTRY_TOLERANCE_START = 7 * 60 + 40; // 7:40 AM
+    const STANDARD_ENTRY_TIME = 8 * 60; // 8:00 AM
+    
+    // Si la entrada es entre 7:40 y 8:00, ajustar a 8:00
+    if (entryTotalMinutes >= ENTRY_TOLERANCE_START && entryTotalMinutes < STANDARD_ENTRY_TIME) {
+      normalizedEntry.setHours(8, 0, 0, 0);
+    }
+  }
+  
+  // Normalizar salida según el día de la semana
+  if (normalizedExit) {
+    const exitHour = normalizedExit.getHours();
+    const exitMinutes = normalizedExit.getMinutes();
+    const exitTotalMinutes = exitHour * 60 + exitMinutes;
+    const dayOfWeek = normalizedExit.getDay(); // 0=Dom, 1=Lun, 2=Mar, ..., 6=Sáb
+    
+    // Sábado (día 6): horario hasta 12pm
+    if (dayOfWeek === 6) {
+      const SATURDAY_END_TIME = 12 * 60; // 12:00 PM
+      const SATURDAY_TOLERANCE_END = 12 * 60 + 10; // 12:10 PM
+      
+      // Si la salida es entre 12:00 y 12:10, ajustar a 12:00
+      if (exitTotalMinutes >= SATURDAY_END_TIME && exitTotalMinutes <= SATURDAY_TOLERANCE_END) {
+        normalizedExit.setHours(12, 0, 0, 0);
+      }
+    }
+    // Lunes a Viernes (días 1-5): horario hasta 5pm
+    else if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      const WEEKDAY_END_TIME = 17 * 60; // 5:00 PM
+      const WEEKDAY_TOLERANCE_END = 17 * 60 + 10; // 5:10 PM
+      
+      // Si la salida es entre 5:00 y 5:10, ajustar a 5:00
+      if (exitTotalMinutes >= WEEKDAY_END_TIME && exitTotalMinutes <= WEEKDAY_TOLERANCE_END) {
+        normalizedExit.setHours(17, 0, 0, 0);
+      }
+    }
+  }
+  
+  return { normalizedEntry, normalizedExit };
+};
+
 // Función principal para calcular el desglose de horas de un registro
 const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
-  const entry = record.entry_time ? new Date(record.entry_time) : null;
-  const exit = record.exit_time ? new Date(record.exit_time) : null;
+  const rawEntry = record.entry_time ? new Date(record.entry_time) : null;
+  const rawExit = record.exit_time ? new Date(record.exit_time) : null;
+  
+  // Aplicar normalización de tolerancias
+  const { normalizedEntry: entry, normalizedExit: exit } = normalizeWorkTime(rawEntry, rawExit);
   
   const emptyResult: HoursBreakdown = {
     normalMinutes: 0,
@@ -298,9 +406,17 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
     return emptyResult;
   }
 
-  // Calcular minutos totales trabajados + ajuste de tiempo (si existe)
+  // Calcular minutos totales trabajados
+  // Para días L-V, descontamos siempre 60 min de almuerzo estándar del tiempo bruto
+  // El adjustment representa tiempo extra trabajado durante el almuerzo (ej: +30 si solo tomó 30 min)
+  const dayOfWeek = entry.getDay();
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5; // Lunes a Viernes
+  const standardLunchDeduction = isWeekday ? 60 : 0; // Descontar 1 hora de almuerzo para L-V
+  
   const adjustment = typeof record.time_adjustment_minutes === 'number' ? record.time_adjustment_minutes : 0;
-  const totalMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000 + adjustment);
+  const rawMinutes = (exit.getTime() - entry.getTime()) / 60000;
+  const totalMinutes = Math.max(0, rawMinutes - standardLunchDeduction + adjustment);
+  
   const isDomFestivo = isDominicalOrHoliday(entry);
   const intervals = intervalsForDate(entry);
   
@@ -435,6 +551,9 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
     
     // En festivos, el trabajo en horario "normal" conceptual (8am-5pm) se cobra como dominicalFestivoMinutes
     // Las horas extras diurnas solo se cobran en los rangos 6-8am y 5-7pm
+    // totalMinutes es la suma real de los componentes para que cuadre con lo mostrado
+    const festivoTotalMinutes = normalConceptualMinutes + extraDiurnaMinutes + extraNightMinutes;
+    
     return {
       normalMinutes: 0,
       extraDiurnaMinutes: 0,
@@ -443,20 +562,25 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
       dominicalFestivoMinutes: normalConceptualMinutes, // Trabajo en horario 8am-5pm en festivo
       extraDiurnaDominicalMinutes: extraDiurnaMinutes, // Solo en rangos 6-8am y 5-7pm
       extraNocturnaDominicalMinutes: extraNightMinutes,
-      totalMinutes,
+      totalMinutes: festivoTotalMinutes,
     };
   }
 
   // Día normal (no festivo ni domingo)
+  // Las horas ordinarias son normalMinutes (que incluye recargo nocturno conceptualmente)
+  // El totalMinutes debe ser la suma real de los componentes para que cuadre
+  const normalMinutesWithoutRecargo = normalMinutes - recargoNocturnoMinutes;
+  const normalTotalMinutes = normalMinutesWithoutRecargo + recargoNocturnoMinutes + extraDayMinutes + extraNightMinutes;
+  
   return {
-    normalMinutes: normalMinutes - recargoNocturnoMinutes, // Horas normales sin recargo
+    normalMinutes: normalMinutesWithoutRecargo, // Horas normales sin recargo
     extraDiurnaMinutes: extraDayMinutes,
     extraNocturnaMinutes: extraNightMinutes,
     recargoNocturnoMinutes, // Horas normales con recargo nocturno
     dominicalFestivoMinutes: 0,
     extraDiurnaDominicalMinutes: 0,
     extraNocturnaDominicalMinutes: 0,
-    totalMinutes,
+    totalMinutes: normalTotalMinutes,
   };
 };
 
@@ -759,6 +883,8 @@ const TimeControl = () => {
   
   // Verificar si es el usuario de asistencia (solo puede registrar entrada/salida)
   const isAttendanceUser = user?.email === "asistencia@soldgrup.com";
+  // Verificar si es el usuario administrador que puede agregar horas manualmente
+  const isAdminUser = user?.email === "contacto@soldgrup.com";
   const [initialLoading, setInitialLoading] = useState(false); // Cambiado a false para evitar bloqueo
   const initialLoadRef = useRef(true);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -801,16 +927,75 @@ const TimeControl = () => {
       autoSaveNewWorkerTimerRef.current = undefined;
     }
   }, []);
+  
+  // Estado para configuración de horas extras editable
+  const [overtimeConfig, setOvertimeConfig] = useState<OvertimeConfig>(() => {
+    const saved = localStorage.getItem('overtimeConfig');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Merge con valores por defecto para manejar configuraciones antiguas
+        return {
+          ...DEFAULT_OVERTIME_CONFIG,
+          ...parsed,
+          // Asegurar que monthlyWorkHours tenga un valor válido
+          monthlyWorkHours: parsed.monthlyWorkHours || DEFAULT_OVERTIME_CONFIG.monthlyWorkHours,
+        };
+      } catch {
+        return DEFAULT_OVERTIME_CONFIG;
+      }
+    }
+    return DEFAULT_OVERTIME_CONFIG;
+  });
+  const [showOvertimeConfig, setShowOvertimeConfig] = useState(false);
+  
+  // Guardar configuración de horas extras en localStorage cuando cambie
+  useEffect(() => {
+    localStorage.setItem('overtimeConfig', JSON.stringify(overtimeConfig));
+  }, [overtimeConfig]);
+  
+  // Función para actualizar un item de la configuración
+  const updateOvertimeConfigItem = (itemId: string, field: keyof OvertimeConfigItem, value: string | number) => {
+    setOvertimeConfig(prev => ({
+      ...prev,
+      items: prev.items.map(item => 
+        item.id === itemId ? { ...item, [field]: value } : item
+      )
+    }));
+  };
+  
+  // Función para resetear a valores por defecto
+  const resetOvertimeConfig = () => {
+    setOvertimeConfig(DEFAULT_OVERTIME_CONFIG);
+  };
+  
   const [uploadingEntry, setUploadingEntry] = useState(false);
   const [uploadingExit, setUploadingExit] = useState(false);
   const isUpdatingRecordsRef = useRef(false);
   
   // Estados para ajuste de tiempo en salida (almuerzo)
   const [showExitAdjustmentDialog, setShowExitAdjustmentDialog] = useState(false);
+  const [showExitCertificationDialog, setShowExitCertificationDialog] = useState(false);
   const [pendingExitFile, setPendingExitFile] = useState<File | null>(null);
   const [pendingExitLocation, setPendingExitLocation] = useState<{ latitude: number | null; longitude: number | null } | null>(null);
+  const [pendingExitAdjustment, setPendingExitAdjustment] = useState<{ minutes: number; note: string } | null>(null);
   const [lunchWasNormal, setLunchWasNormal] = useState<boolean>(true);
   const [lunchMinutesTaken, setLunchMinutesTaken] = useState<string>("60");
+  
+  // Estados para certificación de entrada
+  const [showEntryCertificationDialog, setShowEntryCertificationDialog] = useState(false);
+  const [pendingEntryFile, setPendingEntryFile] = useState<File | null>(null);
+  const [pendingEntryLocation, setPendingEntryLocation] = useState<{ latitude: number | null; longitude: number | null } | null>(null);
+  const [entryConditionsOk, setEntryConditionsOk] = useState<boolean | null>(null);
+  const [entryConditionsNotes, setEntryConditionsNotes] = useState<string>("");
+  
+  // Estados para certificación de salida
+  const [exitHadInjury, setExitHadInjury] = useState<boolean | null>(null);
+  const [exitInjuryNotes, setExitInjuryNotes] = useState<string>("");
+  const [exitHadIncident, setExitHadIncident] = useState<boolean | null>(null);
+  const [exitIncidentNotes, setExitIncidentNotes] = useState<string>("");
+  const [exitConditionsOk, setExitConditionsOk] = useState<boolean | null>(null);
+  const [exitConditionsNotes, setExitConditionsNotes] = useState<string>("");
   
   // Estados para cámara nativa (modal de captura directa)
   const [showCameraModal, setShowCameraModal] = useState(false);
@@ -834,6 +1019,25 @@ const TimeControl = () => {
   const [viewingPhoto, setViewingPhoto] = useState<PhotoViewData>(null);
   const [dateFilter, setDateFilter] = useState<"all" | "fortnight" | "month" | "custom">("fortnight");
   const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>("all");
+  
+  // Estados para agregar horas manualmente
+  const [showManualTimeDialog, setShowManualTimeDialog] = useState(false);
+  const [manualEntryTime, setManualEntryTime] = useState("");
+  const [manualExitTime, setManualExitTime] = useState("");
+  const [manualDate, setManualDate] = useState(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  });
+  const [manualWorkerId, setManualWorkerId] = useState<string>("");
+  
+  // Estados para agregar hora manual desde celda vacía
+  const [showQuickManualDialog, setShowQuickManualDialog] = useState(false);
+  const [quickManualType, setQuickManualType] = useState<"entry" | "exit" | null>(null);
+  const [quickManualTime, setQuickManualTime] = useState("");
+  const [quickManualDate, setQuickManualDate] = useState("");
+  const [quickManualWorkerId, setQuickManualWorkerId] = useState("");
+  const [quickManualLunchNormal, setQuickManualLunchNormal] = useState(true);
+  const [quickManualLunchMinutes, setQuickManualLunchMinutes] = useState("60");
   
   // Estados para selección de quincena y mes
   const [selectedFortnight, setSelectedFortnight] = useState<1 | 2>(() => {
@@ -954,6 +1158,16 @@ const TimeControl = () => {
           exit_longitude: r.exit_longitude ?? null,
           time_adjustment_minutes: r.time_adjustment_minutes ?? null,
           adjustment_note: r.adjustment_note ?? null,
+          is_manual_entry: r.is_manual_entry ?? null,
+          is_manual_exit: r.is_manual_exit ?? null,
+          entry_conditions_ok: r.entry_conditions_ok ?? null,
+          entry_conditions_notes: r.entry_conditions_notes ?? null,
+          exit_had_injury: r.exit_had_injury ?? null,
+          exit_injury_notes: r.exit_injury_notes ?? null,
+          exit_had_incident: r.exit_had_incident ?? null,
+          exit_incident_notes: r.exit_incident_notes ?? null,
+          exit_conditions_ok: r.exit_conditions_ok ?? null,
+          exit_conditions_notes: r.exit_conditions_notes ?? null,
         })) as AttendanceRecord[];
         const deduplicated = removeDuplicateRecords(records);
         setAttendanceRecords(deduplicated);
@@ -1728,6 +1942,291 @@ const TimeControl = () => {
     }
   };
 
+  // Función para guardar horas manualmente
+  const handleSaveManualTime = async () => {
+    if (!manualWorkerId) {
+      toast({
+        title: "Error",
+        description: "Por favor selecciona un trabajador.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!manualEntryTime && !manualExitTime) {
+      toast({
+        title: "Error",
+        description: "Debes ingresar al menos una hora (entrada o salida).",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Convertir las horas a timestamptz
+      let entryTimeISO: string | null = null;
+      let exitTimeISO: string | null = null;
+
+      if (manualEntryTime) {
+        const entryDateTime = new Date(`${manualDate}T${manualEntryTime}`);
+        entryTimeISO = entryDateTime.toISOString();
+      }
+
+      if (manualExitTime) {
+        const exitDateTime = new Date(`${manualDate}T${manualExitTime}`);
+        exitTimeISO = exitDateTime.toISOString();
+      }
+
+      // Verificar si existe registro para la fecha
+      const { data: existingRecords, error: queryError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("worker_id", manualWorkerId)
+        .eq("date", manualDate);
+
+      if (queryError && queryError.code !== "PGRST116") {
+        throw queryError;
+      }
+
+      const existingRecord = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+      if (existingRecord) {
+        // Actualizar registro existente - solo actualizar los campos que se proporcionaron
+        const updateData: any = {};
+
+        if (manualEntryTime) {
+          updateData.entry_time = entryTimeISO;
+          updateData.is_manual_entry = true;
+          // Si es manual, no debe tener foto
+          updateData.entry_photo_url = null;
+          updateData.entry_latitude = null;
+          updateData.entry_longitude = null;
+        }
+
+        if (manualExitTime) {
+          updateData.exit_time = exitTimeISO;
+          updateData.is_manual_exit = true;
+          // Si es manual, no debe tener foto
+          updateData.exit_photo_url = null;
+          updateData.exit_latitude = null;
+          updateData.exit_longitude = null;
+        }
+
+        const { data: updatedData, error } = await supabase
+          .from("attendance_records")
+          .update(updateData)
+          .eq("id", existingRecord.id)
+          .select();
+
+        if (error) throw error;
+
+        if (updatedData && updatedData[0]) {
+          updateAttendanceRecord(updatedData[0] as unknown as AttendanceRecord);
+        }
+      } else {
+        // Crear nuevo registro
+        const newRecord = {
+          worker_id: manualWorkerId,
+          date: manualDate,
+          entry_time: entryTimeISO,
+          exit_time: exitTimeISO,
+          entry_photo_url: null,
+          exit_photo_url: null,
+          entry_latitude: null,
+          entry_longitude: null,
+          exit_latitude: null,
+          exit_longitude: null,
+          is_manual_entry: !!manualEntryTime,
+          is_manual_exit: !!manualExitTime,
+        };
+
+        const { data: insertedData, error } = await supabase
+          .from("attendance_records")
+          .insert(newRecord)
+          .select();
+
+        if (error) throw error;
+
+        if (insertedData && insertedData[0]) {
+          const insertedRecord = insertedData[0] as unknown as AttendanceRecord;
+          setAttendanceRecords(prev => {
+            const exists = prev.some(r => r.id === insertedRecord.id);
+            if (exists) return prev;
+            return [...prev, insertedRecord];
+          });
+        }
+      }
+
+      toast({
+        title: "Horas guardadas",
+        description: "Las horas fueron agregadas manualmente correctamente.",
+      });
+
+      // Limpiar formulario y cerrar diálogo
+      setManualEntryTime("");
+      setManualExitTime("");
+      setShowManualTimeDialog(false);
+    } catch (error: any) {
+      console.error("Error saving manual time:", error);
+      toast({
+        title: "Error",
+        description: error.message || "No se pudieron guardar las horas manualmente.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Función para guardar hora manual rápida desde celda vacía
+  const handleSaveQuickManualTime = async () => {
+    if (!quickManualWorkerId || !quickManualTime || !quickManualDate || !quickManualType) {
+      toast({
+        title: "Error",
+        description: "Faltan datos para guardar la hora.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Convertir la hora a timestamptz
+      const dateTime = new Date(`${quickManualDate}T${quickManualTime}`);
+      const timeISO = dateTime.toISOString();
+
+      // Calcular ajuste de almuerzo si es salida
+      let adjustmentMins = 0;
+      let adjustmentNoteText: string | null = null;
+      
+      if (quickManualType === "exit" && !quickManualLunchNormal) {
+        const lunchTaken = parseInt(quickManualLunchMinutes) || 60;
+        adjustmentMins = 60 - lunchTaken;
+        if (adjustmentMins !== 0) {
+          adjustmentNoteText = `Almuerzo: ${lunchTaken} min (ajuste ${adjustmentMins > 0 ? '+' : ''}${adjustmentMins} min)`;
+        }
+      }
+
+      // Verificar si existe registro para la fecha
+      const { data: existingRecords, error: queryError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("worker_id", quickManualWorkerId)
+        .eq("date", quickManualDate);
+
+      if (queryError && queryError.code !== "PGRST116") {
+        throw queryError;
+      }
+
+      const existingRecord = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+      if (existingRecord) {
+        // Actualizar registro existente
+        const updateData: any = {};
+
+        if (quickManualType === "entry") {
+          updateData.entry_time = timeISO;
+          updateData.is_manual_entry = true;
+          updateData.entry_photo_url = null;
+          updateData.entry_latitude = null;
+          updateData.entry_longitude = null;
+        } else {
+          updateData.exit_time = timeISO;
+          updateData.is_manual_exit = true;
+          updateData.exit_photo_url = null;
+          updateData.exit_latitude = null;
+          updateData.exit_longitude = null;
+          updateData.time_adjustment_minutes = adjustmentMins;
+          updateData.adjustment_note = adjustmentNoteText;
+        }
+
+        const { data: updatedData, error } = await supabase
+          .from("attendance_records")
+          .update(updateData)
+          .eq("id", existingRecord.id)
+          .select();
+
+        if (error) throw error;
+
+        if (updatedData && updatedData[0]) {
+          updateAttendanceRecord(updatedData[0] as unknown as AttendanceRecord);
+        }
+      } else {
+        // Crear nuevo registro
+        const newRecord: any = {
+          worker_id: quickManualWorkerId,
+          date: quickManualDate,
+          entry_time: quickManualType === "entry" ? timeISO : null,
+          exit_time: quickManualType === "exit" ? timeISO : null,
+          entry_photo_url: null,
+          exit_photo_url: null,
+          entry_latitude: null,
+          entry_longitude: null,
+          exit_latitude: null,
+          exit_longitude: null,
+          is_manual_entry: quickManualType === "entry",
+          is_manual_exit: quickManualType === "exit",
+        };
+
+        if (quickManualType === "exit") {
+          newRecord.time_adjustment_minutes = adjustmentMins;
+          newRecord.adjustment_note = adjustmentNoteText;
+        }
+
+        const { data: insertedData, error } = await supabase
+          .from("attendance_records")
+          .insert(newRecord)
+          .select();
+
+        if (error) throw error;
+
+        if (insertedData && insertedData[0]) {
+          const insertedRecord = insertedData[0] as unknown as AttendanceRecord;
+          setAttendanceRecords(prev => {
+            const exists = prev.some(r => r.id === insertedRecord.id);
+            if (exists) return prev;
+            return [...prev, insertedRecord];
+          });
+        }
+      }
+
+      let successMessage = `La ${quickManualType === "entry" ? "entrada" : "salida"} fue agregada manualmente.`;
+      if (quickManualType === "exit" && adjustmentMins !== 0) {
+        const sign = adjustmentMins > 0 ? "+" : "";
+        successMessage += ` Ajuste: ${sign}${adjustmentMins} minutos.`;
+      }
+
+      toast({
+        title: "Hora guardada",
+        description: successMessage,
+      });
+
+      // Limpiar y cerrar
+      setShowQuickManualDialog(false);
+      setQuickManualType(null);
+      setQuickManualTime("");
+      setQuickManualDate("");
+      setQuickManualWorkerId("");
+      setQuickManualLunchNormal(true);
+      setQuickManualLunchMinutes("60");
+    } catch (error: any) {
+      console.error("Error saving quick manual time:", error);
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo guardar la hora manualmente.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Función para abrir diálogo de hora manual rápida
+  const openQuickManualDialog = (workerId: string, date: string, type: "entry" | "exit") => {
+    setQuickManualWorkerId(workerId);
+    setQuickManualDate(date);
+    setQuickManualType(type);
+    setQuickManualTime(type === "entry" ? "08:00" : "17:00");
+    setQuickManualLunchNormal(true);
+    setQuickManualLunchMinutes("60");
+    setShowQuickManualDialog(true);
+  };
+
   const uploadPhoto = async (file: File, type: "entry" | "exit"): Promise<string> => {
     // Verificar sesión antes de intentar subir
     const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -1854,6 +2353,33 @@ const TimeControl = () => {
     return record;
   }, [attendanceRecords, selectedWorkerId]);
 
+  // Get start and end dates based on filter - usar useMemo para evitar recalcular
+  const dateRange = useMemo(() => {
+    switch (dateFilter) {
+      case "fortnight": {
+        // Quincena seleccionada: 1-15 o 16-fin de mes
+        if (selectedFortnight === 1) {
+          // Primera quincena: 1-15
+          const start = new Date(selectedYear, selectedMonth, 1);
+          const end = new Date(selectedYear, selectedMonth, 15);
+          return { start, end };
+        } else {
+          // Segunda quincena: 16-fin de mes
+          const start = new Date(selectedYear, selectedMonth, 16);
+          const end = new Date(selectedYear, selectedMonth + 1, 0); // Último día del mes
+          return { start, end };
+        }
+      }
+      case "month": {
+        const start = new Date(selectedYear, selectedMonth, 1);
+        const end = new Date(selectedYear, selectedMonth + 1, 0);
+        return { start, end };
+      }
+      default:
+        return { start: null, end: null };
+    }
+  }, [dateFilter, selectedFortnight, selectedMonth, selectedYear]);
+
   // Tipo para totales detallados por trabajador
   type WorkerTotals = HoursBreakdown & {
     hourlyRate: number;
@@ -1863,8 +2389,18 @@ const TimeControl = () => {
 
   const weeklyTotals = useMemo(() => {
     const totals: Record<string, WorkerTotals> = {};
+    const { start, end } = dateRange;
     
-    attendanceRecords.forEach((record) => {
+    // Filtrar registros por el rango de fechas seleccionado (quincena/mes)
+    const filteredRecords = (start && end) 
+      ? attendanceRecords.filter((record) => {
+          const recordDate = new Date(record.date);
+          recordDate.setHours(0, 0, 0, 0);
+          return recordDate >= start && recordDate <= end;
+        })
+      : attendanceRecords;
+    
+    filteredRecords.forEach((record) => {
       const key = record.worker_id;
       const stats = computeRecordHours(record);
       const worker = workers.find(w => w.id === key);
@@ -1908,7 +2444,7 @@ const TimeControl = () => {
     });
     
     return totals;
-  }, [attendanceRecords, workers]);
+  }, [attendanceRecords, workers, dateRange]);
 
   // Only disable entry button if there's a complete entry record (with photo)
   const entryButtonDisabled =
@@ -1931,8 +2467,10 @@ const TimeControl = () => {
   };
 
   const formatMinutes = (minutes: number) => {
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.round(minutes % 60);
+    // Redondear primero el total para evitar casos como "7h 60m"
+    const totalRoundedMinutes = Math.round(minutes);
+    const hours = Math.floor(totalRoundedMinutes / 60);
+    const mins = totalRoundedMinutes % 60;
     return `${hours}h ${mins}m`;
   };
 
@@ -2084,7 +2622,21 @@ const TimeControl = () => {
         return;
       }
 
-      // Para entrada, procesar directamente
+      // Para entrada, mostrar diálogo de certificación primero
+      if (type === "entry") {
+        const location = await locationPromise;
+        setPendingEntryFile(file);
+        setPendingEntryLocation({
+          latitude: location.latitude,
+          longitude: location.longitude,
+        });
+        setEntryConditionsOk(null);
+        setEntryConditionsNotes("");
+        setShowEntryCertificationDialog(true);
+        return;
+      }
+
+      // Para salida, procesar directamente (el diálogo de almuerzo ya se maneja después)
       const [photoUrl, location] = await Promise.all([
         uploadPhoto(file, type),
         locationPromise
@@ -2666,6 +3218,134 @@ const TimeControl = () => {
     }
   };
 
+  // Función para procesar la entrada con certificación
+  const processEntryWithCertification = async () => {
+    if (!pendingEntryFile || !selectedWorkerId) {
+      setShowEntryCertificationDialog(false);
+      setPendingEntryFile(null);
+      setPendingEntryLocation(null);
+      return;
+    }
+
+    if (entryConditionsOk === null) {
+      toast({
+        title: "Error",
+        description: "Por favor responde si certificas entrar en condiciones adecuadas.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (entryConditionsOk === false && !entryConditionsNotes.trim()) {
+      toast({
+        title: "Error",
+        description: "Por favor ingresa las observaciones sobre las condiciones.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setShowEntryCertificationDialog(false);
+    setUploadingEntry(true);
+
+    try {
+      const photoUrl = await uploadPhoto(pendingEntryFile, "entry");
+      const location = pendingEntryLocation;
+
+      const today = toDateKey(new Date());
+      const now = new Date().toISOString();
+
+      // Verificar si existe registro para hoy
+      const { data: existingRecords, error: queryError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("worker_id", selectedWorkerId)
+        .eq("date", today);
+
+      if (queryError && queryError.code !== "PGRST116") {
+        throw queryError;
+      }
+
+      const existingRecord = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+      if (existingRecord) {
+        const updateData = {
+          entry_time: now,
+          entry_photo_url: photoUrl,
+          entry_latitude: location?.latitude ?? null,
+          entry_longitude: location?.longitude ?? null,
+          entry_conditions_ok: entryConditionsOk,
+          entry_conditions_notes: entryConditionsOk === false ? entryConditionsNotes.trim() : null,
+          exit_time: existingRecord.exit_time || null,
+          exit_photo_url: existingRecord.exit_photo_url || null,
+          exit_latitude: existingRecord.exit_latitude || null,
+          exit_longitude: existingRecord.exit_longitude || null,
+        };
+
+        const { data: updatedData, error } = await supabase
+          .from("attendance_records")
+          .update(updateData)
+          .eq("id", existingRecord.id)
+          .select();
+
+        if (error) throw error;
+
+        if (updatedData && updatedData[0]) {
+          updateAttendanceRecord(updatedData[0] as unknown as AttendanceRecord);
+        }
+      } else {
+        const newRecord = {
+          worker_id: selectedWorkerId,
+          date: today,
+          entry_time: now,
+          exit_time: null,
+          entry_photo_url: photoUrl,
+          exit_photo_url: null,
+          entry_latitude: location?.latitude ?? null,
+          entry_longitude: location?.longitude ?? null,
+          exit_latitude: null,
+          exit_longitude: null,
+          entry_conditions_ok: entryConditionsOk,
+          entry_conditions_notes: entryConditionsOk === false ? entryConditionsNotes.trim() : null,
+        };
+
+        const { data: insertedData, error } = await supabase
+          .from("attendance_records")
+          .insert(newRecord)
+          .select();
+
+        if (error) throw error;
+
+        if (insertedData && insertedData[0]) {
+          const insertedRecord = insertedData[0] as unknown as AttendanceRecord;
+          setAttendanceRecords(prev => {
+            const exists = prev.some(r => r.id === insertedRecord.id);
+            if (exists) return prev;
+            return [...prev, insertedRecord];
+          });
+        }
+      }
+
+      toast({
+        title: "Entrada registrada",
+        description: "La foto de entrada fue guardada exitosamente.",
+      });
+    } catch (error: any) {
+      console.error("Error al procesar entrada:", error);
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo registrar la asistencia.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingEntry(false);
+      setPendingEntryFile(null);
+      setPendingEntryLocation(null);
+      setEntryConditionsOk(null);
+      setEntryConditionsNotes("");
+    }
+  };
+
   // Función para procesar la foto de salida con el ajuste de tiempo
   const processExitWithAdjustment = async () => {
     if (!pendingExitFile || !selectedWorkerId) {
@@ -2793,6 +3473,168 @@ const TimeControl = () => {
         }
       }
 
+      // Guardar datos de ajuste y mostrar diálogo de certificación
+      setPendingExitAdjustment({ minutes: adjustmentMins, note: adjustmentNoteText });
+      setExitHadInjury(null);
+      setExitInjuryNotes("");
+      setExitHadIncident(null);
+      setExitIncidentNotes("");
+      setExitConditionsOk(null);
+      setExitConditionsNotes("");
+      setShowExitCertificationDialog(true);
+      setUploadingExit(false);
+
+    } catch (error: any) {
+      console.error("Error uploading exit photo:", error);
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo registrar la salida.",
+        variant: "destructive",
+      });
+      setUploadingExit(false);
+      setPendingExitFile(null);
+      setPendingExitLocation(null);
+      setLunchWasNormal(true);
+      setLunchMinutesTaken("60");
+      isUpdatingRecordsRef.current = false;
+    }
+  };
+
+  // Función para procesar la salida completa con certificación
+  const processExitWithCertification = async () => {
+    if (!pendingExitFile || !selectedWorkerId || !pendingExitAdjustment) {
+      setShowExitCertificationDialog(false);
+      return;
+    }
+
+    // Validar respuestas requeridas
+    if (exitHadInjury === null || exitHadIncident === null || exitConditionsOk === null) {
+      toast({
+        title: "Error",
+        description: "Por favor responde todas las preguntas de certificación.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validar observaciones requeridas
+    if (exitHadInjury === true && !exitInjuryNotes.trim()) {
+      toast({
+        title: "Error",
+        description: "Por favor ingresa las observaciones sobre la lesión.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (exitHadIncident === true && !exitIncidentNotes.trim()) {
+      toast({
+        title: "Error",
+        description: "Por favor ingresa las observaciones sobre el incidente.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (exitConditionsOk === false && !exitConditionsNotes.trim()) {
+      toast({
+        title: "Error",
+        description: "Por favor ingresa las observaciones sobre las condiciones de salida.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setShowExitCertificationDialog(false);
+    setUploadingExit(true);
+
+    try {
+      const photoUrl = await uploadPhoto(pendingExitFile, "exit");
+      const today = toDateKey(new Date());
+      const now = new Date().toISOString();
+      const location = pendingExitLocation || { latitude: null, longitude: null };
+      const { minutes: adjustmentMins, note: adjustmentNoteText } = pendingExitAdjustment;
+
+      // Verificar si existe registro para hoy
+      const { data: existingRecords, error: queryError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("worker_id", selectedWorkerId)
+        .eq("date", today);
+
+      if (queryError && queryError.code !== "PGRST116") {
+        throw queryError;
+      }
+
+      const existingRecord = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+      if (existingRecord) {
+        const updateData: any = {
+          exit_time: now,
+          exit_photo_url: photoUrl,
+          exit_latitude: location?.latitude ?? null,
+          exit_longitude: location?.longitude ?? null,
+          entry_time: existingRecord.entry_time || null,
+          entry_photo_url: existingRecord.entry_photo_url || null,
+          entry_latitude: existingRecord.entry_latitude || null,
+          entry_longitude: existingRecord.entry_longitude || null,
+          time_adjustment_minutes: adjustmentMins,
+          adjustment_note: adjustmentNoteText,
+          exit_had_injury: exitHadInjury,
+          exit_injury_notes: exitHadInjury === true ? exitInjuryNotes.trim() : null,
+          exit_had_incident: exitHadIncident,
+          exit_incident_notes: exitHadIncident === true ? exitIncidentNotes.trim() : null,
+          exit_conditions_ok: exitConditionsOk,
+          exit_conditions_notes: exitConditionsOk === false ? exitConditionsNotes.trim() : null,
+        };
+
+        const { data: updatedData, error } = await supabase
+          .from("attendance_records")
+          .update(updateData)
+          .eq("id", existingRecord.id)
+          .select();
+
+        if (error) throw error;
+
+        if (updatedData && updatedData[0]) {
+          const updatedRecord = updatedData[0] as unknown as AttendanceRecord;
+          updateAttendanceRecord(updatedRecord);
+        }
+      } else {
+        const newRecord = {
+          worker_id: selectedWorkerId,
+          date: today,
+          entry_time: null,
+          exit_time: now,
+          entry_photo_url: null,
+          exit_photo_url: photoUrl,
+          entry_latitude: null,
+          entry_longitude: null,
+          exit_latitude: location?.latitude ?? null,
+          exit_longitude: location?.longitude ?? null,
+          time_adjustment_minutes: adjustmentMins,
+          adjustment_note: adjustmentNoteText,
+          exit_had_injury: exitHadInjury,
+          exit_injury_notes: exitHadInjury === true ? exitInjuryNotes.trim() : null,
+          exit_had_incident: exitHadIncident,
+          exit_incident_notes: exitHadIncident === true ? exitIncidentNotes.trim() : null,
+          exit_conditions_ok: exitConditionsOk,
+          exit_conditions_notes: exitConditionsOk === false ? exitConditionsNotes.trim() : null,
+        };
+
+        const { data: insertedData, error } = await supabase
+          .from("attendance_records")
+          .insert(newRecord)
+          .select();
+
+        if (error) throw error;
+
+        if (insertedData && insertedData[0]) {
+          const newRecordData = insertedData[0] as unknown as AttendanceRecord;
+          updateAttendanceRecord(newRecordData);
+        }
+      }
+
       // Show success message
       let successMessage = "La salida fue registrada correctamente.";
       if (adjustmentMins !== 0) {
@@ -2816,8 +3658,15 @@ const TimeControl = () => {
       setUploadingExit(false);
       setPendingExitFile(null);
       setPendingExitLocation(null);
+      setPendingExitAdjustment(null);
       setLunchWasNormal(true);
       setLunchMinutesTaken("60");
+      setExitHadInjury(null);
+      setExitInjuryNotes("");
+      setExitHadIncident(null);
+      setExitIncidentNotes("");
+      setExitConditionsOk(null);
+      setExitConditionsNotes("");
       isUpdatingRecordsRef.current = false;
     }
   };
@@ -2827,8 +3676,15 @@ const TimeControl = () => {
     setShowExitAdjustmentDialog(false);
     setPendingExitFile(null);
     setPendingExitLocation(null);
+    setPendingExitAdjustment(null);
     setLunchWasNormal(true);
     setLunchMinutesTaken("60");
+    setExitHadInjury(null);
+    setExitInjuryNotes("");
+    setExitHadIncident(null);
+    setExitIncidentNotes("");
+    setExitConditionsOk(null);
+    setExitConditionsNotes("");
   };
 
   const getWorkerName = (workerId: string) => {
@@ -2876,33 +3732,6 @@ const TimeControl = () => {
   };
 
   const isHolidayDate = (dateString: string) => HOLIDAYS.includes(dateString);
-
-  // Get start and end dates based on filter - usar useMemo para evitar recalcular
-  const dateRange = useMemo(() => {
-    switch (dateFilter) {
-      case "fortnight": {
-        // Quincena seleccionada: 1-15 o 16-fin de mes
-        if (selectedFortnight === 1) {
-          // Primera quincena: 1-15
-          const start = new Date(selectedYear, selectedMonth, 1);
-          const end = new Date(selectedYear, selectedMonth, 15);
-          return { start, end };
-        } else {
-          // Segunda quincena: 16-fin de mes
-          const start = new Date(selectedYear, selectedMonth, 16);
-          const end = new Date(selectedYear, selectedMonth + 1, 0); // Último día del mes
-          return { start, end };
-        }
-      }
-      case "month": {
-        const start = new Date(selectedYear, selectedMonth, 1);
-        const end = new Date(selectedYear, selectedMonth + 1, 0);
-        return { start, end };
-      }
-      default:
-        return { start: null, end: null };
-    }
-  }, [dateFilter, selectedFortnight, selectedMonth, selectedYear]);
 
   // Eliminar duplicados antes de filtrar - usar función dedicada
   // Usar un useMemo con una función de comparación más estricta para evitar renders innecesarios
@@ -3364,6 +4193,138 @@ const TimeControl = () => {
         </Card>
         )}
 
+        {/* Configuración de Horas Extras - Solo visible para administrador */}
+        {!isAttendanceUser && (
+          <Card className="p-6">
+            <div 
+              className="flex items-center justify-between cursor-pointer"
+              onClick={() => setShowOvertimeConfig(!showOvertimeConfig)}
+            >
+              <h2 className="text-2xl font-semibold">Configuración de Horas Extras</h2>
+              <Button variant="ghost" size="icon">
+                {showOvertimeConfig ? (
+                  <X className="h-5 w-5" />
+                ) : (
+                  <Edit2 className="h-5 w-5" />
+                )}
+              </Button>
+            </div>
+            
+            {showOvertimeConfig && (
+              <div className="mt-6 space-y-6">
+                <p className="text-sm text-muted-foreground">
+                  Configure los tipos de horas extras, sus horarios y porcentajes de recargo sobre la hora ordinaria.
+                </p>
+                
+                <div className="space-y-4">
+                  {overtimeConfig.items.map((item) => (
+                    <div key={item.id} className="p-4 border rounded-lg bg-muted/30">
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-lg">{item.name}</h4>
+                          <span className="text-sm text-muted-foreground">{item.description}</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {/* Horario de inicio */}
+                          <div>
+                            <Label htmlFor={`start-${item.id}`}>Hora Inicio</Label>
+                            <Input
+                              id={`start-${item.id}`}
+                              type="time"
+                              value={item.startTime}
+                              onChange={(e) => updateOvertimeConfigItem(item.id, 'startTime', e.target.value)}
+                              className="mt-1"
+                            />
+                          </div>
+                          
+                          {/* Horario de fin */}
+                          <div>
+                            <Label htmlFor={`end-${item.id}`}>Hora Fin</Label>
+                            <Input
+                              id={`end-${item.id}`}
+                              type="time"
+                              value={item.endTime}
+                              onChange={(e) => updateOvertimeConfigItem(item.id, 'endTime', e.target.value)}
+                              className="mt-1"
+                            />
+                          </div>
+                          
+                          {/* Porcentaje */}
+                          <div>
+                            <Label htmlFor={`percentage-${item.id}`}>Porcentaje (+%)</Label>
+                            <div className="flex items-center gap-2 mt-1">
+                              <Input
+                                id={`percentage-${item.id}`}
+                                type="number"
+                                min="0"
+                                max="300"
+                                value={item.percentage}
+                                onChange={(e) => updateOvertimeConfigItem(item.id, 'percentage', Number(e.target.value))}
+                                className="flex-1"
+                              />
+                              <span className="text-sm font-medium text-muted-foreground">%</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Valor: hora ordinaria + {item.percentage}%
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                {/* Intensidad Laboral Mensual */}
+                <div className="p-4 border rounded-lg bg-green-50 border-green-200">
+                  <h4 className="font-semibold text-lg mb-4 text-green-800">Intensidad Laboral Mensual</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                    <div>
+                      <Label htmlFor="monthlyWorkHours">Horas Laborales Mensuales</Label>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Input
+                          id="monthlyWorkHours"
+                          type="number"
+                          min="100"
+                          max="300"
+                          value={overtimeConfig.monthlyWorkHours}
+                          onChange={(e) => {
+                            const value = Number(e.target.value);
+                            if (value >= 100 && value <= 300) {
+                              setOvertimeConfig(prev => ({ ...prev, monthlyWorkHours: value }));
+                            }
+                          }}
+                          className="flex-1"
+                        />
+                        <span className="text-sm font-medium text-muted-foreground">horas/mes</span>
+                      </div>
+                    </div>
+                    <div className="text-sm text-green-700 bg-green-100 p-2 rounded">
+                      <p className="font-medium">Valor hora ordinaria:</p>
+                      <p>Sueldo ÷ {overtimeConfig.monthlyWorkHours} horas</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-green-600 mt-2">
+                    Este valor se usa para calcular el valor de la hora ordinaria (sueldo mensual ÷ intensidad laboral).
+                    El valor por defecto en Colombia es 220 horas.
+                  </p>
+                </div>
+                
+                {/* Botón para resetear */}
+                <div className="flex justify-end gap-2 pt-4 border-t">
+                  <Button
+                    variant="outline"
+                    onClick={resetOvertimeConfig}
+                    className="text-amber-600 border-amber-300 hover:bg-amber-50"
+                  >
+                    Restaurar Valores por Defecto
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
         {/* Edit Worker Dialog */}
         {editingWorker && !isAttendanceUser && (
           <Dialog
@@ -3747,12 +4708,45 @@ const TimeControl = () => {
                 )}
               </Button>
             </div>
+            {/* Botón para agregar horas manualmente - Solo visible para contacto@soldgrup.com */}
+            {isAdminUser && (
+              <div className="mt-4 pt-4 border-t">
+                <Button
+                  onClick={() => {
+                    setManualWorkerId(selectedWorkerId || "");
+                    setManualDate(() => {
+                      const today = new Date();
+                      return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+                    });
+                    setManualEntryTime("");
+                    setManualExitTime("");
+                    setShowManualTimeDialog(true);
+                  }}
+                  variant="outline"
+                  className="w-full border-orange-300 text-orange-700 hover:bg-orange-50"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Agregar Horas Manualmente
+                </Button>
+              </div>
+            )}
             {todaysRecordForSelectedWorker && (
               <div className="space-y-2 mt-4">
                 {todaysRecordForSelectedWorker.entry_time && (
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-muted-foreground">
+                  <div className={`flex items-center gap-2 p-2 rounded ${
+                    todaysRecordForSelectedWorker.is_manual_entry 
+                      ? "bg-orange-50 border border-orange-200" 
+                      : ""
+                  }`}>
+                    <p className={`text-sm ${
+                      todaysRecordForSelectedWorker.is_manual_entry 
+                        ? "text-orange-700 font-medium" 
+                        : "text-muted-foreground"
+                    }`}>
                       Entrada: {getEntryTimeLabel()}
+                      {todaysRecordForSelectedWorker.is_manual_entry && (
+                        <span className="ml-1">🔶 Manual</span>
+                      )}
                     </p>
                     {todaysRecordForSelectedWorker.entry_photo_url && (
                       <img
@@ -3763,7 +4757,9 @@ const TimeControl = () => {
                           url: todaysRecordForSelectedWorker.entry_photo_url!,
                           latitude: todaysRecordForSelectedWorker.entry_latitude,
                           longitude: todaysRecordForSelectedWorker.entry_longitude,
-                          type: "entry"
+                          type: "entry",
+                          entry_conditions_ok: todaysRecordForSelectedWorker.entry_conditions_ok,
+                          entry_conditions_notes: todaysRecordForSelectedWorker.entry_conditions_notes,
                         })}
                         title="Clic para ver foto completa"
                       />
@@ -3771,9 +4767,20 @@ const TimeControl = () => {
                   </div>
                 )}
                 {todaysRecordForSelectedWorker.exit_time && (
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-muted-foreground">
+                  <div className={`flex items-center gap-2 p-2 rounded ${
+                    todaysRecordForSelectedWorker.is_manual_exit 
+                      ? "bg-orange-50 border border-orange-200" 
+                      : ""
+                  }`}>
+                    <p className={`text-sm ${
+                      todaysRecordForSelectedWorker.is_manual_exit 
+                        ? "text-orange-700 font-medium" 
+                        : "text-muted-foreground"
+                    }`}>
                       Salida: {formatTime(todaysRecordForSelectedWorker.exit_time)}
+                      {todaysRecordForSelectedWorker.is_manual_exit && (
+                        <span className="ml-1">🔶 Manual</span>
+                      )}
                     </p>
                     {todaysRecordForSelectedWorker.exit_photo_url && (
                       <img
@@ -3784,7 +4791,13 @@ const TimeControl = () => {
                           url: todaysRecordForSelectedWorker.exit_photo_url!,
                           latitude: todaysRecordForSelectedWorker.exit_latitude,
                           longitude: todaysRecordForSelectedWorker.exit_longitude,
-                          type: "exit"
+                          type: "exit",
+                          exit_had_injury: todaysRecordForSelectedWorker.exit_had_injury,
+                          exit_injury_notes: todaysRecordForSelectedWorker.exit_injury_notes,
+                          exit_had_incident: todaysRecordForSelectedWorker.exit_had_incident,
+                          exit_incident_notes: todaysRecordForSelectedWorker.exit_incident_notes,
+                          exit_conditions_ok: todaysRecordForSelectedWorker.exit_conditions_ok,
+                          exit_conditions_notes: todaysRecordForSelectedWorker.exit_conditions_notes,
                         })}
                         title="Clic para ver foto completa"
                       />
@@ -3815,9 +4828,14 @@ const TimeControl = () => {
                   const formatMoney = (value: number) => 
                     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(value);
                   
-                  // Calcular totales de extras
+                  // Calcular totales de horas
+                  // Horas ordinarias = normales + recargo nocturno + dominical/festivo
+                  const totalOrdinaryMinutes = totals.normalMinutes + totals.recargoNocturnoMinutes + totals.dominicalFestivoMinutes;
+                  // Horas extra = todas las extras
                   const totalExtraMinutes = totals.extraDiurnaMinutes + totals.extraNocturnaMinutes + 
                     totals.extraDiurnaDominicalMinutes + totals.extraNocturnaDominicalMinutes;
+                  // Total trabajado = ordinarias + extras
+                  const calculatedTotalMinutes = totalOrdinaryMinutes + totalExtraMinutes;
                   
                   return (
                     <Card key={`totals-${workerId}`} className="p-4 bg-gradient-to-br from-muted/50 to-muted/30 border-l-4 border-l-primary">
@@ -3834,7 +4852,7 @@ const TimeControl = () => {
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-medium">Total trabajado</p>
-                          <p className="text-xl font-bold text-primary">{formatMinutes(totals.totalMinutes)}</p>
+                          <p className="text-xl font-bold text-primary">{formatMinutes(calculatedTotalMinutes)}</p>
                         </div>
                       </div>
                       
@@ -3842,7 +4860,7 @@ const TimeControl = () => {
                       <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                         <div className="p-2 bg-background/50 rounded">
                           <p className="text-muted-foreground">Horas ordinarias</p>
-                          <p className="font-medium">{formatMinutes(totals.normalMinutes + totals.recargoNocturnoMinutes)}</p>
+                          <p className="font-medium">{formatMinutes(totalOrdinaryMinutes)}</p>
                         </div>
                         <div className="p-2 bg-background/50 rounded">
                           <p className="text-muted-foreground">Total horas extra</p>
@@ -4083,49 +5101,107 @@ const TimeControl = () => {
                             <TableCell key={day.toISOString()} className="p-2">
                               <div className="flex flex-col gap-1 min-h-[60px]">
                                 {/* Entrada */}
-                                <div className="flex items-center justify-center p-2 rounded border border-green-200 bg-green-50/50 min-h-[28px]">
+                                <div className={`flex items-center justify-center p-2 rounded border min-h-[28px] ${
+                                  record?.is_manual_entry 
+                                    ? "border-orange-300 bg-orange-50" 
+                                    : "border-green-200 bg-green-50/50"
+                                }`}>
                                   {record?.entry_time ? (
                                     <button
                                       onClick={() => record.entry_photo_url && setViewingPhoto({
                                         url: record.entry_photo_url,
                                         latitude: record.entry_latitude,
                                         longitude: record.entry_longitude,
-                                        type: "entry"
+                                        type: "entry",
+                                        entry_conditions_ok: record.entry_conditions_ok,
+                                        entry_conditions_notes: record.entry_conditions_notes,
                                       })}
                                       className={`text-sm font-medium ${
-                                        record.entry_photo_url
+                                        record.is_manual_entry
+                                          ? "text-orange-700"
+                                          : record.entry_photo_url
                                           ? "text-green-700 hover:text-green-900 hover:underline cursor-pointer"
                                           : "text-green-700"
                                       }`}
-                                      title={record.entry_photo_url ? "Clic para ver foto" : ""}
+                                      title={
+                                        record.is_manual_entry 
+                                          ? "Entrada agregada manualmente" 
+                                          : record.entry_photo_url 
+                                          ? "Clic para ver foto" 
+                                          : ""
+                                      }
                                     >
                                       {formatTime(record.entry_time)}
+                                      {record.is_manual_entry && (
+                                        <span className="ml-1 text-xs">🔶</span>
+                                      )}
                                     </button>
                                   ) : (
-                                    <span className="text-xs text-muted-foreground">-</span>
+                                    isAdminUser ? (
+                                      <button
+                                        onClick={() => openQuickManualDialog(worker.id, toDateKey(day), "entry")}
+                                        className="text-xs text-muted-foreground hover:text-orange-600 hover:bg-orange-50 px-2 py-1 rounded transition-colors cursor-pointer"
+                                        title="Clic para agregar entrada manual"
+                                      >
+                                        -
+                                      </button>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">-</span>
+                                    )
                                   )}
                                 </div>
                                 {/* Salida */}
-                                <div className="flex items-center justify-center p-2 rounded border border-red-200 bg-red-50/50 min-h-[28px]">
+                                <div className={`flex items-center justify-center p-2 rounded border min-h-[28px] ${
+                                  record?.is_manual_exit 
+                                    ? "border-orange-300 bg-orange-50" 
+                                    : "border-red-200 bg-red-50/50"
+                                }`}>
                                   {record?.exit_time ? (
                                     <button
                                       onClick={() => record.exit_photo_url && setViewingPhoto({
                                         url: record.exit_photo_url,
                                         latitude: record.exit_latitude,
                                         longitude: record.exit_longitude,
-                                        type: "exit"
+                                        type: "exit",
+                                        exit_had_injury: record.exit_had_injury,
+                                        exit_injury_notes: record.exit_injury_notes,
+                                        exit_had_incident: record.exit_had_incident,
+                                        exit_incident_notes: record.exit_incident_notes,
+                                        exit_conditions_ok: record.exit_conditions_ok,
+                                        exit_conditions_notes: record.exit_conditions_notes,
                                       })}
                                       className={`text-sm font-medium ${
-                                        record.exit_photo_url
+                                        record.is_manual_exit
+                                          ? "text-orange-700"
+                                          : record.exit_photo_url
                                           ? "text-red-700 hover:text-red-900 hover:underline cursor-pointer"
                                           : "text-red-700"
                                       }`}
-                                      title={record.exit_photo_url ? "Clic para ver foto" : ""}
+                                      title={
+                                        record.is_manual_exit 
+                                          ? "Salida agregada manualmente" 
+                                          : record.exit_photo_url 
+                                          ? "Clic para ver foto" 
+                                          : ""
+                                      }
                                     >
                                       {formatTime(record.exit_time)}
+                                      {record.is_manual_exit && (
+                                        <span className="ml-1 text-xs">🔶</span>
+                                      )}
                                     </button>
                                   ) : (
-                                    <span className="text-xs text-muted-foreground">-</span>
+                                    isAdminUser ? (
+                                      <button
+                                        onClick={() => openQuickManualDialog(worker.id, toDateKey(day), "exit")}
+                                        className="text-xs text-muted-foreground hover:text-orange-600 hover:bg-orange-50 px-2 py-1 rounded transition-colors cursor-pointer"
+                                        title="Clic para agregar salida manual"
+                                      >
+                                        -
+                                      </button>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">-</span>
+                                    )
                                   )}
                                   {/* Mostrar ajuste de tiempo si existe */}
                                   {record?.time_adjustment_minutes != null && record.time_adjustment_minutes !== 0 && (
@@ -4198,16 +5274,31 @@ const TimeControl = () => {
                                       url: record.entry_photo_url,
                                       latitude: record.entry_latitude,
                                       longitude: record.entry_longitude,
-                                      type: "entry"
+                                      type: "entry",
+                                      entry_conditions_ok: record.entry_conditions_ok,
+                                      entry_conditions_notes: record.entry_conditions_notes,
                                     })}
-                                    className={`text-green-600 font-medium ${
-                                      record.entry_photo_url
+                                    className={`font-medium ${
+                                      record.is_manual_entry
+                                        ? "text-orange-600"
+                                        : "text-green-600"
+                                    } ${
+                                      record.entry_photo_url && !record.is_manual_entry
                                         ? "hover:text-green-800 hover:underline cursor-pointer"
                                         : ""
                                     }`}
-                                    title={record.entry_photo_url ? "Clic para ver foto" : ""}
+                                    title={
+                                      record.is_manual_entry 
+                                        ? "Entrada agregada manualmente" 
+                                        : record.entry_photo_url 
+                                        ? "Clic para ver foto" 
+                                        : ""
+                                    }
                                   >
                                     {formatTime(record.entry_time)}
+                                    {record.is_manual_entry && (
+                                      <span className="ml-1 text-xs">🔶</span>
+                                    )}
                                   </button>
                                 ) : (
                                   <span className="text-muted-foreground">-</span>
@@ -4221,16 +5312,35 @@ const TimeControl = () => {
                                         url: record.exit_photo_url,
                                         latitude: record.exit_latitude,
                                         longitude: record.exit_longitude,
-                                        type: "exit"
+                                        type: "exit",
+                                        exit_had_injury: record.exit_had_injury,
+                                        exit_injury_notes: record.exit_injury_notes,
+                                        exit_had_incident: record.exit_had_incident,
+                                        exit_incident_notes: record.exit_incident_notes,
+                                        exit_conditions_ok: record.exit_conditions_ok,
+                                        exit_conditions_notes: record.exit_conditions_notes,
                                       })}
-                                      className={`text-red-600 font-medium ${
-                                        record.exit_photo_url
+                                      className={`font-medium ${
+                                        record.is_manual_exit
+                                          ? "text-orange-600"
+                                          : "text-red-600"
+                                      } ${
+                                        record.exit_photo_url && !record.is_manual_exit
                                           ? "hover:text-red-800 hover:underline cursor-pointer"
                                           : ""
                                       }`}
-                                      title={record.exit_photo_url ? "Clic para ver foto" : ""}
+                                      title={
+                                        record.is_manual_exit 
+                                          ? "Salida agregada manualmente" 
+                                          : record.exit_photo_url 
+                                          ? "Clic para ver foto" 
+                                          : ""
+                                      }
                                     >
                                       {formatTime(record.exit_time)}
+                                      {record.is_manual_exit && (
+                                        <span className="ml-1 text-xs">🔶</span>
+                                      )}
                                     </button>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
@@ -4282,7 +5392,9 @@ const TimeControl = () => {
                                         url: record.entry_photo_url!,
                                         latitude: record.entry_latitude,
                                         longitude: record.entry_longitude,
-                                        type: "entry"
+                                        type: "entry",
+                                        entry_conditions_ok: record.entry_conditions_ok,
+                                        entry_conditions_notes: record.entry_conditions_notes,
                                       })}
                                       title="Ver foto de entrada"
                                     >
@@ -4297,7 +5409,13 @@ const TimeControl = () => {
                                         url: record.exit_photo_url!,
                                         latitude: record.exit_latitude,
                                         longitude: record.exit_longitude,
-                                        type: "exit"
+                                        type: "exit",
+                                        exit_had_injury: record.exit_had_injury,
+                                        exit_injury_notes: record.exit_injury_notes,
+                                        exit_had_incident: record.exit_had_incident,
+                                        exit_incident_notes: record.exit_incident_notes,
+                                        exit_conditions_ok: record.exit_conditions_ok,
+                                        exit_conditions_notes: record.exit_conditions_notes,
                                       })}
                                       title="Ver foto de salida"
                                     >
@@ -4460,6 +5578,602 @@ const TimeControl = () => {
           </DialogContent>
         </Dialog>
 
+        {/* Entry Certification Dialog */}
+        <Dialog open={showEntryCertificationDialog} onOpenChange={(open) => {
+          if (!open) {
+            setShowEntryCertificationDialog(false);
+            setPendingEntryFile(null);
+            setPendingEntryLocation(null);
+            setEntryConditionsOk(null);
+            setEntryConditionsNotes("");
+            setUploadingEntry(false);
+          }
+        }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-primary" />
+                Certificación de Entrada
+              </DialogTitle>
+              <DialogDescription>
+                Certifica que entras en condiciones adecuadas para trabajar.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">¿Certificas entrar en condiciones adecuadas?</Label>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEntryConditionsOk(true);
+                      setEntryConditionsNotes("");
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      entryConditionsOk === true 
+                        ? 'border-green-500 bg-green-50 text-green-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">✅</div>
+                    <div className="font-medium">Sí</div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setEntryConditionsOk(false)}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      entryConditionsOk === false 
+                        ? 'border-red-500 bg-red-50 text-red-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">❌</div>
+                    <div className="font-medium">No</div>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Campo de observaciones si se selecciona No */}
+              {entryConditionsOk === false && (
+                <div className="space-y-2 p-4 bg-red-50 rounded-lg border border-red-200">
+                  <Label htmlFor="entry-conditions-notes" className="text-sm font-medium text-red-800">
+                    Observaciones (requerido)
+                  </Label>
+                    <Textarea
+                      id="entry-conditions-notes"
+                      value={entryConditionsNotes}
+                      onChange={(e) => setEntryConditionsNotes(e.target.value)}
+                      placeholder="Describe las condiciones en las que entras..."
+                      className="min-h-[100px] border-red-300 focus:ring-red-500"
+                      required
+                    />
+                </div>
+              )}
+            </div>
+            
+            <DialogFooter className="flex gap-2">
+              <Button variant="outline" onClick={() => {
+                setShowEntryCertificationDialog(false);
+                setPendingEntryFile(null);
+                setPendingEntryLocation(null);
+                setEntryConditionsOk(null);
+                setEntryConditionsNotes("");
+                setUploadingEntry(false);
+              }}>
+                Cancelar
+              </Button>
+              <Button onClick={processEntryWithCertification} disabled={uploadingEntry}>
+                {uploadingEntry ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Registrando...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mr-2 h-4 w-4" />
+                    Registrar Entrada
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Exit Certification Dialog */}
+        <Dialog open={showExitCertificationDialog} onOpenChange={(open) => {
+          if (!open) {
+            setShowExitCertificationDialog(false);
+            setPendingExitFile(null);
+            setPendingExitLocation(null);
+            setPendingExitAdjustment(null);
+            setExitHadInjury(null);
+            setExitInjuryNotes("");
+            setExitHadIncident(null);
+            setExitIncidentNotes("");
+            setExitConditionsOk(null);
+            setExitConditionsNotes("");
+            setUploadingExit(false);
+          }
+        }}>
+          <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-primary" />
+                Certificación de Salida
+              </DialogTitle>
+              <DialogDescription>
+                Responde las siguientes preguntas sobre tu jornada laboral.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-6 py-4">
+              {/* ¿Tuvo alguna lesión? */}
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">¿Tuvo alguna lesión?</Label>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExitHadInjury(true);
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      exitHadInjury === true 
+                        ? 'border-red-500 bg-red-50 text-red-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">⚠️</div>
+                    <div className="font-medium">Sí</div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExitHadInjury(false);
+                      setExitInjuryNotes("");
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      exitHadInjury === false 
+                        ? 'border-green-500 bg-green-50 text-green-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">✅</div>
+                    <div className="font-medium">No</div>
+                  </button>
+                </div>
+                
+                {/* Campo de observaciones si se selecciona Sí */}
+                {exitHadInjury === true && (
+                  <div className="space-y-2 p-4 bg-red-50 rounded-lg border border-red-200">
+                    <Label htmlFor="exit-injury-notes" className="text-sm font-medium text-red-800">
+                      Observaciones sobre la lesión (requerido)
+                    </Label>
+                    <Textarea
+                      id="exit-injury-notes"
+                      value={exitInjuryNotes}
+                      onChange={(e) => setExitInjuryNotes(e.target.value)}
+                      placeholder="Describe la lesión..."
+                      className="min-h-[100px] border-red-300 focus:ring-red-500"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* ¿Tuvo algún incidente? */}
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">¿Tuvo algún incidente?</Label>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExitHadIncident(true);
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      exitHadIncident === true 
+                        ? 'border-red-500 bg-red-50 text-red-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">⚠️</div>
+                    <div className="font-medium">Sí</div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExitHadIncident(false);
+                      setExitIncidentNotes("");
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      exitHadIncident === false 
+                        ? 'border-green-500 bg-green-50 text-green-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">✅</div>
+                    <div className="font-medium">No</div>
+                  </button>
+                </div>
+                
+                {/* Campo de observaciones si se selecciona Sí */}
+                {exitHadIncident === true && (
+                  <div className="space-y-2 p-4 bg-red-50 rounded-lg border border-red-200">
+                    <Label htmlFor="exit-incident-notes" className="text-sm font-medium text-red-800">
+                      Observaciones sobre el incidente (requerido)
+                    </Label>
+                    <Textarea
+                      id="exit-incident-notes"
+                      value={exitIncidentNotes}
+                      onChange={(e) => setExitIncidentNotes(e.target.value)}
+                      placeholder="Describe el incidente..."
+                      className="min-h-[100px] border-red-300 focus:ring-red-500"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Certifica salir en buenas condiciones */}
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">¿Certificas salir en buenas condiciones?</Label>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExitConditionsOk(true);
+                      setExitConditionsNotes("");
+                    }}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      exitConditionsOk === true 
+                        ? 'border-green-500 bg-green-50 text-green-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">✅</div>
+                    <div className="font-medium">Sí</div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setExitConditionsOk(false)}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      exitConditionsOk === false 
+                        ? 'border-red-500 bg-red-50 text-red-700' 
+                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">❌</div>
+                    <div className="font-medium">No</div>
+                  </button>
+                </div>
+                
+                {/* Campo de observaciones si se selecciona No */}
+                {exitConditionsOk === false && (
+                  <div className="space-y-2 p-4 bg-red-50 rounded-lg border border-red-200">
+                    <Label htmlFor="exit-conditions-notes" className="text-sm font-medium text-red-800">
+                      Observaciones (requerido)
+                    </Label>
+                    <Textarea
+                      id="exit-conditions-notes"
+                      value={exitConditionsNotes}
+                      onChange={(e) => setExitConditionsNotes(e.target.value)}
+                      placeholder="Describe las condiciones en las que sales..."
+                      className="min-h-[100px] border-red-300 focus:ring-red-500"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <DialogFooter className="flex gap-2">
+              <Button variant="outline" onClick={() => {
+                setShowExitCertificationDialog(false);
+                setPendingExitFile(null);
+                setPendingExitLocation(null);
+                setPendingExitAdjustment(null);
+                setExitHadInjury(null);
+                setExitInjuryNotes("");
+                setExitHadIncident(null);
+                setExitIncidentNotes("");
+                setExitConditionsOk(null);
+                setExitConditionsNotes("");
+                setUploadingExit(false);
+              }}>
+                Cancelar
+              </Button>
+              <Button onClick={processExitWithCertification} disabled={uploadingExit}>
+                {uploadingExit ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Registrando...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mr-2 h-4 w-4" />
+                    Registrar Salida
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Manual Time Entry Dialog - Solo para contacto@soldgrup.com */}
+        {isAdminUser && (
+          <Dialog open={showManualTimeDialog} onOpenChange={setShowManualTimeDialog}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-orange-600" />
+                  Agregar Horas Manualmente
+                </DialogTitle>
+                <DialogDescription>
+                  Agrega horas de entrada y/o salida manualmente. Los registros manuales aparecerán en color naranja.
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                {/* Selección de trabajador */}
+                <div>
+                  <Label htmlFor="manualWorkerSelect">Trabajador</Label>
+                  <select
+                    id="manualWorkerSelect"
+                    value={manualWorkerId}
+                    onChange={(e) => setManualWorkerId(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  >
+                    <option value="">Selecciona un trabajador</option>
+                    {workers.map((worker) => (
+                      <option key={worker.id} value={worker.id}>
+                        {worker.first_name} {worker.last_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Fecha */}
+                <div>
+                  <Label htmlFor="manualDate">Fecha</Label>
+                  <Input
+                    id="manualDate"
+                    type="date"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                  />
+                </div>
+
+                {/* Hora de entrada */}
+                <div>
+                  <Label htmlFor="manualEntryTime">Hora de Entrada (opcional)</Label>
+                  <Input
+                    id="manualEntryTime"
+                    type="time"
+                    value={manualEntryTime}
+                    onChange={(e) => setManualEntryTime(e.target.value)}
+                  />
+                </div>
+
+                {/* Hora de salida */}
+                <div>
+                  <Label htmlFor="manualExitTime">Hora de Salida (opcional)</Label>
+                  <Input
+                    id="manualExitTime"
+                    type="time"
+                    value={manualExitTime}
+                    onChange={(e) => setManualExitTime(e.target.value)}
+                  />
+                </div>
+
+                {/* Advertencia */}
+                <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
+                  <p className="text-sm text-orange-800">
+                    ⚠️ Los registros manuales aparecerán en color naranja para indicar que fueron agregados sin foto.
+                  </p>
+                </div>
+              </div>
+              
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowManualTimeDialog(false)}>
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleSaveManualTime}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Guardar Horas
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+
+        {/* Quick Manual Time Dialog - Desde celda vacía */}
+        {isAdminUser && (
+          <Dialog open={showQuickManualDialog} onOpenChange={(open) => {
+            if (!open) {
+              setShowQuickManualDialog(false);
+              setQuickManualType(null);
+              setQuickManualTime("");
+              setQuickManualDate("");
+              setQuickManualWorkerId("");
+              setQuickManualLunchNormal(true);
+              setQuickManualLunchMinutes("60");
+            }
+          }}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-orange-600" />
+                  Agregar {quickManualType === "entry" ? "Entrada" : "Salida"} Manual
+                </DialogTitle>
+                <DialogDescription>
+                  {workers.find(w => w.id === quickManualWorkerId)?.first_name} {workers.find(w => w.id === quickManualWorkerId)?.last_name} - {quickManualDate ? new Date(quickManualDate + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" }) : ""}
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                {/* Hora */}
+                <div>
+                  <Label htmlFor="quickManualTime">Hora de {quickManualType === "entry" ? "Entrada" : "Salida"}</Label>
+                  <Input
+                    id="quickManualTime"
+                    type="time"
+                    value={quickManualTime}
+                    onChange={(e) => setQuickManualTime(e.target.value)}
+                    className="text-lg"
+                  />
+                </div>
+
+                {/* Ajuste de almuerzo - Solo para salida */}
+                {quickManualType === "exit" && (
+                  <>
+                    <div className="space-y-3">
+                      <Label className="text-sm font-medium">¿Tomó la hora de almuerzo completa?</Label>
+                      
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuickManualLunchNormal(true);
+                            setQuickManualLunchMinutes("60");
+                          }}
+                          className={`p-3 rounded-lg border-2 transition-all ${
+                            quickManualLunchNormal 
+                              ? 'border-primary bg-primary/10 text-primary' 
+                              : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                          }`}
+                        >
+                          <div className="text-xl mb-1">✅</div>
+                          <div className="font-medium text-sm">Sí</div>
+                          <div className="text-xs text-muted-foreground">1 hora normal</div>
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuickManualLunchNormal(false);
+                            setQuickManualLunchMinutes("30");
+                          }}
+                          className={`p-3 rounded-lg border-2 transition-all ${
+                            !quickManualLunchNormal 
+                              ? 'border-amber-500 bg-amber-50 text-amber-700' 
+                              : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                          }`}
+                        >
+                          <div className="text-xl mb-1">⏱️</div>
+                          <div className="font-medium text-sm">No</div>
+                          <div className="text-xs text-muted-foreground">Diferente</div>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Input de minutos si no fue normal */}
+                    {!quickManualLunchNormal && (
+                      <div className="space-y-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                        <Label htmlFor="quick-lunch-minutes" className="text-sm font-medium text-amber-800">
+                          ¿Cuántos minutos de almuerzo tomó?
+                        </Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            id="quick-lunch-minutes"
+                            type="number"
+                            min="0"
+                            max="60"
+                            value={quickManualLunchMinutes}
+                            onChange={(e) => setQuickManualLunchMinutes(e.target.value)}
+                            className="w-24 text-center font-medium"
+                          />
+                          <span className="text-sm text-amber-700">minutos</span>
+                        </div>
+                        <div className="flex gap-2 mt-2">
+                          {[0, 15, 30, 45].map((mins) => (
+                            <button
+                              key={mins}
+                              type="button"
+                              onClick={() => setQuickManualLunchMinutes(mins.toString())}
+                              className={`px-2 py-1 text-xs rounded-full transition-all ${
+                                quickManualLunchMinutes === mins.toString()
+                                  ? 'bg-amber-600 text-white'
+                                  : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                              }`}
+                            >
+                              {mins}m
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Resumen del ajuste */}
+                    {!quickManualLunchNormal && (() => {
+                      const lunchTaken = parseInt(quickManualLunchMinutes) || 60;
+                      const extraMinutes = 60 - lunchTaken;
+                      return (
+                        <div className={`p-2 rounded-lg text-sm ${extraMinutes >= 0 ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+                          {extraMinutes > 0 && (
+                            <span>✅ Se sumarán <strong>{extraMinutes} min</strong> extra</span>
+                          )}
+                          {extraMinutes < 0 && (
+                            <span>⚠️ Se restarán <strong>{Math.abs(extraMinutes)} min</strong></span>
+                          )}
+                          {extraMinutes === 0 && (
+                            <span>Sin ajuste de tiempo</span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+
+                {/* Advertencia */}
+                <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
+                  <p className="text-sm text-orange-800">
+                    🔶 Este registro se marcará como agregado manualmente.
+                  </p>
+                </div>
+              </div>
+              
+              <DialogFooter>
+                <Button variant="outline" onClick={() => {
+                  setShowQuickManualDialog(false);
+                  setQuickManualType(null);
+                  setQuickManualTime("");
+                  setQuickManualDate("");
+                  setQuickManualWorkerId("");
+                  setQuickManualLunchNormal(true);
+                  setQuickManualLunchMinutes("60");
+                }}>
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleSaveQuickManualTime}
+                  className="bg-orange-600 hover:bg-orange-700"
+                  disabled={!quickManualTime}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Guardar {quickManualType === "entry" ? "Entrada" : "Salida"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+
         {/* Camera Modal - Captura directa de cámara */}
         {showCameraModal && (
           <Dialog open={showCameraModal} onOpenChange={() => closeCameraModal()}>
@@ -4555,6 +6269,121 @@ const TimeControl = () => {
                   </p>
                 )}
               </div>
+
+              {/* Estado del trabajador - Entrada */}
+              {viewingPhoto.type === "entry" && viewingPhoto.entry_conditions_ok !== null && viewingPhoto.entry_conditions_ok !== undefined && (
+                <div className="mt-4 p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold mb-3 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                      <circle cx="9" cy="7" r="4"/>
+                      <path d="m22 8-2.5 2.5L17 8"/>
+                    </svg>
+                    Estado del Trabajador (Entrada)
+                  </h4>
+                  <div className="space-y-3">
+                    <div className={`p-3 rounded-lg flex items-center gap-2 ${
+                      viewingPhoto.entry_conditions_ok 
+                        ? "bg-green-50 border border-green-200" 
+                        : "bg-red-50 border border-red-200"
+                    }`}>
+                      <span className="text-xl">{viewingPhoto.entry_conditions_ok ? "✅" : "⚠️"}</span>
+                      <div>
+                        <p className={`font-medium ${viewingPhoto.entry_conditions_ok ? "text-green-700" : "text-red-700"}`}>
+                          Certifica entrar en condiciones adecuadas: {viewingPhoto.entry_conditions_ok ? "Sí" : "No"}
+                        </p>
+                        {viewingPhoto.entry_conditions_notes && (
+                          <p className="text-sm text-red-600 mt-1">
+                            Observaciones: {viewingPhoto.entry_conditions_notes}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Estado del trabajador - Salida */}
+              {viewingPhoto.type === "exit" && (
+                viewingPhoto.exit_had_injury !== null || 
+                viewingPhoto.exit_had_incident !== null || 
+                viewingPhoto.exit_conditions_ok !== null
+              ) && (
+                <div className="mt-4 p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold mb-3 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                      <circle cx="9" cy="7" r="4"/>
+                      <path d="m22 8-2.5 2.5L17 8"/>
+                    </svg>
+                    Estado del Trabajador (Salida)
+                  </h4>
+                  <div className="space-y-3">
+                    {/* Lesión */}
+                    {viewingPhoto.exit_had_injury !== null && viewingPhoto.exit_had_injury !== undefined && (
+                      <div className={`p-3 rounded-lg flex items-center gap-2 ${
+                        viewingPhoto.exit_had_injury 
+                          ? "bg-red-50 border border-red-200" 
+                          : "bg-green-50 border border-green-200"
+                      }`}>
+                        <span className="text-xl">{viewingPhoto.exit_had_injury ? "🩹" : "✅"}</span>
+                        <div>
+                          <p className={`font-medium ${viewingPhoto.exit_had_injury ? "text-red-700" : "text-green-700"}`}>
+                            ¿Tuvo alguna lesión?: {viewingPhoto.exit_had_injury ? "Sí" : "No"}
+                          </p>
+                          {viewingPhoto.exit_injury_notes && (
+                            <p className="text-sm text-red-600 mt-1">
+                              Observaciones: {viewingPhoto.exit_injury_notes}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Incidente */}
+                    {viewingPhoto.exit_had_incident !== null && viewingPhoto.exit_had_incident !== undefined && (
+                      <div className={`p-3 rounded-lg flex items-center gap-2 ${
+                        viewingPhoto.exit_had_incident 
+                          ? "bg-red-50 border border-red-200" 
+                          : "bg-green-50 border border-green-200"
+                      }`}>
+                        <span className="text-xl">{viewingPhoto.exit_had_incident ? "⚠️" : "✅"}</span>
+                        <div>
+                          <p className={`font-medium ${viewingPhoto.exit_had_incident ? "text-red-700" : "text-green-700"}`}>
+                            ¿Tuvo algún incidente?: {viewingPhoto.exit_had_incident ? "Sí" : "No"}
+                          </p>
+                          {viewingPhoto.exit_incident_notes && (
+                            <p className="text-sm text-red-600 mt-1">
+                              Observaciones: {viewingPhoto.exit_incident_notes}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Condiciones de salida */}
+                    {viewingPhoto.exit_conditions_ok !== null && viewingPhoto.exit_conditions_ok !== undefined && (
+                      <div className={`p-3 rounded-lg flex items-center gap-2 ${
+                        viewingPhoto.exit_conditions_ok 
+                          ? "bg-green-50 border border-green-200" 
+                          : "bg-red-50 border border-red-200"
+                      }`}>
+                        <span className="text-xl">{viewingPhoto.exit_conditions_ok ? "✅" : "⚠️"}</span>
+                        <div>
+                          <p className={`font-medium ${viewingPhoto.exit_conditions_ok ? "text-green-700" : "text-red-700"}`}>
+                            Certifica salir en buenas condiciones: {viewingPhoto.exit_conditions_ok ? "Sí" : "No"}
+                          </p>
+                          {viewingPhoto.exit_conditions_notes && (
+                            <p className="text-sm text-red-600 mt-1">
+                              Observaciones: {viewingPhoto.exit_conditions_notes}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               
               <DialogFooter>
                 <Button onClick={() => setViewingPhoto(null)}>Cerrar</Button>
