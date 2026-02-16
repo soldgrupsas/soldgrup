@@ -12,19 +12,13 @@ import {
   X,
   Calendar,
   Filter,
-<<<<<<< HEAD
   Camera,
-=======
->>>>>>> fix/fecha-timezone-timecontrol
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-<<<<<<< HEAD
 import { Textarea } from "@/components/ui/textarea";
-=======
->>>>>>> fix/fecha-timezone-timecontrol
 import { useAuth } from "@/hooks/useAuth";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -88,7 +82,6 @@ type AttendanceRecord = {
   exit_time: string | null;
   entry_photo_url: string | null;
   exit_photo_url: string | null;
-<<<<<<< HEAD
   entry_latitude: number | null;
   entry_longitude: number | null;
   exit_latitude: number | null;
@@ -266,54 +259,6 @@ type HoursValue = HoursBreakdown & {
   extraNocturnaDominicalValue: number; // Valor extra nocturna dominical
   totalExtraValue: number;         // Total valor extras y recargos
   totalValue: number;              // Valor total (normal + extras)
-=======
-  worker?: Worker;
-};
-
-const PHOTO_BUCKET = "attendance-photos";
-
-const HOLIDAYS = [
-  "2025-01-01",
-  "2025-01-06",
-  "2025-03-24",
-  "2025-03-25",
-  "2025-05-01",
-  "2025-05-12",
-  "2025-06-16",
-  "2025-07-07",
-  "2025-07-20",
-  "2025-08-07",
-  "2025-08-17",
-  "2025-10-13",
-  "2025-11-03",
-  "2025-11-17",
-  "2025-12-08",
-  "2025-12-25",
-];
-
-const SCHEDULE_BY_DAY: Record<string, { start: string; end: string }[]> = {
-  "1": [
-    { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
-  ],
-  "2": [
-    { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
-  ],
-  "3": [
-    { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
-  ],
-  "4": [
-    { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
-  ],
-  "5": [
-    { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
-  ],
-  "6": [{ start: "08:00", end: "12:00" }],
->>>>>>> fix/fecha-timezone-timecontrol
 };
 
 // Función helper para obtener la fecha en formato YYYY-MM-DD usando zona horaria local
@@ -339,7 +284,6 @@ const normalizeDateToKey = (date: string | Date): string => {
   return toDateKey(date);
 };
 
-<<<<<<< HEAD
 // Verifica si una fecha es festivo
 const isHoliday = (date: Date) => HOLIDAYS.includes(toDateKey(date));
 
@@ -357,11 +301,6 @@ const isNightHour = (hour: number): boolean => {
 // Obtiene los intervalos de trabajo para una fecha
 const intervalsForDate = (date: Date) => {
   // En festivos no hay horario laboral normal
-=======
-const isHoliday = (date: Date) => HOLIDAYS.includes(toDateKey(date));
-
-const intervalsForDate = (date: Date) => {
->>>>>>> fix/fecha-timezone-timecontrol
   if (isHoliday(date)) return [];
   const day = date.getDay().toString();
   return SCHEDULE_BY_DAY[day] ?? [];
@@ -372,7 +311,6 @@ const timeStringToMinutes = (value: string) => {
   return hours * 60 + minutes;
 };
 
-<<<<<<< HEAD
 // Calcula los minutos nocturnos dentro de un rango de tiempo
 const calculateNightMinutes = (startTime: Date, endTime: Date): number => {
   let nightMinutes = 0;
@@ -712,36 +650,6 @@ const computeRecordHoursSimple = (record: AttendanceRecord) => {
     extraMinutes,
     totalMinutes: breakdown.totalMinutes,
   };
-=======
-const computeRecordHours = (record: AttendanceRecord) => {
-  const entry = record.entry_time ? new Date(record.entry_time) : null;
-  const exit = record.exit_time ? new Date(record.exit_time) : null;
-  if (!entry || !exit) {
-    return { normalMinutes: 0, extraMinutes: 0, totalMinutes: 0 };
-  }
-
-  const intervals = intervalsForDate(entry);
-  const totalMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000);
-
-  let normalMinutes = 0;
-
-  intervals.forEach((interval) => {
-    const intervalStart = new Date(entry);
-    intervalStart.setHours(Number(interval.start.split(":")[0]), Number(interval.start.split(":")[1]));
-    const intervalEnd = new Date(entry);
-    intervalEnd.setHours(Number(interval.end.split(":")[0]), Number(interval.end.split(":")[1]));
-
-    const overlapStart = Math.max(entry.getTime(), intervalStart.getTime());
-    const overlapEnd = Math.min(exit.getTime(), intervalEnd.getTime());
-
-    if (overlapEnd > overlapStart) {
-      normalMinutes += (overlapEnd - overlapStart) / 60000;
-    }
-  });
-
-  const extraMinutes = Math.max(0, totalMinutes - normalMinutes);
-  return { normalMinutes, extraMinutes, totalMinutes };
->>>>>>> fix/fecha-timezone-timecontrol
 };
 
 const encodeStoragePath = (path: string) =>
@@ -758,7 +666,6 @@ const sanitizeFileName = (name: string) =>
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
 
-<<<<<<< HEAD
 // Helper function to get current GPS location with detailed error handling
 const getCurrentLocation = (): Promise<{ latitude: number; longitude: number; error?: string } | { latitude: null; longitude: null; error: string }> => {
   return new Promise((resolve) => {
@@ -969,20 +876,15 @@ const getGoogleMapsUrl = (latitude: number, longitude: number): string => {
   return `https://www.google.com/maps?q=${latitude},${longitude}`;
 };
 
-=======
->>>>>>> fix/fecha-timezone-timecontrol
 const TimeControl = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading, session } = useAuth();
   const { toast } = useToast();
-<<<<<<< HEAD
   
   // Verificar si es el usuario de asistencia (solo puede registrar entrada/salida)
   const isAttendanceUser = user?.email === "asistencia@soldgrup.com";
   // Verificar si es el usuario administrador que puede agregar horas manualmente
   const isAdminUser = user?.email === "contacto@soldgrup.com";
-=======
->>>>>>> fix/fecha-timezone-timecontrol
   const [initialLoading, setInitialLoading] = useState(false); // Cambiado a false para evitar bloqueo
   const initialLoadRef = useRef(true);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -1025,7 +927,6 @@ const TimeControl = () => {
       autoSaveNewWorkerTimerRef.current = undefined;
     }
   }, []);
-<<<<<<< HEAD
   
   // Estado para configuración de horas extras editable
   const [overtimeConfig, setOvertimeConfig] = useState<OvertimeConfig>(() => {
@@ -1068,13 +969,10 @@ const TimeControl = () => {
     setOvertimeConfig(DEFAULT_OVERTIME_CONFIG);
   };
   
-=======
->>>>>>> fix/fecha-timezone-timecontrol
   const [uploadingEntry, setUploadingEntry] = useState(false);
   const [uploadingExit, setUploadingExit] = useState(false);
   const isUpdatingRecordsRef = useRef(false);
   
-<<<<<<< HEAD
   // Estados para ajuste de tiempo en salida (almuerzo)
   const [showExitAdjustmentDialog, setShowExitAdjustmentDialog] = useState(false);
   const [showExitCertificationDialog, setShowExitCertificationDialog] = useState(false);
@@ -1106,8 +1004,6 @@ const TimeControl = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-=======
->>>>>>> fix/fecha-timezone-timecontrol
   // Timeout para resetear estados de uploading si se quedan atascados
   useEffect(() => {
     if (uploadingEntry || uploadingExit) {
@@ -1120,7 +1016,6 @@ const TimeControl = () => {
       return () => clearTimeout(timeout);
     }
   }, [uploadingEntry, uploadingExit]);
-<<<<<<< HEAD
   const [viewingPhoto, setViewingPhoto] = useState<PhotoViewData>(null);
   const [dateFilter, setDateFilter] = useState<"all" | "fortnight" | "month" | "custom">("fortnight");
   const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>("all");
@@ -1151,11 +1046,6 @@ const TimeControl = () => {
   });
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-=======
-  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
-  const [dateFilter, setDateFilter] = useState<"all" | "week" | "month" | "custom">("week");
-  const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>("all");
->>>>>>> fix/fecha-timezone-timecontrol
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -1259,7 +1149,6 @@ const TimeControl = () => {
         setAttendanceRecords([]);
       } else {
         // Cargar registros usando función anti-duplicados
-<<<<<<< HEAD
         // Normalizar registros para asegurar que tengan todos los campos
         const records = (recordsData || []).map((r: any) => ({
           ...r,
@@ -1280,9 +1169,6 @@ const TimeControl = () => {
           exit_conditions_ok: r.exit_conditions_ok ?? null,
           exit_conditions_notes: r.exit_conditions_notes ?? null,
         })) as AttendanceRecord[];
-=======
-        const records = (recordsData || []) as unknown as AttendanceRecord[];
->>>>>>> fix/fecha-timezone-timecontrol
         const deduplicated = removeDuplicateRecords(records);
         setAttendanceRecords(deduplicated);
       }
@@ -1684,7 +1570,6 @@ const TimeControl = () => {
     return age;
   };
 
-<<<<<<< HEAD
   // Función para abrir la cámara y capturar foto del nuevo trabajador
   const openCameraForNewWorkerPhoto = () => {
     const input = document.createElement("input");
@@ -1835,17 +1720,11 @@ const TimeControl = () => {
         });
         return;
       }
-=======
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
->>>>>>> fix/fecha-timezone-timecontrol
       setNewWorkerPhoto(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setNewWorkerPhotoPreview(reader.result as string);
       };
-<<<<<<< HEAD
       reader.onerror = () => {
         toast({
           title: "Error",
@@ -1853,8 +1732,6 @@ const TimeControl = () => {
           variant: "destructive",
         });
       };
-=======
->>>>>>> fix/fecha-timezone-timecontrol
       reader.readAsDataURL(file);
     }
   };
@@ -1862,7 +1739,6 @@ const TimeControl = () => {
   const handleEditingPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-<<<<<<< HEAD
       if (file.size > 5 * 1024 * 1024) {
         toast({
           title: "Error",
@@ -1871,14 +1747,11 @@ const TimeControl = () => {
         });
         return;
       }
-=======
->>>>>>> fix/fecha-timezone-timecontrol
       setEditingWorkerPhoto(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setEditingWorkerPhotoPreview(reader.result as string);
       };
-<<<<<<< HEAD
       reader.onerror = () => {
         toast({
           title: "Error",
@@ -1886,8 +1759,6 @@ const TimeControl = () => {
           variant: "destructive",
         });
       };
-=======
->>>>>>> fix/fecha-timezone-timecontrol
       reader.readAsDataURL(file);
     }
   };
@@ -2071,7 +1942,6 @@ const TimeControl = () => {
     }
   };
 
-<<<<<<< HEAD
   // Función para guardar horas manualmente
   const handleSaveManualTime = async () => {
     if (!manualWorkerId) {
@@ -2357,8 +2227,6 @@ const TimeControl = () => {
     setShowQuickManualDialog(true);
   };
 
-=======
->>>>>>> fix/fecha-timezone-timecontrol
   const uploadPhoto = async (file: File, type: "entry" | "exit"): Promise<string> => {
     // Verificar sesión antes de intentar subir
     const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -2485,7 +2353,6 @@ const TimeControl = () => {
     return record;
   }, [attendanceRecords, selectedWorkerId]);
 
-<<<<<<< HEAD
   // Get start and end dates based on filter - usar useMemo para evitar recalcular
   const dateRange = useMemo(() => {
     switch (dateFilter) {
@@ -2578,22 +2445,6 @@ const TimeControl = () => {
     
     return totals;
   }, [attendanceRecords, workers, dateRange]);
-=======
-  const weeklyTotals = useMemo(() => {
-    const totals: Record<string, { normal: number; extra: number; total: number }> = {};
-    attendanceRecords.forEach((record) => {
-      const key = record.worker_id;
-      const stats = computeRecordHours(record);
-      if (!totals[key]) {
-        totals[key] = { normal: 0, extra: 0, total: 0 };
-      }
-      totals[key].normal += stats.normalMinutes;
-      totals[key].extra += stats.extraMinutes;
-      totals[key].total += stats.totalMinutes;
-    });
-    return totals;
-  }, [attendanceRecords]);
->>>>>>> fix/fecha-timezone-timecontrol
 
   // Only disable entry button if there's a complete entry record (with photo)
   const entryButtonDisabled =
@@ -2616,7 +2467,6 @@ const TimeControl = () => {
   };
 
   const formatMinutes = (minutes: number) => {
-<<<<<<< HEAD
     // Redondear primero el total para evitar casos como "7h 60m"
     const totalRoundedMinutes = Math.round(minutes);
     const hours = Math.floor(totalRoundedMinutes / 60);
@@ -2882,16 +2732,6 @@ const TimeControl = () => {
   const handlePhotoUpload = async (type: "entry" | "exit") => {
     // Prevenir múltiples llamadas simultáneas
     if (uploadingEntry || uploadingExit || isFileInputOpenRef.current || showCameraModal) {
-=======
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.round(minutes % 60);
-    return `${hours}h ${mins}m`;
-  };
-
-  const handlePhotoUpload = async (type: "entry" | "exit") => {
-    // Prevenir múltiples llamadas simultáneas
-    if (uploadingEntry || uploadingExit) {
->>>>>>> fix/fecha-timezone-timecontrol
       return;
     }
 
@@ -2950,7 +2790,6 @@ const TimeControl = () => {
       return;
     }
 
-<<<<<<< HEAD
     // Abrir cámara nativa directamente (sin opción de galería)
     await openNativeCamera(type);
   };
@@ -2964,8 +2803,6 @@ const TimeControl = () => {
       setUploadingExit(true);
     }
 
-=======
->>>>>>> fix/fecha-timezone-timecontrol
     // Usar un try-catch global para capturar cualquier error que pueda romper el renderizado
     let input: HTMLInputElement | null = null;
     let inputRemoved = false;
@@ -2974,16 +2811,11 @@ const TimeControl = () => {
       // Crear el input fuera del DOM de React para evitar conflictos
       input = document.createElement("input");
       input.type = "file";
-<<<<<<< HEAD
       // Forzar apertura de cámara - el orden de atributos importa en algunos navegadores
       input.setAttribute("capture", "environment"); // Cámara trasera
       input.setAttribute("accept", "image/*");
       // En algunos dispositivos Android, esto ayuda a forzar la cámara
       (input as any).capture = "environment";
-=======
-      input.accept = "image/*";
-      input.capture = "environment"; // Use camera on mobile
->>>>>>> fix/fecha-timezone-timecontrol
       input.style.position = "fixed";
       input.style.top = "-9999px";
       input.style.left = "-9999px";
@@ -3012,15 +2844,12 @@ const TimeControl = () => {
           // Ignorar errores de limpieza - el nodo ya fue removido
           input = null;
         }
-<<<<<<< HEAD
         // Restaurar estado si se cancela sin seleccionar archivo
         if (type === "entry") {
           setUploadingEntry(false);
         } else {
           setUploadingExit(false);
         }
-=======
->>>>>>> fix/fecha-timezone-timecontrol
       };
 
       input.onchange = async (e) => {
@@ -3032,7 +2861,6 @@ const TimeControl = () => {
             return;
           }
 
-<<<<<<< HEAD
           // OBTENER UBICACIÓN AHORA (en paralelo con la subida de la foto)
           toast({
             title: "Obteniendo ubicación...",
@@ -3060,8 +2888,6 @@ const TimeControl = () => {
             return;
           }
 
-=======
->>>>>>> fix/fecha-timezone-timecontrol
           if (type === "entry") {
             setUploadingEntry(true);
           } else {
@@ -3106,7 +2932,6 @@ const TimeControl = () => {
               console.warn("Error al verificar sesión, continuando:", sessionCheckError);
             }
 
-<<<<<<< HEAD
             // Subir foto y obtener ubicación en paralelo
             const [photoUrl, location] = await Promise.all([
               uploadPhoto(file, type),
@@ -3122,12 +2947,6 @@ const TimeControl = () => {
               console.warn("No se pudo obtener ubicación:", location.error);
             }
 
-=======
-            const photoUrl = await uploadPhoto(file, type);
-            const today = toDateKey(new Date());
-            const now = new Date().toISOString();
-
->>>>>>> fix/fecha-timezone-timecontrol
             // Check if record exists for today
             const { data: existingRecords, error: queryError } = await supabase
               .from("attendance_records")
@@ -3166,7 +2985,6 @@ const TimeControl = () => {
               if (type === "entry") {
                 updateData.entry_time = now;
                 updateData.entry_photo_url = photoUrl;
-<<<<<<< HEAD
                 updateData.entry_latitude = location?.latitude ?? null;
                 updateData.entry_longitude = location?.longitude ?? null;
                 // Preserve existing exit data
@@ -3174,17 +2992,11 @@ const TimeControl = () => {
                 updateData.exit_photo_url = existingRecord.exit_photo_url || null;
                 updateData.exit_latitude = existingRecord.exit_latitude || null;
                 updateData.exit_longitude = existingRecord.exit_longitude || null;
-=======
-                // Preserve existing exit data
-                updateData.exit_time = existingRecord.exit_time || null;
-                updateData.exit_photo_url = existingRecord.exit_photo_url || null;
->>>>>>> fix/fecha-timezone-timecontrol
               }
               // If we're updating exit, set exit fields (overwrite existing)
               if (type === "exit") {
                 updateData.exit_time = now;
                 updateData.exit_photo_url = photoUrl;
-<<<<<<< HEAD
                 updateData.exit_latitude = location?.latitude ?? null;
                 updateData.exit_longitude = location?.longitude ?? null;
                 // Preserve existing entry data
@@ -3192,11 +3004,6 @@ const TimeControl = () => {
                 updateData.entry_photo_url = existingRecord.entry_photo_url || null;
                 updateData.entry_latitude = existingRecord.entry_latitude || null;
                 updateData.entry_longitude = existingRecord.entry_longitude || null;
-=======
-                // Preserve existing entry data
-                updateData.entry_time = existingRecord.entry_time || null;
-                updateData.entry_photo_url = existingRecord.entry_photo_url || null;
->>>>>>> fix/fecha-timezone-timecontrol
               }
 
               const { data: updatedData, error } = await supabase
@@ -3246,13 +3053,10 @@ const TimeControl = () => {
                 exit_time: type === "exit" ? now : null,
                 entry_photo_url: type === "entry" ? photoUrl : null,
                 exit_photo_url: type === "exit" ? photoUrl : null,
-<<<<<<< HEAD
                 entry_latitude: type === "entry" ? (location?.latitude ?? null) : null,
                 entry_longitude: type === "entry" ? (location?.longitude ?? null) : null,
                 exit_latitude: type === "exit" ? (location?.latitude ?? null) : null,
                 exit_longitude: type === "exit" ? (location?.longitude ?? null) : null,
-=======
->>>>>>> fix/fecha-timezone-timecontrol
               };
               const { data: insertedData, error } = await supabase
                 .from("attendance_records")
@@ -3347,15 +3151,12 @@ const TimeControl = () => {
           console.error("Error agregando input al DOM:", appendError);
           input = null;
           isFileInputOpenRef.current = false;
-<<<<<<< HEAD
           // Restaurar estado
           if (type === "entry") {
             setUploadingEntry(false);
           } else {
             setUploadingExit(false);
           }
-=======
->>>>>>> fix/fecha-timezone-timecontrol
           toast({
             title: "Error",
             description: "No se pudo crear el selector de archivos. Por favor, intenta nuevamente.",
@@ -3403,15 +3204,12 @@ const TimeControl = () => {
         }
         input = null;
       }
-<<<<<<< HEAD
       // Restaurar estado
       if (type === "entry") {
         setUploadingEntry(false);
       } else {
         setUploadingExit(false);
       }
-=======
->>>>>>> fix/fecha-timezone-timecontrol
       toast({
         title: "Error",
         description: "No se pudo crear el selector de archivos. Por favor, intenta nuevamente.",
@@ -3420,7 +3218,6 @@ const TimeControl = () => {
     }
   };
 
-<<<<<<< HEAD
   // Función para procesar la entrada con certificación
   const processEntryWithCertification = async () => {
     if (!pendingEntryFile || !selectedWorkerId) {
@@ -3890,8 +3687,6 @@ const TimeControl = () => {
     setExitConditionsNotes("");
   };
 
-=======
->>>>>>> fix/fecha-timezone-timecontrol
   const getWorkerName = (workerId: string) => {
     const worker = workers.find((w) => w.id === workerId);
     return worker ? `${worker.first_name} ${worker.last_name}` : "Desconocido";
@@ -3938,34 +3733,6 @@ const TimeControl = () => {
 
   const isHolidayDate = (dateString: string) => HOLIDAYS.includes(dateString);
 
-<<<<<<< HEAD
-=======
-  // Get start and end dates based on filter - usar useMemo para evitar recalcular
-  const dateRange = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    switch (dateFilter) {
-      case "week": {
-        const start = new Date(today);
-        const dayOfWeek = start.getDay();
-        const diff = start.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Monday
-        start.setDate(diff);
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6); // Sunday
-        return { start, end };
-      }
-      case "month": {
-        const start = new Date(today.getFullYear(), today.getMonth(), 1);
-        const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        return { start, end };
-      }
-      default:
-        return { start: null, end: null };
-    }
-  }, [dateFilter]);
-
->>>>>>> fix/fecha-timezone-timecontrol
   // Eliminar duplicados antes de filtrar - usar función dedicada
   // Usar un useMemo con una función de comparación más estricta para evitar renders innecesarios
   const uniqueAttendanceRecords = useMemo(() => {
@@ -4016,31 +3783,18 @@ const TimeControl = () => {
     });
   }, [groupedByDate]);
 
-<<<<<<< HEAD
   // Calculate fortnight (quincena) summary
   const fortnightSummary = useMemo(() => {
     const { start, end } = dateRange;
     if (!start || !end || dateFilter !== "fortnight") return null;
 
     const fortnightRecords = attendanceRecords.filter((record) => {
-=======
-  // Calculate weekly summary
-  const weeklySummary = useMemo(() => {
-    const { start, end } = dateRange;
-    if (!start || !end || dateFilter !== "week") return null;
-
-    const weekRecords = attendanceRecords.filter((record) => {
->>>>>>> fix/fecha-timezone-timecontrol
       const recordDate = new Date(record.date);
       recordDate.setHours(0, 0, 0, 0);
       return recordDate >= start && recordDate <= end;
     });
 
-<<<<<<< HEAD
     const byWorker = fortnightRecords.reduce((acc, record) => {
-=======
-    const byWorker = weekRecords.reduce((acc, record) => {
->>>>>>> fix/fecha-timezone-timecontrol
       if (!acc[record.worker_id]) {
         acc[record.worker_id] = { entries: 0, exits: 0, days: new Set() };
       }
@@ -4057,7 +3811,6 @@ const TimeControl = () => {
     return byWorker;
   }, [attendanceRecords, dateRange, dateFilter]);
 
-<<<<<<< HEAD
   const summary = fortnightSummary;
 
   // Get fortnight days (quincena: 1-15 or 16-end of month)
@@ -4070,20 +3823,6 @@ const TimeControl = () => {
     while (current <= end) {
       days.push(new Date(current));
       current.setDate(current.getDate() + 1);
-=======
-  const summary = weeklySummary;
-
-  // Get week days (Monday to Sunday) - usar useMemo para evitar recalcular
-  const weekDays = useMemo(() => {
-    const { start } = dateRange;
-    if (!start) return [];
-    
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(start);
-      date.setDate(start.getDate() + i);
-      days.push(date);
->>>>>>> fix/fecha-timezone-timecontrol
     }
     return days;
   }, [dateRange]);
@@ -4126,7 +3865,6 @@ const TimeControl = () => {
       <div className="container mx-auto px-4 py-8 space-y-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-<<<<<<< HEAD
             {!isAttendanceUser && (
               <Button 
                 onClick={() => {
@@ -4147,35 +3885,13 @@ const TimeControl = () => {
                 {isAttendanceUser 
                   ? "Registra tu entrada y salida" 
                   : "Gestión de horarios de entrada y salida de trabajadores"}
-=======
-            <Button 
-              onClick={() => {
-                // Limpiar estados y forzar navegación completa
-                clearAutoSaveTimer();
-                // Usar window.location.href para forzar una recarga completa y evitar problemas de renderizado
-                window.location.href = "/home";
-              }} 
-              variant="outline" 
-              size="icon"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <div>
-              <h1 className="text-4xl font-bold mb-1">Control entrada/salida</h1>
-              <p className="text-muted-foreground">
-                Gestión de horarios de entrada y salida de trabajadores
->>>>>>> fix/fecha-timezone-timecontrol
               </p>
             </div>
           </div>
         </div>
 
-<<<<<<< HEAD
         {/* Worker Management - Oculto para usuario de asistencia */}
         {!isAttendanceUser && (
-=======
-        {/* Worker Management */}
->>>>>>> fix/fecha-timezone-timecontrol
         <Card className="p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
             <h2 className="text-2xl font-semibold">Trabajadores</h2>
@@ -4228,11 +3944,7 @@ const TimeControl = () => {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
-<<<<<<< HEAD
                   {/* Photo Upload - Cámara directa */}
-=======
-                  {/* Photo Upload */}
->>>>>>> fix/fecha-timezone-timecontrol
                   <div>
                     <Label>Foto del Trabajador</Label>
                     <div className="mt-2 flex items-center gap-4">
@@ -4247,7 +3959,6 @@ const TimeControl = () => {
                           <UserPlus className="h-12 w-12 text-muted-foreground" />
                         </div>
                       )}
-<<<<<<< HEAD
                       <div className="flex flex-col gap-2">
                         <Button
                           type="button"
@@ -4260,17 +3971,6 @@ const TimeControl = () => {
                         </Button>
                         <p className="text-xs text-muted-foreground">
                           Se abrirá la cámara para tomar la foto
-=======
-                      <div>
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          onChange={handlePhotoChange}
-                          className="cursor-pointer"
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Formatos: JPG, PNG (máx. 5MB)
->>>>>>> fix/fecha-timezone-timecontrol
                         </p>
                       </div>
                     </div>
@@ -4491,7 +4191,6 @@ const TimeControl = () => {
             </div>
           )}
         </Card>
-<<<<<<< HEAD
         )}
 
         {/* Configuración de Horas Extras - Solo visible para administrador */}
@@ -4628,11 +4327,6 @@ const TimeControl = () => {
 
         {/* Edit Worker Dialog */}
         {editingWorker && !isAttendanceUser && (
-=======
-
-        {/* Edit Worker Dialog */}
-        {editingWorker && (
->>>>>>> fix/fecha-timezone-timecontrol
           <Dialog
             open={!!editingWorker}
             onOpenChange={(open) => {
@@ -4647,10 +4341,7 @@ const TimeControl = () => {
                 <DialogDescription>Modifica la información del trabajador.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
-<<<<<<< HEAD
                 {/* Photo Upload - Cámara directa */}
-=======
->>>>>>> fix/fecha-timezone-timecontrol
                 <div>
                   <Label>Foto del Trabajador</Label>
                   <div className="mt-2 flex items-center gap-4">
@@ -4671,7 +4362,6 @@ const TimeControl = () => {
                         <UserPlus className="h-12 w-12 text-muted-foreground" />
                       </div>
                     )}
-<<<<<<< HEAD
                     <div className="flex flex-col gap-2">
                       <Button
                         type="button"
@@ -4684,17 +4374,6 @@ const TimeControl = () => {
                       </Button>
                       <p className="text-xs text-muted-foreground">
                         Se abrirá la cámara para tomar la foto
-=======
-                    <div>
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleEditingPhotoChange}
-                        className="cursor-pointer"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Reemplaza la foto del trabajador (JPG, PNG, máx. 5MB)
->>>>>>> fix/fecha-timezone-timecontrol
                       </p>
                     </div>
                   </div>
@@ -4842,11 +4521,7 @@ const TimeControl = () => {
         )}
 
         {/* View Worker Profile Dialog */}
-<<<<<<< HEAD
         {viewingWorkerProfile && !isAttendanceUser && (
-=======
-        {viewingWorkerProfile && (
->>>>>>> fix/fecha-timezone-timecontrol
           <Dialog open={!!viewingWorkerProfile} onOpenChange={() => setViewingWorkerProfile(null)}>
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
@@ -5033,7 +4708,6 @@ const TimeControl = () => {
                 )}
               </Button>
             </div>
-<<<<<<< HEAD
             {/* Botón para agregar horas manualmente - Solo visible para contacto@soldgrup.com */}
             {isAdminUser && (
               <div className="mt-4 pt-4 border-t">
@@ -5073,21 +4747,12 @@ const TimeControl = () => {
                       {todaysRecordForSelectedWorker.is_manual_entry && (
                         <span className="ml-1">🔶 Manual</span>
                       )}
-=======
-            {todaysRecordForSelectedWorker && (
-              <div className="space-y-2 mt-4">
-                {todaysRecordForSelectedWorker.entry_time && (
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-muted-foreground">
-                      Entrada: {getEntryTimeLabel()}
->>>>>>> fix/fecha-timezone-timecontrol
                     </p>
                     {todaysRecordForSelectedWorker.entry_photo_url && (
                       <img
                         src={todaysRecordForSelectedWorker.entry_photo_url}
                         alt="Foto de entrada"
                         className="w-12 h-12 object-cover rounded border cursor-pointer hover:opacity-80"
-<<<<<<< HEAD
                         onClick={() => setViewingPhoto({
                           url: todaysRecordForSelectedWorker.entry_photo_url!,
                           latitude: todaysRecordForSelectedWorker.entry_latitude,
@@ -5096,16 +4761,12 @@ const TimeControl = () => {
                           entry_conditions_ok: todaysRecordForSelectedWorker.entry_conditions_ok,
                           entry_conditions_notes: todaysRecordForSelectedWorker.entry_conditions_notes,
                         })}
-=======
-                        onClick={() => setViewingPhoto(todaysRecordForSelectedWorker.entry_photo_url!)}
->>>>>>> fix/fecha-timezone-timecontrol
                         title="Clic para ver foto completa"
                       />
                     )}
                   </div>
                 )}
                 {todaysRecordForSelectedWorker.exit_time && (
-<<<<<<< HEAD
                   <div className={`flex items-center gap-2 p-2 rounded ${
                     todaysRecordForSelectedWorker.is_manual_exit 
                       ? "bg-orange-50 border border-orange-200" 
@@ -5120,18 +4781,12 @@ const TimeControl = () => {
                       {todaysRecordForSelectedWorker.is_manual_exit && (
                         <span className="ml-1">🔶 Manual</span>
                       )}
-=======
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-muted-foreground">
-                      Salida: {formatTime(todaysRecordForSelectedWorker.exit_time)}
->>>>>>> fix/fecha-timezone-timecontrol
                     </p>
                     {todaysRecordForSelectedWorker.exit_photo_url && (
                       <img
                         src={todaysRecordForSelectedWorker.exit_photo_url}
                         alt="Foto de salida"
                         className="w-12 h-12 object-cover rounded border cursor-pointer hover:opacity-80"
-<<<<<<< HEAD
                         onClick={() => setViewingPhoto({
                           url: todaysRecordForSelectedWorker.exit_photo_url!,
                           latitude: todaysRecordForSelectedWorker.exit_latitude,
@@ -5144,9 +4799,6 @@ const TimeControl = () => {
                           exit_conditions_ok: todaysRecordForSelectedWorker.exit_conditions_ok,
                           exit_conditions_notes: todaysRecordForSelectedWorker.exit_conditions_notes,
                         })}
-=======
-                        onClick={() => setViewingPhoto(todaysRecordForSelectedWorker.exit_photo_url!)}
->>>>>>> fix/fecha-timezone-timecontrol
                         title="Clic para ver foto completa"
                       />
                     )}
@@ -5157,7 +4809,6 @@ const TimeControl = () => {
           </div>
         </Card>
 
-<<<<<<< HEAD
         {/* Attendance Records Table - Oculto para usuario de asistencia */}
         {!isAttendanceUser && (
         <Card className="p-6">
@@ -5281,32 +4932,6 @@ const TimeControl = () => {
                   );
                 })}
               </div>
-=======
-        {/* Attendance Records Table */}
-        <Card className="p-6">
-          {Object.entries(weeklyTotals).length > 0 && (
-            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(weeklyTotals).map(([workerId, totals]) => {
-                const worker = workers.find((w) => w.id === workerId);
-                return (
-                  <Card key={`totals-${workerId}`} className="p-4 bg-muted/70">
-                    <p className="text-sm text-muted-foreground">Semana actual</p>
-                    <h3 className="font-semibold text-lg">
-                      {worker ? `${worker.first_name} ${worker.last_name}` : "Trabajador"}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Horas normales: {formatMinutes(totals.normal)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Horas extras: {formatMinutes(totals.extra)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Total: {formatMinutes(totals.total)}
-                    </p>
-                  </Card>
-                );
-              })}
->>>>>>> fix/fecha-timezone-timecontrol
             </div>
           )}
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
@@ -5330,15 +4955,9 @@ const TimeControl = () => {
               {/* Date Filter */}
               <Tabs value={dateFilter} onValueChange={(v) => setDateFilter(v as any)}>
                 <TabsList>
-<<<<<<< HEAD
                   <TabsTrigger value="fortnight">
                     <Calendar className="h-4 w-4 mr-2" />
                     Quincena
-=======
-                  <TabsTrigger value="week">
-                    <Calendar className="h-4 w-4 mr-2" />
-                    Semana
->>>>>>> fix/fecha-timezone-timecontrol
                   </TabsTrigger>
                   <TabsTrigger value="month">
                     <Calendar className="h-4 w-4 mr-2" />
@@ -5350,7 +4969,6 @@ const TimeControl = () => {
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
-<<<<<<< HEAD
               
               {/* Selector de Quincena */}
               {dateFilter === "fortnight" && (
@@ -5417,15 +5035,6 @@ const TimeControl = () => {
           {dateFilter === "fortnight" && summary && Object.keys(summary).length > 0 && (
             <Card className="p-4 mb-6 bg-muted/50">
               <h3 className="font-semibold mb-3">Resumen de la Quincena</h3>
-=======
-            </div>
-          </div>
-
-          {/* Weekly Summary */}
-          {dateFilter === "week" && summary && Object.keys(summary).length > 0 && (
-            <Card className="p-4 mb-6 bg-muted/50">
-              <h3 className="font-semibold mb-3">Resumen Semanal</h3>
->>>>>>> fix/fecha-timezone-timecontrol
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Object.entries(summary).map(([workerId, data]) => (
                   <div key={workerId} className="p-3 bg-background rounded-lg">
@@ -5444,13 +5053,8 @@ const TimeControl = () => {
             </Card>
           )}
 
-<<<<<<< HEAD
           {dateFilter === "fortnight" ? (
             // Vista quincenal tipo calendario
-=======
-          {dateFilter === "week" ? (
-            // Vista semanal tipo calendario
->>>>>>> fix/fecha-timezone-timecontrol
             <div className="overflow-x-auto">
               <div className="min-w-full">
                 <Table>
@@ -5459,11 +5063,7 @@ const TimeControl = () => {
                       <TableHead className="sticky left-0 z-10 bg-background min-w-[150px]">
                         Trabajador
                       </TableHead>
-<<<<<<< HEAD
                       {fortnightDays.map((day) => (
-=======
-                      {weekDays.map((day) => (
->>>>>>> fix/fecha-timezone-timecontrol
                       <TableHead
                         key={day.toISOString()}
                         className={`text-center min-w-[120px] ${
@@ -5495,17 +5095,12 @@ const TimeControl = () => {
                         <TableCell className="sticky left-0 z-10 bg-background font-medium">
                           {worker.first_name} {worker.last_name}
                         </TableCell>
-<<<<<<< HEAD
                         {fortnightDays.map((day) => {
-=======
-                        {weekDays.map((day) => {
->>>>>>> fix/fecha-timezone-timecontrol
                           const record = getRecordForWorkerAndDate(worker.id, day);
                           return (
                             <TableCell key={day.toISOString()} className="p-2">
                               <div className="flex flex-col gap-1 min-h-[60px]">
                                 {/* Entrada */}
-<<<<<<< HEAD
                                 <div className={`flex items-center justify-center p-2 rounded border min-h-[28px] ${
                                   record?.is_manual_entry 
                                     ? "border-orange-300 bg-orange-50" 
@@ -5620,41 +5215,6 @@ const TimeControl = () => {
                                     >
                                       {record.time_adjustment_minutes > 0 ? '+' : ''}{record.time_adjustment_minutes}m
                                     </span>
-=======
-                                <div className="flex items-center justify-center p-2 rounded border border-green-200 bg-green-50/50 min-h-[28px]">
-                                  {record?.entry_time ? (
-                                    <button
-                                      onClick={() => record.entry_photo_url && setViewingPhoto(record.entry_photo_url)}
-                                      className={`text-sm font-medium ${
-                                        record.entry_photo_url
-                                          ? "text-green-700 hover:text-green-900 hover:underline cursor-pointer"
-                                          : "text-green-700"
-                                      }`}
-                                      title={record.entry_photo_url ? "Clic para ver foto" : ""}
-                                    >
-                                      {formatTime(record.entry_time)}
-                                    </button>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">-</span>
-                                  )}
-                                </div>
-                                {/* Salida */}
-                                <div className="flex items-center justify-center p-2 rounded border border-red-200 bg-red-50/50 min-h-[28px]">
-                                  {record?.exit_time ? (
-                                    <button
-                                      onClick={() => record.exit_photo_url && setViewingPhoto(record.exit_photo_url)}
-                                      className={`text-sm font-medium ${
-                                        record.exit_photo_url
-                                          ? "text-red-700 hover:text-red-900 hover:underline cursor-pointer"
-                                          : "text-red-700"
-                                      }`}
-                                      title={record.exit_photo_url ? "Clic para ver foto" : ""}
-                                    >
-                                      {formatTime(record.exit_time)}
-                                    </button>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">-</span>
->>>>>>> fix/fecha-timezone-timecontrol
                                   )}
                                 </div>
                               </div>
@@ -5697,10 +5257,7 @@ const TimeControl = () => {
                             <TableHead>Trabajador</TableHead>
                             <TableHead>Hora Entrada</TableHead>
                             <TableHead>Hora Salida</TableHead>
-<<<<<<< HEAD
                             <TableHead>Ajuste</TableHead>
-=======
->>>>>>> fix/fecha-timezone-timecontrol
                             <TableHead>Fotos</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -5713,7 +5270,6 @@ const TimeControl = () => {
                               <TableCell>
                                 {record.entry_time ? (
                                   <button
-<<<<<<< HEAD
                                     onClick={() => record.entry_photo_url && setViewingPhoto({
                                       url: record.entry_photo_url,
                                       latitude: record.entry_latitude,
@@ -5743,24 +5299,12 @@ const TimeControl = () => {
                                     {record.is_manual_entry && (
                                       <span className="ml-1 text-xs">🔶</span>
                                     )}
-=======
-                                    onClick={() => record.entry_photo_url && setViewingPhoto(record.entry_photo_url)}
-                                    className={`text-green-600 font-medium ${
-                                      record.entry_photo_url
-                                        ? "hover:text-green-800 hover:underline cursor-pointer"
-                                        : ""
-                                    }`}
-                                    title={record.entry_photo_url ? "Clic para ver foto" : ""}
-                                  >
-                                    {formatTime(record.entry_time)}
->>>>>>> fix/fecha-timezone-timecontrol
                                   </button>
                                 ) : (
                                   <span className="text-muted-foreground">-</span>
                                 )}
                               </TableCell>
                               <TableCell>
-<<<<<<< HEAD
                                 <div className="flex items-center gap-2">
                                   {record.exit_time ? (
                                     <button
@@ -5834,20 +5378,6 @@ const TimeControl = () => {
                                       </span>
                                     )}
                                   </div>
-=======
-                                {record.exit_time ? (
-                                  <button
-                                    onClick={() => record.exit_photo_url && setViewingPhoto(record.exit_photo_url)}
-                                    className={`text-red-600 font-medium ${
-                                      record.exit_photo_url
-                                        ? "hover:text-red-800 hover:underline cursor-pointer"
-                                        : ""
-                                    }`}
-                                    title={record.exit_photo_url ? "Clic para ver foto" : ""}
-                                  >
-                                    {formatTime(record.exit_time)}
-                                  </button>
->>>>>>> fix/fecha-timezone-timecontrol
                                 ) : (
                                   <span className="text-muted-foreground">-</span>
                                 )}
@@ -5858,7 +5388,6 @@ const TimeControl = () => {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-<<<<<<< HEAD
                                       onClick={() => setViewingPhoto({
                                         url: record.entry_photo_url!,
                                         latitude: record.entry_latitude,
@@ -5867,9 +5396,6 @@ const TimeControl = () => {
                                         entry_conditions_ok: record.entry_conditions_ok,
                                         entry_conditions_notes: record.entry_conditions_notes,
                                       })}
-=======
-                                      onClick={() => setViewingPhoto(record.entry_photo_url!)}
->>>>>>> fix/fecha-timezone-timecontrol
                                       title="Ver foto de entrada"
                                     >
                                       <Eye className="h-4 w-4" />
@@ -5879,7 +5405,6 @@ const TimeControl = () => {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-<<<<<<< HEAD
                                       onClick={() => setViewingPhoto({
                                         url: record.exit_photo_url!,
                                         latitude: record.exit_latitude,
@@ -5892,9 +5417,6 @@ const TimeControl = () => {
                                         exit_conditions_ok: record.exit_conditions_ok,
                                         exit_conditions_notes: record.exit_conditions_notes,
                                       })}
-=======
-                                      onClick={() => setViewingPhoto(record.exit_photo_url!)}
->>>>>>> fix/fecha-timezone-timecontrol
                                       title="Ver foto de salida"
                                     >
                                       <Eye className="h-4 w-4" />
@@ -5916,7 +5438,6 @@ const TimeControl = () => {
             </div>
           )}
         </Card>
-<<<<<<< HEAD
         )}
 
         {/* Exit Time Adjustment Dialog - Almuerzo */}
@@ -6696,15 +6217,12 @@ const TimeControl = () => {
             </DialogContent>
           </Dialog>
         )}
-=======
->>>>>>> fix/fecha-timezone-timecontrol
 
         {/* Photo Viewer Dialog */}
         {viewingPhoto && (
           <Dialog open={!!viewingPhoto} onOpenChange={() => setViewingPhoto(null)}>
             <DialogContent className="max-w-4xl">
               <DialogHeader>
-<<<<<<< HEAD
                 <DialogTitle>
                   Foto de {viewingPhoto.type === "entry" ? "Entrada" : "Salida"}
                 </DialogTitle>
@@ -6712,18 +6230,10 @@ const TimeControl = () => {
               <div className="relative">
                 <img
                   src={viewingPhoto.url}
-=======
-                <DialogTitle>Foto</DialogTitle>
-              </DialogHeader>
-              <div className="relative">
-                <img
-                  src={viewingPhoto}
->>>>>>> fix/fecha-timezone-timecontrol
                   alt="Foto de asistencia"
                   className="w-full h-auto rounded-lg"
                 />
               </div>
-<<<<<<< HEAD
               
               {/* Location Info */}
               <div className="mt-4 p-4 bg-muted/50 rounded-lg">
@@ -6875,8 +6385,6 @@ const TimeControl = () => {
                 </div>
               )}
               
-=======
->>>>>>> fix/fecha-timezone-timecontrol
               <DialogFooter>
                 <Button onClick={() => setViewingPhoto(null)}>Cerrar</Button>
               </DialogFooter>
