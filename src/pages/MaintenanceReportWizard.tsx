@@ -66,13 +66,45 @@ type CarrosTesterosSubItem = {
   status: ChecklistStatus;
 };
 
-type PhotoEntry = {
+type PhotoImage = {
   id: string;
   storagePath: string | null;
   optimizedPath?: string | null;
   thumbnailPath?: string | null;
   url: string | null;
+};
+
+type PhotoEntry = {
+  id: string;
+  images: PhotoImage[];
   description: string;
+};
+
+/** Migrate a legacy photo entry (single image) to the new multi-image format */
+const migratePhotoEntry = (raw: any): PhotoEntry => {
+  if (Array.isArray(raw.images)) {
+    return {
+      id: raw.id,
+      images: raw.images,
+      description: raw.description ?? "",
+    };
+  }
+  const hasImage = raw.url || raw.storagePath;
+  return {
+    id: raw.id,
+    images: hasImage
+      ? [
+          {
+            id: raw.id,
+            storagePath: raw.storagePath ?? null,
+            optimizedPath: raw.optimizedPath ?? null,
+            thumbnailPath: raw.thumbnailPath ?? null,
+            url: raw.url ?? null,
+          },
+        ]
+      : [],
+    description: raw.description ?? "",
+  };
 };
 
 type PhotoUploadState = {
@@ -509,9 +541,8 @@ const MaintenanceReportWizard = () => {
       }
 
       if (photosData && photosData.length > 0) {
-        // Crear un Map para evitar duplicados
-        const photosMap = new Map<string, PhotoEntry>();
-        
+        const dbImagesMap = new Map<string, { storagePath: string | null; optimizedPath: string | null; thumbnailPath: string | null; url: string | null; description: string }>();
+
         photosData.forEach((photo) => {
           const { data: optimizedPublic } = supabase.storage
             .from(PHOTO_BUCKET)
@@ -521,8 +552,7 @@ const MaintenanceReportWizard = () => {
             .getPublicUrl(photo.storage_path || "");
           const photoUrl = optimizedPublic?.publicUrl || fallbackPublic?.publicUrl || null;
 
-          photosMap.set(photo.id, {
-            id: photo.id,
+          dbImagesMap.set(photo.id, {
             storagePath: photo.storage_path,
             optimizedPath: photo.optimized_path || null,
             thumbnailPath: photo.thumbnail_path || null,
@@ -531,31 +561,40 @@ const MaintenanceReportWizard = () => {
           });
         });
 
-        // Actualizar solo las fotos, manteniendo el resto del formData
         setFormData((prev) => {
-          // Combinar fotos existentes (que no están en la BD) con las de la BD
-          const existingPhotoIds = new Set(photosMap.keys());
-          const newPhotos = Array.from(photosMap.values());
-          
-          // Mantener fotos que no están en la BD (fotos nuevas que aún no se han guardado)
-          const photosNotInDb = prev.photos.filter(p => !existingPhotoIds.has(p.id));
-          
-          // Combinar ambas listas, evitando duplicados
-          const allPhotos = [...photosNotInDb, ...newPhotos];
-          const uniquePhotos = Array.from(
-            new Map(allPhotos.map(p => [p.id, p])).values()
-          );
-          
-          return {
-            ...prev,
-            photos: uniquePhotos,
-          };
+          const matchedIds = new Set<string>();
+
+          // Update images within existing entries
+          const updatedEntries = prev.photos.map((entry) => ({
+            ...entry,
+            images: entry.images.map((img) => {
+              const dbData = dbImagesMap.get(img.id);
+              if (dbData) {
+                matchedIds.add(img.id);
+                return { ...img, storagePath: dbData.storagePath, optimizedPath: dbData.optimizedPath, thumbnailPath: dbData.thumbnailPath, url: dbData.url };
+              }
+              return img;
+            }),
+          }));
+
+          // Orphaned DB images -> new single-image entries
+          const orphanedEntries: PhotoEntry[] = [];
+          for (const [imgId, imgData] of dbImagesMap) {
+            if (!matchedIds.has(imgId)) {
+              orphanedEntries.push({
+                id: imgId,
+                images: [{ id: imgId, storagePath: imgData.storagePath, optimizedPath: imgData.optimizedPath, thumbnailPath: imgData.thumbnailPath, url: imgData.url }],
+                description: imgData.description,
+              });
+            }
+          }
+
+          return { ...prev, photos: [...updatedEntries, ...orphanedEntries] };
         });
       } else {
-        // Si no hay fotos en la BD, mantener las fotos locales que no tienen storagePath
         setFormData((prev) => ({
           ...prev,
-          photos: prev.photos.filter(p => !p.storagePath),
+          photos: prev.photos.filter((entry) => entry.images.some((img) => !img.storagePath)),
         }));
       }
     } catch (error) {
@@ -569,8 +608,10 @@ const MaintenanceReportWizard = () => {
       const activeReportId = reportIdRef.current ?? task.reportId;
       if (!activeReportId) throw new Error("No se encontró el informe asociado a la fotografía");
 
-      const description =
-        formDataRef.current.photos.find((photo) => photo.id === task.photoId)?.description ?? "";
+      const parentEntry = formDataRef.current.photos.find((entry) =>
+        entry.images.some((img) => img.id === task.photoId),
+      );
+      const description = parentEntry?.description ?? "";
 
       const sanitizedName = sanitizeFileName(task.file.name || `${task.photoId}.jpg`);
       const storagePath = `${activeReportId}/${task.photoId}/${Date.now()}-${sanitizedName || "foto.jpg"}`;
@@ -640,44 +681,17 @@ const MaintenanceReportWizard = () => {
       const { data: fallbackPublic } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath);
       const photoUrl = optimizedPublic?.publicUrl ?? fallbackPublic?.publicUrl ?? null;
 
-      // Usar una función de actualización que evite re-renders innecesarios
-      setFormData((prev) => {
-        // Primero, eliminar cualquier duplicado por ID antes de actualizar
-        const uniquePhotos = prev.photos.filter((photo, index, self) =>
-          index === self.findIndex((p) => p.id === photo.id)
-        );
-        
-        // Verificar si la foto existe antes de actualizar
-        const photoIndex = uniquePhotos.findIndex(p => p.id === task.photoId);
-        if (photoIndex === -1) {
-          console.warn(`Foto con ID ${task.photoId} no encontrada en el estado, no se actualizará`);
-          return prev; // Retornar el mismo objeto para evitar re-render
-        }
-        
-        // Verificar si realmente hay cambios antes de actualizar
-        const existingPhoto = uniquePhotos[photoIndex];
-        if (existingPhoto.storagePath === storagePath && 
-            existingPhoto.optimizedPath === optimizedPath &&
-            existingPhoto.thumbnailPath === thumbnailPath &&
-            existingPhoto.url === photoUrl) {
-          return prev; // No hay cambios, retornar el mismo objeto
-        }
-        
-        // Actualizar solo la foto existente, creando un nuevo array solo si es necesario
-        const updatedPhotos = [...uniquePhotos];
-        updatedPhotos[photoIndex] = {
-          ...existingPhoto,
-          storagePath,
-          optimizedPath,
-          thumbnailPath,
-          url: photoUrl,
-        };
-        
-        return {
-          ...prev,
-          photos: updatedPhotos,
-        };
-      });
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.map((entry) => ({
+          ...entry,
+          images: entry.images.map((img) =>
+            img.id === task.photoId
+              ? { ...img, storagePath, optimizedPath, thumbnailPath, url: photoUrl }
+              : img,
+          ),
+        })),
+      }));
 
       updatePhotoUploadState(task.photoId, {
         status: "done",
@@ -982,6 +996,9 @@ const MaintenanceReportWizard = () => {
         // Asegurar que los nuevos campos de grupos existan y estén bien formados con nombres normalizados
         trolleyGroup,
         carrosTesteros,
+        photos: Array.isArray(loadedData?.photos)
+          ? (loadedData.photos as any[]).map(migratePhotoEntry)
+          : [],
       };
       
       // NOTA: Ya NO guardamos automáticamente después de cargar para evitar sobrescribir datos
@@ -1334,25 +1351,24 @@ const MaintenanceReportWizard = () => {
     }));
   };
 
-  const handlePhotoDescriptionChange = (photoId: string, value: string) => {
-    setFormData((prev) => {
-      // Eliminar duplicados antes de actualizar
-      const uniquePhotos = prev.photos.filter((photo, index, self) =>
-        index === self.findIndex((p) => p.id === photo.id)
-      );
-      
-      return {
-        ...prev,
-        photos: uniquePhotos.map((photo) =>
-          photo.id === photoId ? { ...photo, description: value } : photo,
-        ),
-      };
-    });
+  const handlePhotoDescriptionChange = (entryId: string, value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      photos: prev.photos.map((entry) =>
+        entry.id === entryId ? { ...entry, description: value } : entry,
+      ),
+    }));
     if (reportId) {
-      void supabase
-        .from("maintenance_report_photos")
-        .update({ description: value })
-        .eq("id", photoId);
+      const entry = formDataRef.current.photos.find((e) => e.id === entryId);
+      if (entry) {
+        const imageIds = entry.images.map((img) => img.id);
+        if (imageIds.length > 0) {
+          void supabase
+            .from("maintenance_report_photos")
+            .update({ description: value })
+            .in("id", imageIds);
+        }
+      }
     }
   };
 
@@ -1365,24 +1381,18 @@ const MaintenanceReportWizard = () => {
   const handleAddPhoto = async () => {
     const id = generateUUID();
     setFormData((prev) => {
-      // Verificar que no exista ya una foto con este ID (aunque es muy improbable con UUID)
-      // También verificar que no haya fotos duplicadas sin ID válido
-      const existingIds = new Set(prev.photos.map(p => p.id));
+      const existingIds = new Set(prev.photos.map((p) => p.id));
       if (existingIds.has(id)) {
         console.warn("Intento de agregar foto con ID duplicado, ignorando");
         return prev;
       }
-      
       return {
         ...prev,
         photos: [
           ...prev.photos,
           {
             id,
-            storagePath: null,
-            optimizedPath: null,
-            thumbnailPath: null,
-            url: null,
+            images: [],
             description: "",
           },
         ],
@@ -1390,7 +1400,11 @@ const MaintenanceReportWizard = () => {
     });
   };
 
-  const handlePhotoFileUpload = async (photoId: string, fileList: FileList | null) => {
+  const handlePhotoFileUpload = async (
+    entryId: string,
+    imageId: string | null,
+    fileList: FileList | null,
+  ) => {
     if (!fileList || fileList.length === 0) return;
     if (!session) {
       toast({
@@ -1416,37 +1430,43 @@ const MaintenanceReportWizard = () => {
     }
 
     const originalFile = fileList[0];
+    const actualImageId = imageId ?? generateUUID();
 
-    setFormData((prev) => {
-      // Eliminar duplicados antes de actualizar
-      const uniquePhotos = prev.photos.filter((photo, index, self) =>
-        index === self.findIndex((p) => p.id === photo.id)
-      );
-      
-      // Verificar que la foto existe antes de actualizar
-      const photoExists = uniquePhotos.some(p => p.id === photoId);
-      if (!photoExists) {
-        console.warn(`Foto con ID ${photoId} no encontrada, no se actualizará`);
-        return prev;
-      }
-      
-      return {
+    if (!imageId) {
+      setFormData((prev) => ({
         ...prev,
-        photos: uniquePhotos.map((photo) =>
-          photo.id === photoId
+        photos: prev.photos.map((entry) =>
+          entry.id === entryId
             ? {
-                ...photo,
-                url: null,
-                storagePath: null,
-                optimizedPath: null,
-                thumbnailPath: null,
+                ...entry,
+                images: [
+                  ...entry.images,
+                  { id: actualImageId, storagePath: null, optimizedPath: null, thumbnailPath: null, url: null },
+                ],
               }
-            : photo,
+            : entry,
         ),
-      };
-    });
+      }));
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.map((entry) =>
+          entry.id === entryId
+            ? {
+                ...entry,
+                images: entry.images.map((img) =>
+                  img.id === imageId
+                    ? { ...img, url: null, storagePath: null, optimizedPath: null, thumbnailPath: null }
+                    : img,
+                ),
+              }
+            : entry,
+        ),
+      }));
+    }
+
     if (originalFile.size > LARGE_FILE_THRESHOLD) {
-      updatePhotoUploadState(photoId, {
+      updatePhotoUploadState(actualImageId, {
         status: "preparing",
         progress: 0,
         message: "Optimizando la imagen antes de subirla...",
@@ -1463,41 +1483,42 @@ const MaintenanceReportWizard = () => {
       }
     }
 
-    uploadQueueRef.current = [...uploadQueueRef.current, {
-      photoId,
-      file: preparedFile,
-      reportId: activeReportId,
-      attempts: 0,
-    }];
+    uploadQueueRef.current = [
+      ...uploadQueueRef.current,
+      { photoId: actualImageId, file: preparedFile, reportId: activeReportId, attempts: 0 },
+    ];
 
-    updatePhotoUploadState(photoId, {
+    updatePhotoUploadState(actualImageId, {
       status: "queued",
       progress: 0,
       attempts: 0,
       message: undefined,
     });
-    // Usar el ref para evitar re-renders innecesarios
     scheduleUploadProcessingRef.current();
   };
 
-  const handleRemovePhoto = async (photo: PhotoEntry) => {
+  const handleRemoveImage = async (entryId: string, image: PhotoImage) => {
     setFormData((prev) => ({
       ...prev,
-      photos: prev.photos.filter((item) => item.id !== photo.id),
+      photos: prev.photos.map((entry) =>
+        entry.id === entryId
+          ? { ...entry, images: entry.images.filter((img) => img.id !== image.id) }
+          : entry,
+      ),
     }));
 
-    uploadQueueRef.current = uploadQueueRef.current.filter((task) => task.photoId !== photo.id);
-    if (activeUploadRef.current?.task.photoId === photo.id) {
+    uploadQueueRef.current = uploadQueueRef.current.filter((task) => task.photoId !== image.id);
+    if (activeUploadRef.current?.task.photoId === image.id) {
       activeUploadRef.current.controller.abort();
     }
 
     setPhotoUploads((prev) => {
       const next = { ...prev };
-      delete next[photo.id];
+      delete next[image.id];
       return next;
     });
 
-    const pathsToRemove = [photo.storagePath, photo.optimizedPath, photo.thumbnailPath].filter(
+    const pathsToRemove = [image.storagePath, image.optimizedPath, image.thumbnailPath].filter(
       (path): path is string => Boolean(path),
     );
     if (pathsToRemove.length > 0) {
@@ -1509,7 +1530,46 @@ const MaintenanceReportWizard = () => {
       }
     }
 
-    await supabase.from("maintenance_report_photos").delete().eq("id", photo.id);
+    await supabase.from("maintenance_report_photos").delete().eq("id", image.id);
+  };
+
+  const handleRemoveEntry = async (entry: PhotoEntry) => {
+    setFormData((prev) => ({
+      ...prev,
+      photos: prev.photos.filter((item) => item.id !== entry.id),
+    }));
+
+    const imageIds = new Set(entry.images.map((img) => img.id));
+    uploadQueueRef.current = uploadQueueRef.current.filter(
+      (task) => !imageIds.has(task.photoId),
+    );
+    if (activeUploadRef.current && imageIds.has(activeUploadRef.current.task.photoId)) {
+      activeUploadRef.current.controller.abort();
+    }
+
+    setPhotoUploads((prev) => {
+      const next = { ...prev };
+      for (const imgId of imageIds) {
+        delete next[imgId];
+      }
+      return next;
+    });
+
+    const pathsToRemove = entry.images
+      .flatMap((img) => [img.storagePath, img.optimizedPath, img.thumbnailPath])
+      .filter((path): path is string => Boolean(path));
+    if (pathsToRemove.length > 0) {
+      const { error: storageError } = await supabase.storage
+        .from(PHOTO_BUCKET)
+        .remove(pathsToRemove);
+      if (storageError) {
+        console.warn("No se pudo eliminar las imágenes del almacenamiento:", storageError);
+      }
+    }
+
+    for (const img of entry.images) {
+      await supabase.from("maintenance_report_photos").delete().eq("id", img.id);
+    }
   };
 
   const progressValue = ((currentStepIndex + 1) / totalSteps) * 100;
@@ -2228,131 +2288,183 @@ const MaintenanceReportWizard = () => {
         return (
           <div className="space-y-6">
             <p className="text-muted-foreground">
-              Adjunte fotografías relevantes del mantenimiento realizado. Puede subir múltiples
-              imágenes y agregar una descripción para cada una.
+              Adjunte fotografías relevantes del mantenimiento realizado. Puede agregar varias
+              imágenes por cada evidencia y compartir una descripción entre ellas.
             </p>
 
             <div className="space-y-4">
-              {(() => {
-                // Eliminar duplicados antes de renderizar usando un Map para mantener el orden
-                const uniquePhotosMap = new Map<string, PhotoEntry>();
-                formData.photos.forEach((photo) => {
-                  if (photo.id && !uniquePhotosMap.has(photo.id)) {
-                    uniquePhotosMap.set(photo.id, photo);
-                  }
-                });
-                const uniquePhotos = Array.from(uniquePhotosMap.values());
-                
-                return uniquePhotos.map((photo) => {
-                  const inputId = `photo-upload-${photo.id}`;
-                  const uploadState = photoUploads[photo.id];
-                  const isBusy = uploadState
-                    ? ["preparing", "queued", "uploading", "processing"].includes(uploadState.status)
-                    : false;
-                  const buttonLabel = uploadState && uploadState.status !== "idle" && uploadState.status !== "done"
-                    ? uploadButtonCopy[uploadState.status]
-                    : photo.url
-                    ? "Reemplazar"
-                    : "Subir foto";
-                  return (
-                    <Card key={photo.id} className="p-4 space-y-4">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3">
-                        {photo.url ? (
-                          <img
-                            src={photo.url}
-                            alt={photo.description || "Fotografía de mantenimiento"}
-                            className="h-16 w-16 rounded-md object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-16 w-16 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-                            <ImageIcon className="h-6 w-6" />
-                          </div>
+              {formData.photos.map((entry) => {
+                const addInputId = `photo-add-${entry.id}`;
+                return (
+                  <Card key={entry.id} className="p-4 space-y-4">
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium text-sm">
+                        Evidencia {formData.photos.indexOf(entry) + 1}
+                        {entry.images.length > 0 && (
+                          <span className="ml-2 text-muted-foreground font-normal">
+                            ({entry.images.length} {entry.images.length === 1 ? "foto" : "fotos"})
+                          </span>
                         )}
-                        <div>
-                          <p className="font-medium">
-                            {photo.url ? "Fotografía cargada" : "Fotografía pendiente"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {photo.url
-                              ? "La imagen está guardada en el sistema."
-                              : "Sube una fotografía para completar esta sección."}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="flex items-center gap-2"
-                          onClick={() =>
-                            (document.getElementById(inputId) as HTMLInputElement | null)?.click()
-                          }
-                          disabled={isBusy}
-                        >
-                          <Upload className="h-4 w-4" />
-                          {buttonLabel}
-                        </Button>
-                        <Input
-                          id={inputId}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(event) =>
-                            handlePhotoFileUpload(photo.id, event.target.files)
-                          }
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleRemovePhoto(photo)}
-                        >
-                          <X className="h-4 w-4" />
-                          Borrar foto
-                        </Button>
-                      </div>
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleRemoveEntry(entry)}
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Eliminar evidencia
+                      </Button>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`photo-desc-${photo.id}`}>Descripción</Label>
-                      <Textarea
-                        id={`photo-desc-${photo.id}`}
-                        rows={3}
-                        value={photo.description}
-                        onChange={(event) =>
-                          handlePhotoDescriptionChange(photo.id, event.target.value)
-                        }
-                        placeholder="Describe la fotografía para futuras referencias."
-                      />
-                    </div>
-                    {uploadState && uploadState.status !== "idle" && (
-                      <div className="space-y-2">
-                        {!["done", "error"].includes(uploadState.status) && (
-                          <Progress value={uploadState.progress} />
-                        )}
-                        <p
-                          className={cn(
-                            "text-xs",
-                            uploadState.status === "error"
-                              ? "text-destructive"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {uploadState.message ?? uploadMessageCopy[uploadState.status]}
-                        </p>
+
+                    {/* Image gallery */}
+                    {entry.images.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {entry.images.map((image) => {
+                          const replaceInputId = `photo-replace-${image.id}`;
+                          const uploadState = photoUploads[image.id];
+                          const isBusy = uploadState
+                            ? ["preparing", "queued", "uploading", "processing"].includes(uploadState.status)
+                            : false;
+
+                          return (
+                            <div
+                              key={image.id}
+                              className="relative group rounded-lg border bg-muted/30 overflow-hidden"
+                            >
+                              {image.url ? (
+                                <img
+                                  src={image.url}
+                                  alt={entry.description || "Fotografía de mantenimiento"}
+                                  className="w-full aspect-square object-cover"
+                                />
+                              ) : (
+                                <div className="w-full aspect-square flex items-center justify-center bg-muted">
+                                  {isBusy ? (
+                                    <div className="text-center px-2">
+                                      <Progress value={uploadState?.progress ?? 0} className="w-full mb-1" />
+                                      <p className="text-[10px] text-muted-foreground">
+                                        {uploadState?.message ?? uploadMessageCopy[uploadState?.status ?? "idle"]}
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                                  )}
+                                </div>
+                              )}
+
+                              {uploadState && uploadState.status !== "idle" && uploadState.status !== "done" && image.url && (
+                                <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                                  <div className="text-center px-2">
+                                    <Progress value={uploadState.progress} className="w-full mb-1" />
+                                    <p className="text-[10px] text-white">
+                                      {uploadState.message ?? uploadMessageCopy[uploadState.status]}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+
+                              {uploadState && ["done", "error"].includes(uploadState.status) && (
+                                <p className={cn(
+                                  "text-[10px] text-center py-1 px-1",
+                                  uploadState.status === "error" ? "text-destructive bg-destructive/10" : "text-green-600 bg-green-50",
+                                )}>
+                                  {uploadState.message ?? uploadMessageCopy[uploadState.status]}
+                                </p>
+                              )}
+
+                              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="icon"
+                                  className="h-7 w-7 bg-white/90 hover:bg-white shadow-sm"
+                                  title="Reemplazar foto"
+                                  onClick={() =>
+                                    (document.getElementById(replaceInputId) as HTMLInputElement | null)?.click()
+                                  }
+                                  disabled={isBusy}
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="icon"
+                                  className="h-7 w-7 bg-white/90 hover:bg-red-50 shadow-sm text-destructive"
+                                  title="Borrar foto"
+                                  onClick={() => handleRemoveImage(entry.id, image)}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                              <Input
+                                id={replaceInputId}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                  handlePhotoFileUpload(entry.id, image.id, event.target.files);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
+
+                    {entry.images.length === 0 && (
+                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 py-8 text-center">
+                        <ImageIcon className="h-10 w-10 text-muted-foreground/50 mb-2" />
+                        <p className="text-sm text-muted-foreground">No hay fotografías. Agrega al menos una foto.</p>
+                      </div>
+                    )}
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        (document.getElementById(addInputId) as HTMLInputElement | null)?.click()
+                      }
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Agregar Foto
+                    </Button>
+                    <Input
+                      id={addInputId}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        handlePhotoFileUpload(entry.id, null, event.target.files);
+                        event.target.value = "";
+                      }}
+                    />
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`photo-desc-${entry.id}`}>Descripción</Label>
+                      <Textarea
+                        id={`photo-desc-${entry.id}`}
+                        rows={3}
+                        value={entry.description}
+                        onChange={(event) =>
+                          handlePhotoDescriptionChange(entry.id, event.target.value)
+                        }
+                        placeholder="Describe el procedimiento o evidencia que representan estas fotografías."
+                      />
+                    </div>
                   </Card>
-                  );
-                });
-              })()}
+                );
+              })}
             </div>
 
             <Button type="button" variant="outline" onClick={handleAddPhoto}>
               <Plus className="mr-2 h-4 w-4" />
-              Agregar Foto
+              Agregar Evidencia
             </Button>
           </div>
         );

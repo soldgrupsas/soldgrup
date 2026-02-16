@@ -350,17 +350,36 @@ Deno.serve(async (req) => {
     console.log('[maintenance-pdf] ==================================================');
     
     const reportPhotosArray = Array.isArray(reportData.photos) ? reportData.photos : [];
+    console.log('[maintenance-pdf] reportPhotosArray length:', reportPhotosArray.length);
+    console.log('[maintenance-pdf] reportPhotosArray sample:', JSON.stringify(reportPhotosArray.slice(0, 3)).substring(0, 500));
+
     const descriptionByStoragePath = new Map<string, string>();
     const descriptionById = new Map<string, string>();
 
     for (const entry of reportPhotosArray) {
       if (!entry || typeof entry !== 'object') continue;
       const desc = typeof entry.description === 'string' ? entry.description.trim() : '';
-      const storagePath = typeof entry.storagePath === 'string' ? entry.storagePath : typeof entry.storage_path === 'string' ? entry.storage_path : null;
-      const id = typeof entry.id === 'string' ? entry.id : null;
-      if (storagePath && desc) descriptionByStoragePath.set(storagePath, desc);
-      if (id && desc) descriptionById.set(id, desc);
+
+      // New multi-image format: entry has an images array
+      if (Array.isArray((entry as any).images)) {
+        for (const img of (entry as any).images) {
+          if (!img || typeof img !== 'object') continue;
+          const imgStoragePath = typeof img.storagePath === 'string' ? img.storagePath : null;
+          const imgId = typeof img.id === 'string' ? img.id : null;
+          if (imgStoragePath) descriptionByStoragePath.set(imgStoragePath, desc);
+          if (imgId) descriptionById.set(imgId, desc);
+        }
+      } else {
+        // Legacy format: entry has direct storagePath/url
+        const storagePath = typeof entry.storagePath === 'string' ? entry.storagePath : typeof entry.storage_path === 'string' ? entry.storage_path : null;
+        const id = typeof entry.id === 'string' ? entry.id : null;
+        if (storagePath) descriptionByStoragePath.set(storagePath, desc);
+        if (id) descriptionById.set(id, desc);
+      }
     }
+
+    console.log('[maintenance-pdf] descriptionById entries:', JSON.stringify(Array.from(descriptionById.entries())));
+    console.log('[maintenance-pdf] descriptionByStoragePath entries:', JSON.stringify(Array.from(descriptionByStoragePath.entries())));
 
     const resolveDescription = (record: MaintenanceReportPhotoRecord): string => {
       const fromRecord = typeof record.description === 'string' ? record.description.trim() : '';
@@ -369,6 +388,9 @@ Deno.serve(async (req) => {
       if (byStorage) return byStorage;
       const byId = descriptionById.get(record.id)?.trim();
       if (byId) return byId;
+      // Last resort: check if description exists in data JSON (including empty strings)
+      const fromDataById = descriptionById.get(record.id);
+      if (fromDataById !== undefined) return fromDataById;
       return '';
     };
 
@@ -446,31 +468,122 @@ Deno.serve(async (req) => {
     };
 
     const photos: MaintenanceReportPdfPayload['photos'] = [];
+    const photoGroups: NonNullable<MaintenanceReportPdfPayload['photoGroups']> = [];
     const MAX_PHOTOS = 24;
     const CONCURRENCY = 4;
-    const photoQueue = storagePhotos.slice(0, MAX_PHOTOS);
 
-    for (let i = 0; i < photoQueue.length; i += CONCURRENCY) {
-      const chunk = photoQueue.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(chunk.map((record) => downloadPhoto(record)));
-      results.forEach((result, indexInChunk) => {
-        if (!result) return;
-        if (result.bytes.length > 2_500_000) {
-          console.warn('Foto omitida por tamaño (bytes):', result.bytes.length);
-          return;
-        }
-        const type = result.contentType.toLowerCase();
-        if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) {
-          console.warn('Formato de imagen no soportado en PDF, se omite:', type);
-          return;
-        }
-        const record = chunk[indexInChunk];
-        const description = resolveDescription(record);
-        photos.push({ ...result, description });
-      });
+    // Build a lookup from DB record id -> storagePhotos record
+    const storagePhotoById = new Map<string, MaintenanceReportPhotoRecord>();
+    for (const sp of storagePhotos) {
+      storagePhotoById.set(sp.id, sp);
     }
 
-    console.log('[maintenance-pdf] photos count:', photos.length);
+    console.log('[maintenance-pdf] storagePhotos count:', storagePhotos.length);
+    console.log('[maintenance-pdf] storagePhotos IDs:', storagePhotos.map(sp => sp.id));
+    console.log('[maintenance-pdf] storagePhotos descriptions:', storagePhotos.map(sp => ({ id: sp.id, desc: sp.description })));
+
+    // Build photo groups from the data JSON entries (new multi-image format)
+    const hasNewFormat = reportPhotosArray.some(
+      (e: any) => e && typeof e === 'object' && Array.isArray(e.images),
+    );
+    console.log('[maintenance-pdf] hasNewFormat:', hasNewFormat);
+
+    if (hasNewFormat) {
+      let totalPhotos = 0;
+      const matchedIds = new Set<string>();
+
+      for (const entry of reportPhotosArray) {
+        if (!entry || typeof entry !== 'object') continue;
+        const desc = typeof entry.description === 'string' ? entry.description.trim() : '';
+        const images: any[] = Array.isArray((entry as any).images) ? (entry as any).images : [];
+
+        const groupPhotos: MaintenanceReportPdfPayload['photos'] = [];
+
+        for (const img of images) {
+          if (totalPhotos >= MAX_PHOTOS) break;
+          if (!img || typeof img !== 'object') continue;
+          const imgId = typeof img.id === 'string' ? img.id : null;
+          if (!imgId) continue;
+
+          const dbRecord = storagePhotoById.get(imgId);
+          if (!dbRecord) continue;
+          matchedIds.add(imgId);
+
+          const result = await downloadPhoto(dbRecord);
+          if (!result) continue;
+          if (result.bytes.length > 2_500_000) continue;
+          const type = result.contentType.toLowerCase();
+          if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) continue;
+
+          groupPhotos.push({ ...result, description: desc });
+          totalPhotos++;
+        }
+
+        if (groupPhotos.length > 0) {
+          photoGroups.push({ description: desc, photos: groupPhotos });
+        }
+      }
+
+      // Also include any orphaned DB photos not matched to entries
+      for (const sp of storagePhotos) {
+        if (totalPhotos >= MAX_PHOTOS) break;
+        if (matchedIds.has(sp.id)) continue;
+
+        const result = await downloadPhoto(sp);
+        if (!result) continue;
+        if (result.bytes.length > 2_500_000) continue;
+        const type = result.contentType.toLowerCase();
+        if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) continue;
+
+        const description = resolveDescription(sp);
+        photoGroups.push({ description, photos: [{ ...result, description }] });
+        photos.push({ ...result, description });
+        totalPhotos++;
+      }
+    } else {
+      // Legacy flat format: download photos and group by description
+      const photoQueue = storagePhotos.slice(0, MAX_PHOTOS);
+      // Maintain insertion order of descriptions
+      const descriptionOrder: string[] = [];
+      const groupByDescription = new Map<string, MaintenanceReportPdfPayload['photos']>();
+
+      for (let i = 0; i < photoQueue.length; i += CONCURRENCY) {
+        const chunk = photoQueue.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(chunk.map((record) => downloadPhoto(record)));
+        results.forEach((result, indexInChunk) => {
+          if (!result) return;
+          if (result.bytes.length > 2_500_000) {
+            console.warn('Foto omitida por tamaño (bytes):', result.bytes.length);
+            return;
+          }
+          const type = result.contentType.toLowerCase();
+          if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) {
+            console.warn('Formato de imagen no soportado en PDF, se omite:', type);
+            return;
+          }
+          const record = chunk[indexInChunk];
+          const description = resolveDescription(record);
+          photos.push({ ...result, description });
+
+          // Group by description text
+          const key = description || '';
+          if (!groupByDescription.has(key)) {
+            groupByDescription.set(key, []);
+            descriptionOrder.push(key);
+          }
+          groupByDescription.get(key)!.push({ ...result, description });
+        });
+      }
+
+      // Build photoGroups from the grouped photos
+      for (const desc of descriptionOrder) {
+        const groupPhotos = groupByDescription.get(desc)!;
+        photoGroups.push({ description: desc, photos: groupPhotos });
+      }
+    }
+
+    console.log('[maintenance-pdf] photos count:', photos.length, 'groups count:', photoGroups.length);
+    console.log('[maintenance-pdf] photoGroups details:', photoGroups.map(g => ({ desc: g.description, photoCount: g.photos.length })));
 
     const testsSource = (report.tests ?? reportData.tests ?? {}) as Record<string, any>;
     const voltageValue = testsSource?.voltage ?? undefined;
@@ -1076,6 +1189,7 @@ Deno.serve(async (req) => {
       tests: tests ?? undefined,
       checklist: finalChecklist,
       photos,
+      photoGroups: photoGroups.length > 0 ? photoGroups : undefined,
     };
     
     // Log del payload.checklist para verificar

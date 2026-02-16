@@ -24,6 +24,11 @@ type PhotoEntry = {
   description?: string | null;
 };
 
+type PhotoGroup = {
+  description?: string | null;
+  photos: PhotoEntry[];
+};
+
 type MaintenanceTests = {
   voltage?: string;
   polipasto?: {
@@ -58,6 +63,7 @@ export type MaintenanceReportPdfPayload = {
   tests?: MaintenanceTests | null;
   checklist: ChecklistEntry[];
   photos: PhotoEntry[];
+  photoGroups?: PhotoGroup[];
   equipmentType?: string; // 'elevadores' | 'puentes-grua' | 'mantenimientos-generales'
 };
 
@@ -599,9 +605,10 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
     console.warn('No se pudo cargar el logo de Soldgrup para el PDF', error);
   }
 
-  const embeddedPhotos: { image: PDFImage; description?: string | null; width: number; height: number }[] = [];
+  type EmbeddedImage = { image: PDFImage; width: number; height: number };
+  type EmbeddedPhotoGroup = { description?: string | null; images: EmbeddedImage[] };
 
-  for (const photo of payload.photos) {
+  const embedSinglePhoto = async (photo: PhotoEntry): Promise<EmbeddedImage | null> => {
     try {
       let bytes: Uint8Array | null = null;
       let contentType = photo.contentType ?? '';
@@ -612,18 +619,17 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
         const response = await fetch(photo.url);
         if (!response.ok) {
           console.warn('No se pudo descargar la foto:', photo.url);
-          continue;
+          return null;
         }
         contentType = response.headers.get('content-type') ?? contentType ?? '';
         const arrayBuffer = await response.arrayBuffer();
         bytes = new Uint8Array(arrayBuffer);
       } else {
-        continue;
+        return null;
       }
-      // Omitir imágenes demasiado grandes para evitar OOM
       if (bytes.length > 2_500_000) {
         console.warn('Foto omitida por tamaño (bytes):', photo.url, bytes.length);
-        continue;
+        return null;
       }
 
       let pdfImage: PDFImage | null = null;
@@ -632,10 +638,8 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
       } else if (contentType.includes('jpeg') || contentType.includes('jpg') || (photo.url?.toLowerCase().match(/\.jpe?g$/))) {
         pdfImage = await pdfDoc.embedJpg(bytes);
       } else if (contentType.includes('webp') || (photo.url?.toLowerCase().endsWith('.webp'))) {
-        // WEBP no soportado nativamente por pdf-lib en Deno sin dependencias extra
         console.warn('Formato WEBP detectado; se omite o se recomienda convertir a JPEG');
       } else {
-        // Intento genérico: probar JPEG primero, luego PNG
         try {
           pdfImage = await pdfDoc.embedJpg(bytes);
         } catch {
@@ -648,15 +652,46 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
       }
 
       if (pdfImage) {
-        embeddedPhotos.push({
-          image: pdfImage,
-          description: photo.description,
-          width: pdfImage.width,
-          height: pdfImage.height,
-        });
+        return { image: pdfImage, width: pdfImage.width, height: pdfImage.height };
       }
     } catch (error) {
       console.error('Error procesando fotografía', photo.url, error);
+    }
+    return null;
+  };
+
+  // Build embedded photo groups
+  const embeddedGroups: EmbeddedPhotoGroup[] = [];
+
+  if (payload.photoGroups && payload.photoGroups.length > 0) {
+    for (const group of payload.photoGroups) {
+      const groupImages: EmbeddedImage[] = [];
+      for (const photo of group.photos) {
+        const embedded = await embedSinglePhoto(photo);
+        if (embedded) groupImages.push(embedded);
+      }
+      if (groupImages.length > 0) {
+        embeddedGroups.push({ description: group.description, images: groupImages });
+      }
+    }
+  } else {
+    // Fallback: group photos by description text (legacy)
+    const descOrder: string[] = [];
+    const descMap = new Map<string, { description: string | null; images: EmbeddedImage[] }>();
+
+    for (const photo of payload.photos) {
+      const embedded = await embedSinglePhoto(photo);
+      if (!embedded) continue;
+      const desc = photo.description?.trim() || '';
+      if (!descMap.has(desc)) {
+        descMap.set(desc, { description: desc || null, images: [] });
+        descOrder.push(desc);
+      }
+      descMap.get(desc)!.images.push(embedded);
+    }
+
+    for (const key of descOrder) {
+      embeddedGroups.push(descMap.get(key)!);
     }
   }
 
@@ -780,7 +815,10 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
 
     const lineSets = values.map((value, index) => {
       const width = colWidths[index] - paddingX * 2;
-      if (index === 2 || index === 3 || index === 4) {
+      // Solo omitir wrapping en columnas 2,3,4 para la tabla de checklist (centerOnlyFirst=false).
+      // En la tabla de procedimientos (centerOnlyFirst=true), la columna 2 es "Observación"
+      // y necesita wrapping para que el texto no se salga del recuadro.
+      if (!centerOnlyFirst && (index === 2 || index === 3 || index === 4)) {
         return value ? [value] : [''];
       }
       return wrapText(value ?? '', textFont, textSize, Math.max(width, 4));
@@ -1031,57 +1069,64 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
   };
 
   const drawPhotos = () => {
-    if (!embeddedPhotos.length) return;
+    if (!embeddedGroups.length) return;
     drawSectionTitle('Registro fotográfico');
 
     const maxImageWidth = contentWidth * 0.65;
     const maxImageHeight = 250;
 
-    for (const photo of embeddedPhotos) {
-      const scale = Math.min(maxImageWidth / photo.width, maxImageHeight / photo.height, 1);
-      const drawWidth = photo.width * scale;
-      const drawHeight = photo.height * scale;
-      const descriptionText = photo.description?.trim() ?? '';
-      const hasDescription = descriptionText.length > 0;
-      const descriptionLines = hasDescription
-        ? wrapText(descriptionText, fontRegular, 11, contentWidth)
-        : ['Sin descripción'];
-      const descriptionHeight = descriptionLines.length * 14 + 20; // 20 para el label
-      const blockHeight = descriptionHeight + drawHeight + 24; // espacio entre descripción e imagen
+    for (const group of embeddedGroups) {
+      const descriptionText = group.description?.trim() ?? '';
 
-      ensureSpace(blockHeight);
-      const topY = current.cursorY;
+      // Calculate first image height to keep description and first photo together
+      let firstImageHeight = 0;
+      if (group.images.length > 0) {
+        const first = group.images[0];
+        const scale = Math.min(maxImageWidth / first.width, maxImageHeight / first.height, 1);
+        firstImageHeight = first.height * scale + 16;
+      }
 
-      // Descripción arriba a la izquierda
-      current.page.drawText('Descripción', {
-        x: margin,
-        y: topY - 6,
-        font: fontBold,
-        size: 11,
-        color: headingColor,
-      });
+      // Draw description text as bold heading (only if there is one)
+      if (descriptionText) {
+        const descriptionLines = wrapText(descriptionText, fontBold, 11, contentWidth);
+        const descriptionHeight = descriptionLines.length * 14;
 
-      drawWrappedText(current.page, descriptionLines, {
-        x: margin,
-        y: topY - 22,
-        font: fontRegular,
-        size: 11,
-        color: textColor,
-        lineHeight: 14,
-      });
+        // Ensure space for description + at least the first photo so they stay together
+        ensureSpace(descriptionHeight + 10 + firstImageHeight);
 
-      // Imagen centrada debajo de la descripción
-      const imageTopY = topY - descriptionHeight - 8;
-      const imageX = margin + (contentWidth - drawWidth) / 2; // Centrar imagen
-      
-      current.page.drawImage(photo.image, {
-        x: imageX,
-        y: imageTopY - drawHeight,
-        width: drawWidth,
-        height: drawHeight,
-      });
+        drawWrappedText(current.page, descriptionLines, {
+          x: margin,
+          y: current.cursorY - 6,
+          font: fontBold,
+          size: 11,
+          color: headingColor,
+          lineHeight: 14,
+        });
 
-      current.cursorY -= blockHeight;
+        current.cursorY -= descriptionHeight + 10;
+      }
+
+      // Draw all images in the group below the description
+      for (const photo of group.images) {
+        const scale = Math.min(maxImageWidth / photo.width, maxImageHeight / photo.height, 1);
+        const drawWidth = photo.width * scale;
+        const drawHeight = photo.height * scale;
+
+        ensureSpace(drawHeight + 16);
+
+        const imageX = margin + (contentWidth - drawWidth) / 2;
+        current.page.drawImage(photo.image, {
+          x: imageX,
+          y: current.cursorY - drawHeight,
+          width: drawWidth,
+          height: drawHeight,
+        });
+
+        current.cursorY -= drawHeight + 16;
+      }
+
+      // Small gap between groups
+      current.cursorY -= 8;
     }
   };
 
@@ -1219,6 +1264,21 @@ function wrapText(text: string, font: any, size: number, maxWidth: number): stri
   const lines: string[] = [];
   let currentLine = '';
 
+  // Función auxiliar para cortar una palabra que excede el ancho máximo
+  const breakLongWord = (word: string): string[] => {
+    const parts: string[] = [];
+    let remaining = word;
+    while (remaining.length > 0) {
+      let end = remaining.length;
+      while (end > 1 && font.widthOfTextAtSize(remaining.substring(0, end), size) > maxWidth) {
+        end--;
+      }
+      parts.push(remaining.substring(0, end));
+      remaining = remaining.substring(end);
+    }
+    return parts;
+  };
+
   for (const word of words) {
     const newLine = currentLine ? `${currentLine} ${word}` : word;
     const width = font.widthOfTextAtSize(newLine, size);
@@ -1226,7 +1286,16 @@ function wrapText(text: string, font: any, size: number, maxWidth: number): stri
       currentLine = newLine;
     } else {
       if (currentLine) lines.push(currentLine);
-      currentLine = word;
+      // Verificar si la palabra sola excede el ancho máximo
+      if (font.widthOfTextAtSize(word, size) > maxWidth) {
+        const parts = breakLongWord(word);
+        for (let i = 0; i < parts.length - 1; i++) {
+          lines.push(parts[i]);
+        }
+        currentLine = parts[parts.length - 1];
+      } else {
+        currentLine = word;
+      }
     }
   }
 

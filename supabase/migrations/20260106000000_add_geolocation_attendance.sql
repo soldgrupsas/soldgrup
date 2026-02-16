@@ -26,3 +26,6 @@ COMMENT ON COLUMN public.attendance_records.exit_longitude IS 'GPS longitude whe
 
 
 
+
+
+

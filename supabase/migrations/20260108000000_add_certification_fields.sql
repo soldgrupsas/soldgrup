@@ -26,3 +26,6 @@ comment on column public.attendance_records.exit_conditions_notes is 'Observacio
 
 
 
+
+
+

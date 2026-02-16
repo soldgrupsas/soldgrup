@@ -198,13 +198,46 @@ type EquipmentType = "elevadores" | "puentes-grua" | "mantenimientos-generales";
 
 
 
-type PhotoEntry = {
+type PhotoImage = {
   id: string;
   storagePath: string | null;
   optimizedPath?: string | null;
   thumbnailPath?: string | null;
   url: string | null;
+};
+
+type PhotoEntry = {
+  id: string;
+  images: PhotoImage[];
   description: string;
+};
+
+/** Migrate a legacy photo entry (single image) to the new multi-image format */
+const migratePhotoEntry = (raw: any): PhotoEntry => {
+  if (Array.isArray(raw.images)) {
+    return {
+      id: raw.id,
+      images: raw.images,
+      description: raw.description ?? "",
+    };
+  }
+  // Legacy format: url/storagePath at top level
+  const hasImage = raw.url || raw.storagePath;
+  return {
+    id: raw.id,
+    images: hasImage
+      ? [
+          {
+            id: raw.id,
+            storagePath: raw.storagePath ?? null,
+            optimizedPath: raw.optimizedPath ?? null,
+            thumbnailPath: raw.thumbnailPath ?? null,
+            url: raw.url ?? null,
+          },
+        ]
+      : [],
+    description: raw.description ?? "",
+  };
 };
 
 type PhotoUploadState = {
@@ -601,8 +634,10 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       const activeReportId = reportIdRef.current ?? task.reportId;
       if (!activeReportId) throw new Error("No se encontró el informe asociado a la fotografía");
 
-      const description =
-        formDataRef.current.photos.find((photo) => photo.id === task.photoId)?.description ?? "";
+      const parentEntry = formDataRef.current.photos.find((entry) =>
+        entry.images.some((img) => img.id === task.photoId),
+      );
+      const description = parentEntry?.description ?? "";
 
       const sanitizedName = sanitizeFileName(task.file.name || `${task.photoId}.jpg`);
       const storagePath = `${activeReportId}/${task.photoId}/${Date.now()}-${sanitizedName || "foto.jpg"}`;
@@ -674,17 +709,14 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
       setFormData((prev) => ({
         ...prev,
-        photos: prev.photos.map((photo) =>
-          photo.id === task.photoId
-            ? {
-                ...photo,
-                storagePath,
-                optimizedPath,
-                thumbnailPath,
-                url: photoUrl,
-              }
-            : photo,
-        ),
+        photos: prev.photos.map((entry) => ({
+          ...entry,
+          images: entry.images.map((img) =>
+            img.id === task.photoId
+              ? { ...img, storagePath, optimizedPath, thumbnailPath, url: photoUrl }
+              : img,
+          ),
+        })),
       }));
 
       updatePhotoUploadState(task.photoId, {
@@ -1121,7 +1153,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                     : correctDefaultForm.tests.polipasto,
                 }
               : correctDefaultForm.tests,
-            photos: Array.isArray(dataObj.photos) ? dataObj.photos : correctDefaultForm.photos,
+            photos: Array.isArray(dataObj.photos) ? dataObj.photos.map(migratePhotoEntry) : correctDefaultForm.photos,
           };
         }
       } catch (parseError) {
@@ -1468,18 +1500,24 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     }));
   };
 
-  const handlePhotoDescriptionChange = (photoId: string, value: string) => {
+  const handlePhotoDescriptionChange = (entryId: string, value: string) => {
     setFormData((prev) => ({
       ...prev,
-      photos: prev.photos.map((photo) =>
-        photo.id === photoId ? { ...photo, description: value } : photo,
+      photos: prev.photos.map((entry) =>
+        entry.id === entryId ? { ...entry, description: value } : entry,
       ),
     }));
     if (reportId) {
-      void supabase
-        .from("maintenance_report_photos")
-        .update({ description: value })
-        .eq("id", photoId);
+      const entry = formDataRef.current.photos.find((e) => e.id === entryId);
+      if (entry) {
+        const imageIds = entry.images.map((img) => img.id);
+        if (imageIds.length > 0) {
+          void supabase
+            .from("maintenance_report_photos")
+            .update({ description: value })
+            .in("id", imageIds);
+        }
+      }
     }
   };
 
@@ -1501,17 +1539,24 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         ...prev.photos,
         {
           id,
-          storagePath: null,
-          optimizedPath: null,
-          thumbnailPath: null,
-          url: null,
+          images: [],
           description: "",
         },
       ],
     }));
   };
 
-  const handlePhotoFileUpload = async (photoId: string, fileList: FileList | null) => {
+  /**
+   * Upload a file for a specific image within an entry.
+   * @param entryId - The parent photo entry id
+   * @param imageId - Existing image id (for replacement) or null to add a new image
+   * @param fileList - The file list from the input element
+   */
+  const handlePhotoFileUpload = async (
+    entryId: string,
+    imageId: string | null,
+    fileList: FileList | null,
+  ) => {
     if (!fileList || fileList.length === 0) return;
     if (!session) {
       toast({
@@ -1537,23 +1582,51 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     }
 
     const originalFile = fileList[0];
+    const actualImageId = imageId ?? crypto.randomUUID();
 
-    setFormData((prev) => ({
-      ...prev,
-      photos: prev.photos.map((photo) =>
-        photo.id === photoId
-          ? {
-              ...photo,
-              url: null,
-              storagePath: null,
-              optimizedPath: null,
-              thumbnailPath: null,
-            }
-          : photo,
-      ),
-    }));
+    if (!imageId) {
+      // New image: add to entry's images array
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.map((entry) =>
+          entry.id === entryId
+            ? {
+                ...entry,
+                images: [
+                  ...entry.images,
+                  {
+                    id: actualImageId,
+                    storagePath: null,
+                    optimizedPath: null,
+                    thumbnailPath: null,
+                    url: null,
+                  },
+                ],
+              }
+            : entry,
+        ),
+      }));
+    } else {
+      // Replace existing image: clear its paths
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.map((entry) =>
+          entry.id === entryId
+            ? {
+                ...entry,
+                images: entry.images.map((img) =>
+                  img.id === imageId
+                    ? { ...img, url: null, storagePath: null, optimizedPath: null, thumbnailPath: null }
+                    : img,
+                ),
+              }
+            : entry,
+        ),
+      }));
+    }
+
     if (originalFile.size > LARGE_FILE_THRESHOLD) {
-      updatePhotoUploadState(photoId, {
+      updatePhotoUploadState(actualImageId, {
         status: "preparing",
         progress: 0,
         message: "Optimizando la imagen antes de subirla...",
@@ -1570,14 +1643,17 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       }
     }
 
-    uploadQueueRef.current = [...uploadQueueRef.current, {
-      photoId,
-      file: preparedFile,
-      reportId: activeReportId,
-      attempts: 0,
-    }];
+    uploadQueueRef.current = [
+      ...uploadQueueRef.current,
+      {
+        photoId: actualImageId,
+        file: preparedFile,
+        reportId: activeReportId,
+        attempts: 0,
+      },
+    ];
 
-    updatePhotoUploadState(photoId, {
+    updatePhotoUploadState(actualImageId, {
       status: "queued",
       progress: 0,
       attempts: 0,
@@ -1586,24 +1662,29 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     scheduleUploadProcessing();
   };
 
-  const handleRemovePhoto = async (photo: PhotoEntry) => {
+  /** Remove a single image from an entry */
+  const handleRemoveImage = async (entryId: string, image: PhotoImage) => {
     setFormData((prev) => ({
       ...prev,
-      photos: prev.photos.filter((item) => item.id !== photo.id),
+      photos: prev.photos.map((entry) =>
+        entry.id === entryId
+          ? { ...entry, images: entry.images.filter((img) => img.id !== image.id) }
+          : entry,
+      ),
     }));
 
-    uploadQueueRef.current = uploadQueueRef.current.filter((task) => task.photoId !== photo.id);
-    if (activeUploadRef.current?.task.photoId === photo.id) {
+    uploadQueueRef.current = uploadQueueRef.current.filter((task) => task.photoId !== image.id);
+    if (activeUploadRef.current?.task.photoId === image.id) {
       activeUploadRef.current.controller.abort();
     }
 
     setPhotoUploads((prev) => {
       const next = { ...prev };
-      delete next[photo.id];
+      delete next[image.id];
       return next;
     });
 
-    const pathsToRemove = [photo.storagePath, photo.optimizedPath, photo.thumbnailPath].filter(
+    const pathsToRemove = [image.storagePath, image.optimizedPath, image.thumbnailPath].filter(
       (path): path is string => Boolean(path),
     );
     if (pathsToRemove.length > 0) {
@@ -1615,7 +1696,50 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       }
     }
 
-    await supabase.from("maintenance_report_photos").delete().eq("id", photo.id);
+    await supabase.from("maintenance_report_photos").delete().eq("id", image.id);
+  };
+
+  /** Remove an entire photo entry and all its images */
+  const handleRemoveEntry = async (entry: PhotoEntry) => {
+    setFormData((prev) => ({
+      ...prev,
+      photos: prev.photos.filter((item) => item.id !== entry.id),
+    }));
+
+    // Cancel uploads for all images in this entry
+    const imageIds = new Set(entry.images.map((img) => img.id));
+    uploadQueueRef.current = uploadQueueRef.current.filter(
+      (task) => !imageIds.has(task.photoId),
+    );
+    if (activeUploadRef.current && imageIds.has(activeUploadRef.current.task.photoId)) {
+      activeUploadRef.current.controller.abort();
+    }
+
+    setPhotoUploads((prev) => {
+      const next = { ...prev };
+      for (const imgId of imageIds) {
+        delete next[imgId];
+      }
+      return next;
+    });
+
+    // Remove all images from storage
+    const pathsToRemove = entry.images
+      .flatMap((img) => [img.storagePath, img.optimizedPath, img.thumbnailPath])
+      .filter((path): path is string => Boolean(path));
+    if (pathsToRemove.length > 0) {
+      const { error: storageError } = await supabase.storage
+        .from(PHOTO_BUCKET)
+        .remove(pathsToRemove);
+      if (storageError) {
+        console.warn("No se pudo eliminar las imágenes del almacenamiento:", storageError);
+      }
+    }
+
+    // Remove all image rows from DB
+    for (const img of entry.images) {
+      await supabase.from("maintenance_report_photos").delete().eq("id", img.id);
+    }
   };
 
   const progressValue = ((currentStepIndex + 1) / totalSteps) * 100;
@@ -2541,112 +2665,209 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         return (
           <div className="space-y-6">
             <p className="text-muted-foreground">
-              Adjunte fotografías relevantes del mantenimiento realizado. Puede subir múltiples
-              imágenes y agregar una descripción para cada una.
+              Adjunte fotografías relevantes del mantenimiento realizado. Puede agregar varias
+              imágenes por cada evidencia y compartir una descripción entre ellas.
             </p>
 
             <div className="space-y-4">
-              {formData.photos.map((photo) => {
-                const inputId = `photo-upload-${photo.id}`;
-                const uploadState = photoUploads[photo.id];
-                const isBusy = uploadState
-                  ? ["preparing", "queued", "uploading", "processing"].includes(uploadState.status)
-                  : false;
-                const buttonLabel = uploadState && uploadState.status !== "idle" && uploadState.status !== "done"
-                  ? uploadButtonCopy[uploadState.status]
-                  : photo.url
-                  ? "Reemplazar"
-                  : "Subir foto";
+              {formData.photos.map((entry) => {
+                const addInputId = `photo-add-${entry.id}`;
                 return (
-                  <Card key={photo.id} className="p-4 space-y-4">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3">
-                        {photo.url ? (
-                          <img
-                            src={photo.url}
-                            alt={photo.description || "Fotografía de mantenimiento"}
-                            className="h-16 w-16 rounded-md object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-16 w-16 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-                            <ImageIcon className="h-6 w-6" />
-                          </div>
+                  <Card key={entry.id} className="p-4 space-y-4">
+                    {/* Header: title + delete entry */}
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium text-sm">
+                        Evidencia {formData.photos.indexOf(entry) + 1}
+                        {entry.images.length > 0 && (
+                          <span className="ml-2 text-muted-foreground font-normal">
+                            ({entry.images.length} {entry.images.length === 1 ? "foto" : "fotos"})
+                          </span>
                         )}
-                        <div>
-                          <p className="font-medium">
-                            {photo.url ? "Fotografía cargada" : "Fotografía pendiente"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {photo.url
-                              ? "La imagen está guardada en el sistema."
-                              : "Sube una fotografía para completar esta sección."}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="flex items-center gap-2"
-                          onClick={() =>
-                            (document.getElementById(inputId) as HTMLInputElement | null)?.click()
-                          }
-                          disabled={isBusy}
-                        >
-                          <Upload className="h-4 w-4" />
-                          {buttonLabel}
-                        </Button>
-                        <Input
-                          id={inputId}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(event) =>
-                            handlePhotoFileUpload(photo.id, event.target.files)
-                          }
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleRemovePhoto(photo)}
-                        >
-                          <X className="h-4 w-4" />
-                          Borrar foto
-                        </Button>
-                      </div>
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleRemoveEntry(entry)}
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Eliminar evidencia
+                      </Button>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`photo-desc-${photo.id}`}>Descripción</Label>
-                      <Textarea
-                        id={`photo-desc-${photo.id}`}
-                        rows={3}
-                        value={photo.description}
-                        onChange={(event) =>
-                          handlePhotoDescriptionChange(photo.id, event.target.value)
-                        }
-                        placeholder="Describe la fotografía para futuras referencias."
-                      />
-                    </div>
-                    {uploadState && uploadState.status !== "idle" && (
-                      <div className="space-y-2">
-                        {!["done", "error"].includes(uploadState.status) && (
-                          <Progress value={uploadState.progress} />
-                        )}
-                        <p
-                          className={cn(
-                            "text-xs",
-                            uploadState.status === "error"
-                              ? "text-destructive"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {uploadState.message ?? uploadMessageCopy[uploadState.status]}
+
+                    {/* Image gallery */}
+                    {entry.images.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {entry.images.map((image) => {
+                          const replaceInputId = `photo-replace-${image.id}`;
+                          const uploadState = photoUploads[image.id];
+                          const isBusy = uploadState
+                            ? ["preparing", "queued", "uploading", "processing"].includes(
+                                uploadState.status,
+                              )
+                            : false;
+
+                          return (
+                            <div
+                              key={image.id}
+                              className="relative group rounded-lg border bg-muted/30 overflow-hidden"
+                            >
+                              {/* Image or placeholder */}
+                              {image.url ? (
+                                <img
+                                  src={image.url}
+                                  alt={entry.description || "Fotografía de mantenimiento"}
+                                  className="w-full aspect-square object-cover"
+                                />
+                              ) : (
+                                <div className="w-full aspect-square flex items-center justify-center bg-muted">
+                                  {isBusy ? (
+                                    <div className="text-center px-2">
+                                      <Progress
+                                        value={uploadState?.progress ?? 0}
+                                        className="w-full mb-1"
+                                      />
+                                      <p className="text-[10px] text-muted-foreground">
+                                        {uploadState?.message ??
+                                          uploadMessageCopy[uploadState?.status ?? "idle"]}
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Upload status overlay */}
+                              {uploadState &&
+                                uploadState.status !== "idle" &&
+                                uploadState.status !== "done" &&
+                                image.url && (
+                                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                                    <div className="text-center px-2">
+                                      <Progress
+                                        value={uploadState.progress}
+                                        className="w-full mb-1"
+                                      />
+                                      <p className="text-[10px] text-white">
+                                        {uploadState.message ??
+                                          uploadMessageCopy[uploadState.status]}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+
+                              {/* Status message for completed/error */}
+                              {uploadState &&
+                                ["done", "error"].includes(uploadState.status) && (
+                                  <p
+                                    className={cn(
+                                      "text-[10px] text-center py-1 px-1",
+                                      uploadState.status === "error"
+                                        ? "text-destructive bg-destructive/10"
+                                        : "text-green-600 bg-green-50",
+                                    )}
+                                  >
+                                    {uploadState.message ??
+                                      uploadMessageCopy[uploadState.status]}
+                                  </p>
+                                )}
+
+                              {/* Action buttons overlay */}
+                              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="icon"
+                                  className="h-7 w-7 bg-white/90 hover:bg-white shadow-sm"
+                                  title="Reemplazar foto"
+                                  onClick={() =>
+                                    (
+                                      document.getElementById(
+                                        replaceInputId,
+                                      ) as HTMLInputElement | null
+                                    )?.click()
+                                  }
+                                  disabled={isBusy}
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="icon"
+                                  className="h-7 w-7 bg-white/90 hover:bg-red-50 shadow-sm text-destructive"
+                                  title="Borrar foto"
+                                  onClick={() => handleRemoveImage(entry.id, image)}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                              <Input
+                                id={replaceInputId}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                  handlePhotoFileUpload(entry.id, image.id, event.target.files);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Empty state when no images */}
+                    {entry.images.length === 0 && (
+                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 py-8 text-center">
+                        <ImageIcon className="h-10 w-10 text-muted-foreground/50 mb-2" />
+                        <p className="text-sm text-muted-foreground">
+                          No hay fotografías. Agrega al menos una foto.
                         </p>
                       </div>
                     )}
+
+                    {/* Add photo to this entry */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        (
+                          document.getElementById(addInputId) as HTMLInputElement | null
+                        )?.click()
+                      }
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Agregar Foto
+                    </Button>
+                    <Input
+                      id={addInputId}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        handlePhotoFileUpload(entry.id, null, event.target.files);
+                        event.target.value = "";
+                      }}
+                    />
+
+                    {/* Shared description */}
+                    <div className="space-y-2">
+                      <Label htmlFor={`photo-desc-${entry.id}`}>Descripción</Label>
+                      <Textarea
+                        id={`photo-desc-${entry.id}`}
+                        rows={3}
+                        value={entry.description}
+                        onChange={(event) =>
+                          handlePhotoDescriptionChange(entry.id, event.target.value)
+                        }
+                        placeholder="Describe el procedimiento o evidencia que representan estas fotografías."
+                      />
+                    </div>
                   </Card>
                 );
               })}
@@ -2654,7 +2875,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
             <Button type="button" variant="outline" onClick={handleAddPhoto}>
               <Plus className="mr-2 h-4 w-4" />
-              Agregar Foto
+              Agregar Evidencia
             </Button>
           </div>
         );
