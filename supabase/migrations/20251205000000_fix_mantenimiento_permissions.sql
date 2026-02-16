@@ -1,12 +1,12 @@
--- Corregir políticas RLS para rol 'mantenimiento'
+﻿-- Corregir pol├¡ticas RLS para rol 'mantenimiento'
 -- Los usuarios con rol 'mantenimiento' NO deben tener acceso a proposals y equipment
 -- Solo deben tener acceso a maintenance-reports
 --
--- Esta migración corrige las políticas establecidas en 20251101120000_add_mantenimiento_role.sql
+-- Esta migraci├│n corrige las pol├¡ticas establecidas en 20251101120000_add_mantenimiento_role.sql
 -- que incorrectamente daban acceso a proposals y equipment a usuarios con rol 'mantenimiento'
 
 -- ============================================
--- 1. CORREGIR POLÍTICAS DE PROPOSALS
+-- 1. CORREGIR POL├ìTICAS DE PROPOSALS
 -- ============================================
 -- Remover acceso de 'mantenimiento' a proposals y tablas relacionadas
 
@@ -127,7 +127,7 @@ CREATE POLICY "Authenticated users can view all clicks"
   );
 
 -- ============================================
--- 2. CORREGIR POLÍTICAS DE EQUIPMENT
+-- 2. CORREGIR POL├ìTICAS DE EQUIPMENT
 -- ============================================
 -- Remover acceso de 'mantenimiento' a equipment y tablas relacionadas
 
@@ -174,7 +174,7 @@ CREATE POLICY "Authenticated users can manage equipment tables"
   );
 
 -- ============================================
--- 3. ACTUALIZAR POLÍTICAS DE MAINTENANCE REPORTS
+-- 3. ACTUALIZAR POL├ìTICAS DE MAINTENANCE REPORTS
 -- ============================================
 -- Agregar acceso de 'mantenimiento' a maintenance_reports
 
@@ -211,7 +211,7 @@ CREATE POLICY "Authenticated users manage maintenance report photos"
   );
 
 -- ============================================
--- 4. ACTUALIZAR POLÍTICAS DE STORAGE PARA MAINTENANCE REPORTS
+-- 4. ACTUALIZAR POL├ìTICAS DE STORAGE PARA MAINTENANCE REPORTS
 -- ============================================
 -- Agregar acceso de 'mantenimiento' a storage de maintenance reports
 

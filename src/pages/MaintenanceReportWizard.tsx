@@ -22,6 +22,34 @@ import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { RichTextEditor } from "@/components/RichTextEditor";
 
+// Función helper para normalizar una fecha (string o Date) a formato YYYY-MM-DD usando zona horaria local
+// Evita problemas de conversión UTC que pueden cambiar la fecha
+const normalizeDateToLocalString = (date: string | Date | null | undefined): string | null => {
+  if (!date) return null;
+  
+  if (typeof date === "string") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return date;
+    }
+    const dateObj = new Date(date);
+    if (isNaN(dateObj.getTime())) return null;
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const day = String(dateObj.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  
+  if (date instanceof Date) {
+    if (isNaN(date.getTime())) return null;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  
+  return null;
+};
+
 const CHECKLIST_ITEMS = [
   "Motor de elevación",
   "Freno motor de elevación",
@@ -1001,6 +1029,19 @@ const MaintenanceReportWizard = () => {
           : [],
       };
       
+      // Normalizar fechas desde la base de datos usando zona horaria local
+      if (data.start_date) {
+        parsedData.startDate = normalizeDateToLocalString(data.start_date);
+      } else if (parsedData.startDate) {
+        parsedData.startDate = normalizeDateToLocalString(parsedData.startDate);
+      }
+      
+      if (data.end_date) {
+        parsedData.endDate = normalizeDateToLocalString(data.end_date);
+      } else if (parsedData.endDate) {
+        parsedData.endDate = normalizeDateToLocalString(parsedData.endDate);
+      }
+
       // NOTA: Ya NO guardamos automáticamente después de cargar para evitar sobrescribir datos
       // Los datos solo se guardan cuando el usuario hace cambios explícitos
 

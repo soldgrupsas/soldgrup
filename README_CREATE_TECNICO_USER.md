@@ -98,7 +98,7 @@ Antes de crear el usuario, asegúrate de aplicar la migración que corrige las p
 supabase migration up
 
 # O aplica la migración manualmente desde el SQL Editor de Supabase
-# Ejecuta el archivo: supabase/migrations/20250105120000_fix_mantenimiento_permissions.sql
+# Ejecuta el archivo: supabase/migrations/20251205000000_fix_mantenimiento_permissions.sql
 ```
 
 Esta migración asegura que:
