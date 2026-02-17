@@ -1,5 +1,5 @@
 import { Toaster } from "@/components/ui/toaster";
-// Build version: v2.1.0 - 2026-01-09T16:15:00 - FORCE COMPLETE REBUILD
+// Build version: v2.2.0 - 2026-02-17T00:00:00 - DEPLOY WITH AUTH_PROVIDER AND TZ FIXES
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
