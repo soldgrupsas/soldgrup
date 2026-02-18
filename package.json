@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:coolify": "cross-env VITE_APP_BASE=/ vite build",
     "build:github": "cross-env VITE_APP_BASE=/soldgrup/ vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
