@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { getModuleFromPath } from "@/lib/permissions";
@@ -72,9 +72,9 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     );
   }
 
-  // Don't render if user is not authenticated
+  // Redirigir al login si no hay usuario (evita pantalla en blanco)
   if (!user) {
-    return null;
+    return <Navigate to="/auth" replace />;
   }
 
   return <>{children}</>;
