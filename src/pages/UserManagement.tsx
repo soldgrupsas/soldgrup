@@ -565,7 +565,7 @@ const UserManagement = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 space-y-6">
-        <Button variant="outline" onClick={() => navigate("/admin")}>
+        <Button variant="outline" onClick={() => { window.location.href = "/admin"; }}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Volver al panel de administración
         </Button>

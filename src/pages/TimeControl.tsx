@@ -2539,12 +2539,16 @@ const TimeControl = () => {
       
       // Crear File desde blob
       const file = new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
-      
-      // Cerrar cámara
+      const type = cameraType; // guardar antes de cerrar (closeCameraModal pone cameraType a null)
+
+      // Cerrar cámara primero
       closeCameraModal();
-      
+
+      // Dejar que el modal se desmonte del DOM antes de actualizar el resto de la UI (evita NotFoundError insertBefore)
+      await new Promise((r) => setTimeout(r, 0));
+
       // Procesar la foto capturada
-      await processPhotoCapture(file, cameraType);
+      await processPhotoCapture(file, type);
     }, "image/jpeg", 0.85);
   };
 
@@ -2563,8 +2567,9 @@ const TimeControl = () => {
     }
   };
 
-  // Método de respaldo usando input file tradicional
+  // Método de respaldo usando input file tradicional (flujo estable, sin modal)
   const fallbackToFileInput = (type: "entry" | "exit") => {
+    isFileInputOpenRef.current = true;
     const input = document.createElement("input");
     input.type = "file";
     input.setAttribute("capture", "environment");
@@ -2573,8 +2578,13 @@ const TimeControl = () => {
     input.style.position = "fixed";
     input.style.top = "-9999px";
     input.style.opacity = "0";
-    
+
+    const clearRef = () => {
+      isFileInputOpenRef.current = false;
+    };
+
     input.onchange = async (e) => {
+      clearRef();
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
         await processPhotoCapture(file, type);
@@ -2583,13 +2593,19 @@ const TimeControl = () => {
         if (input.parentNode) input.parentNode.removeChild(input);
       } catch (e) { /* ignore */ }
     };
-    
+
+    // Si el usuario cierra el selector sin elegir, liberar el ref
+    setTimeout(clearRef, 3000);
+
     document.body.appendChild(input);
     input.click();
   };
 
   // Función para procesar la foto capturada (tanto de cámara nativa como de input)
   const processPhotoCapture = async (file: File, type: "entry" | "exit") => {
+    // Diferir un tick para no actualizar el DOM (botón con icono) en el mismo ciclo que el cierre del selector de archivos
+    await new Promise((r) => setTimeout(r, 0));
+
     if (type === "entry") {
       setUploadingEntry(true);
     } else {
@@ -2790,8 +2806,9 @@ const TimeControl = () => {
       return;
     }
 
-    // Abrir cámara nativa directamente (sin opción de galería)
-    await openNativeCamera(type);
+    // Usar input file (como en la versión estable anterior): evita conflicto DOM con el modal
+    // En móvil el input con capture="environment" abre la cámara igualmente
+    fallbackToFileInput(type);
   };
 
   // Función legacy que mantiene el código anterior por compatibilidad (no se usa)
@@ -4665,6 +4682,7 @@ const TimeControl = () => {
             </div>
             <div className="flex gap-4">
               <Button
+                key={uploadingEntry ? "entry-loading" : "entry-idle"}
                 onClick={() => handlePhotoUpload("entry")}
                 disabled={entryButtonDisabled}
                 className="flex-1"
@@ -4683,6 +4701,7 @@ const TimeControl = () => {
                 )}
               </Button>
               <Button
+                key={uploadingExit ? "exit-loading" : "exit-idle"}
                 onClick={() => handlePhotoUpload("exit")}
                 disabled={exitButtonDisabled}
                 variant="outline"

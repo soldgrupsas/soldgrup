@@ -206,6 +206,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     []
   );
 
+  const LOAD_USER_DATA_TIMEOUT_MS = 4000;
+
   const loadUserData = useCallback(
     async (userId: string, options?: LoadOptions) => {
       const silent = options?.silent ?? false;
@@ -215,29 +217,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setPermissionsLoading(true);
       }
 
-      try {
+      const doLoad = async () => {
         const cached = getCachedPermissions(userId);
         if (cached) {
           setIsAdmin(cached.isAdmin);
           setUserRole(cached.role);
           setUserPermissions(new Set(cached.permissions));
-          if (!silent) {
-            setIsAdminLoading(false);
-            setPermissionsLoading(false);
-          }
           return;
         }
-
         const roleInfo = await loadUserRoleAndAdmin(userId);
         setIsAdmin(roleInfo.isAdmin);
         setUserRole(roleInfo.role);
-
         const permissions = await loadUserPermissionsOptimized(userId, roleInfo.role, roleInfo.isAdmin);
         setUserPermissions(permissions);
-
         setCachedPermissions(userId, permissions, roleInfo.role, roleInfo.isAdmin);
+      };
+
+      const timeout = () =>
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("loadUserData timeout")), LOAD_USER_DATA_TIMEOUT_MS)
+        );
+
+      try {
+        await Promise.race([doLoad(), timeout()]);
       } catch (error) {
-        console.error("Error loading user data:", error);
+        if (String(error).includes("timeout")) {
+          console.warn("loadUserData: timeout, usando valores por defecto");
+        } else {
+          console.error("Error loading user data:", error);
+        }
         setIsAdmin(false);
         setUserRole(null);
         setUserPermissions(new Set());
@@ -434,6 +442,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     initializeSession();
 
+    // Timeout de seguridad: si después de 3 segundos sigue cargando, forzar fin
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+      setIsAdminLoading(false);
+      setPermissionsLoading(false);
+    }, 3000);
+
     const handleWindowFocus = () => {
       // NO intentar refrescar si ya sabemos que el token es inválido
       if (refreshTokenInvalidRef.current) {
@@ -541,11 +556,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Si el evento es TOKEN_REFRESHED, saltar scheduleRefresh porque ya fue programado por scheduleRefresh mismo
       // Esto evita bucles infinitos
       const skipScheduleRefresh = event === "TOKEN_REFRESHED";
-      await handleSessionChange(currentSession, { skipScheduleRefresh });
+      // SIGNED_IN siempre debe ser no-silencioso para resetear estados de carga
+      const silent = event === "SIGNED_IN" ? false : undefined;
+      await handleSessionChange(currentSession, { skipScheduleRefresh, silent });
     });
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
       clearRefreshTimer();
       window.removeEventListener("focus", handleWindowFocus);

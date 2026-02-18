@@ -35,7 +35,7 @@ export const getModuleFromPath = (pathname: string): ModuleKey | null => {
   if (pathname.startsWith('/dashboard')) return MODULES.DASHBOARD;
   if (pathname.startsWith('/equipment')) return MODULES.EQUIPMENT;
   if (pathname.startsWith('/maintenance-reports')) return MODULES.MAINTENANCE_REPORTS;
-  if (pathname.startsWith('/time-control')) return MODULES.TIME_CONTROL;
+  // /time-control is accessible to any authenticated user, no module check needed
   return null;
 };
 

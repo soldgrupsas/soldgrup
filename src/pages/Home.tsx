@@ -11,12 +11,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const Home = () => {
   const navigate = useNavigate();
-  const { user, signOut, loading, isAdmin, isAdminLoading, permissionsLoading } = useAuth();
+  const { user, signOut, loading, isAdmin, isAdminLoading, userRole, permissionsLoading } = useAuth();
   const { toast } = useToast();
   
   // Check module access
   const hasDashboardAccess = useModuleAccess(MODULES.DASHBOARD);
-  const hasTimeControlAccess = useModuleAccess(MODULES.TIME_CONTROL);
   const hasEquipmentAccess = useModuleAccess(MODULES.EQUIPMENT);
   const hasMaintenanceAccess = useModuleAccess(MODULES.MAINTENANCE_REPORTS);
 
@@ -78,14 +77,13 @@ const Home = () => {
       });
     }
     
-    if (hasTimeControlAccess) {
+    if (isAdmin || userRole === "user") {
       items.push({
         title: "Control entrada/salida",
         description: "Control de horarios de entrada y salida de trabajadores",
         icon: Clock,
         path: "/time-control",
         color: "from-blue-500/20 to-blue-500/5",
-        moduleKey: MODULES.TIME_CONTROL,
       });
     }
     
@@ -112,7 +110,7 @@ const Home = () => {
     }
     
     return items;
-  }, [hasDashboardAccess, hasTimeControlAccess, hasEquipmentAccess, hasMaintenanceAccess]);
+  }, [hasDashboardAccess, hasEquipmentAccess, hasMaintenanceAccess, isAdmin, userRole]);
 
   // Fase 3 & 6: Renderizado progresivo - Solo bloquear por loading inicial, no por permissionsLoading
   if (loading) {

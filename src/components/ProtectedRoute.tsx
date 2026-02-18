@@ -1,8 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { getModuleFromPath } from "@/lib/permissions";
+
+const MAX_LOADING_SECONDS = 3;
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -16,10 +18,16 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const location = useLocation();
   const { user, loading, isAdminLoading, permissionsLoading, hasModuleAccess, isAdmin } = useAuth();
   const { toast } = useToast();
+  const [forceShow, setForceShow] = useState(false);
 
   useEffect(() => {
-    // Wait for auth and permissions to load
-    if (loading || isAdminLoading || permissionsLoading) return;
+    const t = setTimeout(() => setForceShow(true), MAX_LOADING_SECONDS * 1000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    // Wait for auth and permissions to load (unless forceShow)
+    if (!forceShow && (loading || isAdminLoading || permissionsLoading)) return;
 
     // Redirect to auth if not logged in
     if (!user) {
@@ -46,6 +54,7 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     loading,
     isAdminLoading,
     permissionsLoading,
+    forceShow,
     location.pathname,
     hasModuleAccess,
     isAdmin,
@@ -53,8 +62,9 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     toast,
   ]);
 
-  // Show loading while checking permissions
-  if (loading || isAdminLoading || permissionsLoading) {
+  // Show loading while checking permissions; nunca más de MAX_LOADING_SECONDS
+  const stillLoading = loading || isAdminLoading || permissionsLoading;
+  if (stillLoading && !forceShow) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-xl">Cargando...</div>
