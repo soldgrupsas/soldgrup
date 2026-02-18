@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "cross-env VITE_APP_BASE=/soldgrup/ vite build",
-    "build:coolify": "cross-env VITE_APP_BASE=/ vite build",
+    "build": "vite build",
+    "build:github": "cross-env VITE_APP_BASE=/soldgrup/ vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview --base /soldgrup/ --outDir docs",
+    "preview": "vite preview --outDir docs",
     "start": "npx serve docs -s -l 3000"
   },
   "dependencies": {

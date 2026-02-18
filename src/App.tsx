@@ -39,11 +39,8 @@ const queryClient = new QueryClient({
   },
 });
 
-// Obtener la ruta base desde la configuración de Vite
-// Si COOLIFY_URL está definido, usar "/" (Coolify con dominio personalizado)
-// En producción con GitHub Pages, usar "/soldgrup/", en desarrollo usar "/"
-const baseUrl = import.meta.env.BASE_URL || 
-                (import.meta.env.PROD ? (import.meta.env.VITE_COOLIFY_URL ? "/" : "/soldgrup/") : "/");
+// Ruta base (debe coincidir con vite.config base: "/" en Coolify, "/soldgrup/" en GitHub Pages)
+const baseUrl = import.meta.env.BASE_URL || "/";
 
 const App = () => {
   // Log para debugging

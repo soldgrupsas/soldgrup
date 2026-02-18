@@ -3,15 +3,9 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
 export default defineConfig(({ mode }) => {
-  // Determinar el base según el entorno
-  // Prioridad:
-  // 1. VITE_APP_BASE (si está definido, para Coolify o configuración manual)
-  // 2. Si está en Coolify (detectado por variables COOLIFY_*), usar "/"
-  // 3. Producción sin Coolify = "/soldgrup/" (GitHub Pages)
-  // 4. Desarrollo = "/"
-  // Nota: En Coolify, asegúrate de configurar VITE_APP_BASE=/ o usar build:coolify
-  const base = process.env.VITE_APP_BASE || 
-               (process.env.COOLIFY_URL || process.env.COOLIFY_FQDN || process.env.COOLIFY_BRANCH ? "/" : (mode === "production" ? "/soldgrup/" : "/"));
+  // Base para assets y rutas. Por defecto "/" para que funcione en Coolify (app en raíz).
+  // Para GitHub Pages en /soldgrup/ definir VITE_APP_BASE=/soldgrup/
+  const base = process.env.VITE_APP_BASE ?? (mode === "production" ? "/" : "/");
   
   console.log(`Building with base: ${base}, mode: ${mode}, VITE_APP_BASE: ${process.env.VITE_APP_BASE}`);
   
