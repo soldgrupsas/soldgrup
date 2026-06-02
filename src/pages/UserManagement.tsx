@@ -45,7 +45,7 @@ import { ArrowLeft, Loader2, Pencil, Wand2, Trash2, Search, X, Plus } from "luci
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
-type AppRole = "admin" | "user" | "mantenimiento";
+type AppRole = "admin" | "user" | "mantenimiento" | "contabilidad";
 
 interface UserWithRole {
   id: string;
@@ -73,12 +73,14 @@ const ROLE_LABELS: Record<AppRole, string> = {
   admin: "Administrador",
   user: "Usuario General",
   mantenimiento: "Mantenimiento",
+  contabilidad: "Contabilidad",
 };
 
 const ROLE_COLORS: Record<string, string> = {
   admin: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
   user: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
   mantenimiento: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+  contabilidad: "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-200",
   "sin rol": "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
 };
 
@@ -439,7 +441,7 @@ const UserManagement = () => {
   };
 
   const openEditDialog = (user: UserWithRole) => {
-    const allowedRoles: AppRole[] = ["admin", "user", "mantenimiento"];
+    const allowedRoles: AppRole[] = ["admin", "user", "mantenimiento", "contabilidad"];
     const normalizedRole = allowedRoles.includes(user.role as AppRole)
       ? (user.role as AppRole)
       : "user";
@@ -626,6 +628,7 @@ const UserManagement = () => {
                   <SelectItem value="admin">Administrador</SelectItem>
                   <SelectItem value="user">Usuario General</SelectItem>
                   <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
+                  <SelectItem value="contabilidad">Contabilidad</SelectItem>
                   <SelectItem value="sin rol">Sin rol</SelectItem>
                 </SelectContent>
               </Select>
@@ -796,6 +799,7 @@ const UserManagement = () => {
                     <SelectItem value="user">Usuario General</SelectItem>
                     <SelectItem value="admin">Administrador</SelectItem>
                     <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
+                    <SelectItem value="contabilidad">Contabilidad</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -873,6 +877,7 @@ const UserManagement = () => {
                   <SelectItem value="user">Usuario General</SelectItem>
                   <SelectItem value="admin">Administrador</SelectItem>
                   <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
+                  <SelectItem value="contabilidad">Contabilidad</SelectItem>
                 </SelectContent>
               </Select>
             </div>

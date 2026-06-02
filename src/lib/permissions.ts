@@ -30,12 +30,18 @@ export const MODULE_NAMES: Record<ModuleKey, string> = {
 /**
  * Get module key from pathname
  */
+export const CONTABILIDAD_EMAIL = 'contabilidad@soldgrup.com';
+
+export function isContabilidadAccountEmail(email: string | undefined): boolean {
+  return email?.toLowerCase() === CONTABILIDAD_EMAIL;
+}
+
 export const getModuleFromPath = (pathname: string): ModuleKey | null => {
   if (pathname.startsWith('/admin')) return MODULES.ADMIN;
   if (pathname.startsWith('/dashboard')) return MODULES.DASHBOARD;
   if (pathname.startsWith('/equipment')) return MODULES.EQUIPMENT;
   if (pathname.startsWith('/maintenance-reports')) return MODULES.MAINTENANCE_REPORTS;
-  // /time-control is accessible to any authenticated user, no module check needed
+  if (pathname.startsWith('/time-control')) return MODULES.TIME_CONTROL;
   return null;
 };
 

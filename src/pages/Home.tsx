@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FileText, Settings, ClipboardList, LogOut, Loader2, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { MODULES } from "@/lib/permissions";
+import { MODULES, isContabilidadAccountEmail } from "@/lib/permissions";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const Home = () => {
@@ -18,6 +18,7 @@ const Home = () => {
   const hasDashboardAccess = useModuleAccess(MODULES.DASHBOARD);
   const hasEquipmentAccess = useModuleAccess(MODULES.EQUIPMENT);
   const hasMaintenanceAccess = useModuleAccess(MODULES.MAINTENANCE_REPORTS);
+  const hasTimeControlAccess = useModuleAccess(MODULES.TIME_CONTROL);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -25,7 +26,7 @@ const Home = () => {
       return;
     }
     
-    // Si es el usuario de asistencia, redirigir directamente al control de horas
+    // Asistencia: redirigir directamente al control de horas (no tiene Home)
     if (user && user.email === "asistencia@soldgrup.com") {
       navigate("/time-control");
     }
@@ -77,7 +78,7 @@ const Home = () => {
       });
     }
     
-    if (isAdmin || userRole === "user") {
+    if (hasTimeControlAccess) {
       items.push({
         title: "Control entrada/salida",
         description: "Control de horarios de entrada y salida de trabajadores",
@@ -110,7 +111,7 @@ const Home = () => {
     }
     
     return items;
-  }, [hasDashboardAccess, hasEquipmentAccess, hasMaintenanceAccess, isAdmin, userRole]);
+  }, [hasDashboardAccess, hasEquipmentAccess, hasMaintenanceAccess, hasTimeControlAccess]);
 
   // Fase 3 & 6: Renderizado progresivo - Solo bloquear por loading inicial, no por permissionsLoading
   if (loading) {
@@ -136,15 +137,17 @@ const Home = () => {
             </p>
           </div>
           <div className="flex gap-3">
-            <Button
-              onClick={handleAdminPanelClick}
-              size="lg"
-              variant="secondary"
-              disabled={isAdminLoading}
-            >
-              {isAdminLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Panel de administración
-            </Button>
+            {isAdmin && (
+              <Button
+                onClick={handleAdminPanelClick}
+                size="lg"
+                variant="secondary"
+                disabled={isAdminLoading}
+              >
+                {isAdminLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Panel de administración
+              </Button>
+            )}
             <Button onClick={handleSignOut} variant="outline" size="lg">
               <LogOut className="mr-2" />
               Cerrar Sesión

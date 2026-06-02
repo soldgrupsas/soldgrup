@@ -199,6 +199,7 @@ const SURCHARGES = {
   RECARGO_NOCTURNO: 0.35,       // 35% - Recargo por trabajo nocturno ordinario
   DOMINICAL_FESTIVO: 0.80,      // 80% - Recargo dominical o festivo
   EXTRA_DIURNA_DOMINICAL: 1.15, // 115% - Hora extra diurna dominical/festivo (solo en rangos 6-8am y 5-7pm)
+  RECARGO_NOCTURNO_DOMINICAL: 1.15, // 115% - Recargo nocturno en dominical/festivo
   EXTRA_NOCTURNA_DOMINICAL: 1.65, // 165% - Hora extra nocturna dominical/festivo
 };
 
@@ -212,6 +213,8 @@ type OvertimeConfigItem = {
   name: string;
   startTime: string; // HH:MM format
   endTime: string;   // HH:MM format
+  startTime2?: string; // Segunda franja horaria (opcional)
+  endTime2?: string;
   percentage: number; // Porcentaje adicional (ej: 25 para +25%)
   description: string;
 };
@@ -229,7 +232,8 @@ const DEFAULT_OVERTIME_CONFIG: OvertimeConfig = {
     { id: "recargo_nocturno", name: "Recargo Nocturno", startTime: "19:00", endTime: "06:00", percentage: 35, description: "Recargo por trabajo nocturno ordinario" },
     { id: "dominical_festivo", name: "Dominical/Festivo", startTime: "00:00", endTime: "23:59", percentage: 80, description: "Recargo dominical o festivo" },
     { id: "extra_diurna_dominical", name: "Extra Diurna Dominical", startTime: "06:00", endTime: "19:00", percentage: 115, description: "Hora extra diurna en dominical/festivo" },
-    { id: "extra_nocturna_dominical", name: "Extra Nocturna Dominical", startTime: "19:00", endTime: "06:00", percentage: 165, description: "Hora extra nocturna en dominical/festivo" },
+    { id: "recargo_nocturno_dominical", name: "Recargo Nocturno Dominical", startTime: "00:00", endTime: "06:00", startTime2: "19:00", endTime2: "23:59", percentage: 115, description: "Recargo nocturno en dominical/festivo" },
+    { id: "extra_nocturna_dominical", name: "Extra Nocturna Dominical", startTime: "00:00", endTime: "06:00", startTime2: "19:00", endTime2: "23:59", percentage: 165, description: "Hora extra nocturna en dominical/festivo" },
   ],
   monthlyWorkHours: 220, // Intensidad laboral mensual en Colombia
 };
@@ -243,6 +247,7 @@ type HoursBreakdown = {
   recargoNocturnoMinutes: number;  // Minutos con recargo nocturno (trabajo ordinario nocturno)
   dominicalFestivoMinutes: number; // Minutos trabajados en dominical/festivo (horario 8am-5pm)
   extraDiurnaDominicalMinutes: number;   // Horas extra diurnas en dominical/festivo (solo en rangos 6-8am y 5-7pm)
+  recargoNocturnoDominicalMinutes: number; // Recargo nocturno en dominical/festivo
   extraNocturnaDominicalMinutes: number; // Horas extra nocturnas en dominical/festivo
   totalMinutes: number;            // Total de minutos trabajados
 };
@@ -256,6 +261,7 @@ type HoursValue = HoursBreakdown & {
   recargoNocturnoValue: number;    // Valor recargo nocturno
   dominicalFestivoValue: number;   // Valor recargo dominical/festivo
   extraDiurnaDominicalValue: number;   // Valor extra diurna dominical
+  recargoNocturnoDominicalValue: number; // Valor recargo nocturno dominical
   extraNocturnaDominicalValue: number; // Valor extra nocturna dominical
   totalExtraValue: number;         // Total valor extras y recargos
   totalValue: number;              // Valor total (normal + extras)
@@ -282,6 +288,13 @@ const normalizeDateToKey = (date: string | Date): string => {
   }
   // Si es un objeto Date, usar toDateKey directamente
   return toDateKey(date);
+};
+
+// Parsea un string YYYY-MM-DD como fecha local (medianoche). Evita que "YYYY-MM-DD" se interprete
+// como UTC y en zonas como Colombia (UTC-5) desplace el día anterior y excluya el primer día de la quincena.
+const parseLocalDateFromKey = (dateKey: string): Date => {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(y, m - 1, d);
 };
 
 // Verifica si una fecha es festivo
@@ -398,6 +411,7 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
     recargoNocturnoMinutes: 0,
     dominicalFestivoMinutes: 0,
     extraDiurnaDominicalMinutes: 0,
+    recargoNocturnoDominicalMinutes: 0,
     extraNocturnaDominicalMinutes: 0,
     totalMinutes: 0,
   };
@@ -407,15 +421,24 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
   }
 
   // Calcular minutos totales trabajados
-  // Para días L-V, descontamos siempre 60 min de almuerzo estándar del tiempo bruto
-  // El adjustment representa tiempo extra trabajado durante el almuerzo (ej: +30 si solo tomó 30 min)
-  const dayOfWeek = entry.getDay();
-  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5; // Lunes a Viernes
-  const standardLunchDeduction = isWeekday ? 60 : 0; // Descontar 1 hora de almuerzo para L-V
-  
   const adjustment = typeof record.time_adjustment_minutes === 'number' ? record.time_adjustment_minutes : 0;
   const rawMinutes = (exit.getTime() - entry.getTime()) / 60000;
-  const totalMinutes = Math.max(0, rawMinutes - standardLunchDeduction + adjustment);
+
+  // Registros procesados por el diálogo de salida tienen adjustment_note.
+  // Si no se indicó un almuerzo distinto en el diálogo, se aplica un descuento automático de almuerzo de 60 min:
+  //  - Lun–Vie no festivo: 60 min (jornada estándar 8–12 / 13–17 con pausa de almuerzo).
+  //  - Sábado con salida ≥ 3:00 PM: 60 min (jornada con extras que cubre la franja de almuerzo).
+  //  - Festivo/Domingo / Sábado corto (< 3 PM): 0 min (no aplica descuento automático).
+  // Si el almuerzo real fue distinto a 60 min, se debe indicar en el diálogo al cerrar la salida.
+  const processedViaDialog = !!record.adjustment_note;
+  const dayOfWeek = entry.getDay();
+  const isWeekday = dayOfWeek !== 0 && dayOfWeek !== 6;
+  const exitMinutesOfDay = exit.getHours() * 60 + exit.getMinutes();
+  const isSaturdayLongShift = dayOfWeek === 6 && exitMinutesOfDay >= 15 * 60; // salida ≥ 3:00 PM
+  const shouldAutoDeductLunch = !processedViaDialog && !isHoliday(entry) && (isWeekday || isSaturdayLongShift);
+  const legacyGapDeduction = shouldAutoDeductLunch ? 60 : 0;
+
+  const totalMinutes = Math.max(0, rawMinutes + adjustment - legacyGapDeduction);
   
   const isDomFestivo = isDominicalOrHoliday(entry);
   const intervals = intervalsForDate(entry);
@@ -445,8 +468,6 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
       const overlapMinutes = (overlapEnd.getTime() - overlapStart.getTime()) / 60000;
       normalMinutes += overlapMinutes;
       
-      // Calcular recargo nocturno dentro del horario normal (si aplica)
-      // Por ejemplo, si el horario normal fuera hasta las 8pm, habría recargo nocturno
       const nightInOverlap = calculateNightMinutes(overlapStart, overlapEnd);
       recargoNocturnoMinutes += nightInOverlap;
     }
@@ -458,129 +479,71 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
   // Calcular minutos nocturnos en las horas extra
   let extraNightMinutes = 0;
   if (extraMinutes > 0) {
-    // Calcular nocturnos en todo el período y restar los del horario normal
     const totalNightMinutes = calculateNightMinutes(entry, exit);
     extraNightMinutes = Math.max(0, totalNightMinutes - recargoNocturnoMinutes);
   }
   
-  // Calcular minutos en rangos de horas extras diurnas (6-8am y 5-7pm) que están fuera del horario normal
-  // Solo estos minutos se cobran como horas extras diurnas
-  let extraDiurnaMinutesInRanges = 0;
-  const current = new Date(entry);
-  while (current < exit) {
-    const hour = current.getHours();
-    const minute = current.getMinutes();
-    const timeInMinutes = hour * 60 + minute;
-    
-    // Verificar si está en los rangos de horas extras diurnas (6-8am y 5-7pm)
-    const isInRange1 = timeInMinutes >= 360 && timeInMinutes < 480; // 6am - 8am
-    const isInRange2 = timeInMinutes >= 1020 && timeInMinutes < 1140; // 5pm - 7pm
-    
-    if (isInRange1 || isInRange2) {
-      // Verificar que este minuto NO está en el horario normal
-      let isInNormalSchedule = false;
-      intervals.forEach((interval) => {
-        const intervalStart = new Date(entry);
-        intervalStart.setHours(
-          Number(interval.start.split(":")[0]),
-          Number(interval.start.split(":")[1]),
-          0, 0
-        );
-        const intervalEnd = new Date(entry);
-        intervalEnd.setHours(
-          Number(interval.end.split(":")[0]),
-          Number(interval.end.split(":")[1]),
-          0, 0
-        );
-        
-        if (current >= intervalStart && current < intervalEnd) {
-          isInNormalSchedule = true;
-        }
-      });
-      
-      // Solo contar si está fuera del horario normal y no es nocturno
-      if (!isInNormalSchedule && !isNightHour(hour)) {
-        extraDiurnaMinutesInRanges++;
-      }
-    }
-    
-    current.setMinutes(current.getMinutes() + 1);
-  }
-  
-  // Las horas extras diurnas son solo las que están en los rangos específicos (6-8am y 5-7pm)
-  // y que no son nocturnas
-  const extraDiurnaMinutes = extraDiurnaMinutesInRanges;
-  
-  // Los minutos restantes fuera del horario normal pero fuera de los rangos de extra diurna
-  // no se cobran como extra diurna (se consideran como tiempo trabajado pero sin recargo extra)
-  const extraDayMinutes = extraDiurnaMinutes;
+  // Extra diurna inicial = todas las horas extra que no son nocturnas (sin considerar aún la cena)
+  // Esta cifra puede estar sub-calculada si hay cena, porque los minutos crudos nocturnos
+  // (extraNightMinutes) se calculan sobre el rango entrada→salida sin descontar la cena.
+  // Más abajo se reasignan los minutos de cena del lado nocturno hacia el diurno.
+  const extraDayMinutesInitial = Math.max(0, extraMinutes - extraNightMinutes);
 
-  // Si es dominical o festivo, todo tiene recargo especial
+  // Si es dominical o festivo, TODAS las horas trabajadas tienen recargo dominical/festivo (80%)
   if (isDomFestivo) {
-    // En días festivos, el horario "normal" conceptual es 8am-5pm (aunque no haya horario laboral)
-    // Las horas extras diurnas solo se cobran en 6-8am y 5-7pm
-    // Calcular minutos en el horario "normal" conceptual (8am-12pm y 1pm-5pm)
-    let normalConceptualMinutes = 0;
-    const conceptualIntervals = [
-      { start: "08:00", end: "12:00" },
-      { start: "13:00", end: "17:00" }
-    ];
-    
-    conceptualIntervals.forEach((interval) => {
-      const intervalStart = new Date(entry);
-      intervalStart.setHours(
-        Number(interval.start.split(":")[0]),
-        Number(interval.start.split(":")[1]),
-        0, 0
-      );
-      const intervalEnd = new Date(entry);
-      intervalEnd.setHours(
-        Number(interval.end.split(":")[0]),
-        Number(interval.end.split(":")[1]),
-        0, 0
-      );
-
-      const overlapStart = new Date(Math.max(entry.getTime(), intervalStart.getTime()));
-      const overlapEnd = new Date(Math.min(exit.getTime(), intervalEnd.getTime()));
-
-      if (overlapEnd > overlapStart) {
-        const overlapMinutes = (overlapEnd.getTime() - overlapStart.getTime()) / 60000;
-        normalConceptualMinutes += overlapMinutes;
-      }
-    });
-    
-    // En festivos, el trabajo en horario "normal" conceptual (8am-5pm) se cobra como dominicalFestivoMinutes
-    // Las horas extras diurnas solo se cobran en los rangos 6-8am y 5-7pm
-    // totalMinutes es la suma real de los componentes para que cuadre con lo mostrado
-    const festivoTotalMinutes = normalConceptualMinutes + extraDiurnaMinutes + extraNightMinutes;
-    
     return {
       normalMinutes: 0,
       extraDiurnaMinutes: 0,
       extraNocturnaMinutes: 0,
       recargoNocturnoMinutes: 0,
-      dominicalFestivoMinutes: normalConceptualMinutes, // Trabajo en horario 8am-5pm en festivo
-      extraDiurnaDominicalMinutes: extraDiurnaMinutes, // Solo en rangos 6-8am y 5-7pm
-      extraNocturnaDominicalMinutes: extraNightMinutes,
-      totalMinutes: festivoTotalMinutes,
+      dominicalFestivoMinutes: totalMinutes,
+      extraDiurnaDominicalMinutes: 0,
+      recargoNocturnoDominicalMinutes: 0,
+      extraNocturnaDominicalMinutes: 0,
+      totalMinutes: totalMinutes,
     };
   }
 
+  // La cena ocurre en horario nocturno (≥ 7 PM): el descuento de la cena se aplica
+  // al extra nocturno crudo, no a la franja diurna. Así, una jornada que termine
+  // a las 11:30 PM con 2h diurnas (5–7 PM) y cena de 30 min en la franja nocturna
+  // mantiene 2h extra diurnas y resta solo del extra nocturno.
+  let dinnerDeductionMins = 0;
+  if (record.adjustment_note) {
+    const dinnerMatch = record.adjustment_note.match(/Cena:\s*(\d+)\s*min/);
+    if (dinnerMatch) dinnerDeductionMins = parseInt(dinnerMatch[1]) || 0;
+  }
+  const dinnerShift = Math.min(dinnerDeductionMins, extraNightMinutes);
+  const finalExtraNight = extraNightMinutes - dinnerShift;
+  // Devolver los minutos de cena al lado diurno (que los había absorbido en el cálculo crudo)
+  const extraDayMinutes = extraDayMinutesInitial + dinnerShift;
+
   // Día normal (no festivo ni domingo)
-  // Las horas ordinarias son normalMinutes (que incluye recargo nocturno conceptualmente)
-  // El totalMinutes debe ser la suma real de los componentes para que cuadre
-  const normalMinutesWithoutRecargo = normalMinutes - recargoNocturnoMinutes;
-  const normalTotalMinutes = normalMinutesWithoutRecargo + recargoNocturnoMinutes + extraDayMinutes + extraNightMinutes;
-  
+  let finalNormalMinutes = normalMinutes - recargoNocturnoMinutes;
+  let finalRecargo = recargoNocturnoMinutes;
+  const classifiedTotal = finalNormalMinutes + finalRecargo + extraDayMinutes + finalExtraNight;
+  if (classifiedTotal > totalMinutes && totalMinutes >= 0) {
+    let excess = classifiedTotal - totalMinutes;
+    const normRed = Math.min(excess, finalNormalMinutes);
+    finalNormalMinutes -= normRed;
+    excess -= normRed;
+    if (excess > 0) {
+      const recRed = Math.min(excess, finalRecargo);
+      finalRecargo -= recRed;
+      excess -= recRed;
+    }
+  }
+
   return {
-    normalMinutes: normalMinutesWithoutRecargo, // Horas normales sin recargo
+    normalMinutes: finalNormalMinutes,
     extraDiurnaMinutes: extraDayMinutes,
-    extraNocturnaMinutes: extraNightMinutes,
-    recargoNocturnoMinutes, // Horas normales con recargo nocturno
+    extraNocturnaMinutes: finalExtraNight,
+    recargoNocturnoMinutes: finalRecargo,
     dominicalFestivoMinutes: 0,
     extraDiurnaDominicalMinutes: 0,
+    recargoNocturnoDominicalMinutes: 0,
     extraNocturnaDominicalMinutes: 0,
-    totalMinutes: normalTotalMinutes,
+    totalMinutes: totalMinutes,
   };
 };
 
@@ -598,15 +561,17 @@ const computeHoursValue = (breakdown: HoursBreakdown, monthlySalary: number): Ho
   // Valor horas extra nocturnas: hora ordinaria + 75%
   const extraNocturnaValue = breakdown.extraNocturnaMinutes * minuteRate * (1 + SURCHARGES.EXTRA_NOCTURNA);
   
-  // Valor recargo nocturno: solo el 35% adicional (la hora base ya está en normalMinutes conceptualmente)
-  // Pero en realidad aquí contamos los minutos completos con recargo
-  const recargoNocturnoValue = breakdown.recargoNocturnoMinutes * minuteRate * (1 + SURCHARGES.RECARGO_NOCTURNO);
+  // Valor recargo nocturno: solo el % de recargo (la hora base ya está cubierta por el salario)
+  const recargoNocturnoValue = breakdown.recargoNocturnoMinutes * minuteRate * SURCHARGES.RECARGO_NOCTURNO;
   
-  // Valor trabajo dominical/festivo ordinario: hora ordinaria + 80%
+  // Valor trabajo dominical/festivo ordinario: hora base + 80% recargo (si es compensado, se ajusta después)
   const dominicalFestivoValue = breakdown.dominicalFestivoMinutes * minuteRate * (1 + SURCHARGES.DOMINICAL_FESTIVO);
   
   // Valor hora extra diurna dominical/festivo: hora ordinaria + 115%
   const extraDiurnaDominicalValue = breakdown.extraDiurnaDominicalMinutes * minuteRate * (1 + SURCHARGES.EXTRA_DIURNA_DOMINICAL);
+  
+  // Valor recargo nocturno dominical: solo el % de recargo (la hora base ya está cubierta)
+  const recargoNocturnoDominicalValue = breakdown.recargoNocturnoDominicalMinutes * minuteRate * SURCHARGES.RECARGO_NOCTURNO_DOMINICAL;
   
   // Valor hora extra nocturna dominical/festivo: hora ordinaria + 165%
   const extraNocturnaDominicalValue = breakdown.extraNocturnaDominicalMinutes * minuteRate * (1 + SURCHARGES.EXTRA_NOCTURNA_DOMINICAL);
@@ -615,15 +580,16 @@ const computeHoursValue = (breakdown: HoursBreakdown, monthlySalary: number): Ho
   const totalExtraValue = 
     extraDiurnaValue + 
     extraNocturnaValue + 
-    (breakdown.recargoNocturnoMinutes * minuteRate * SURCHARGES.RECARGO_NOCTURNO) + // Solo el recargo, no la hora completa
-    (breakdown.dominicalFestivoMinutes * minuteRate * SURCHARGES.DOMINICAL_FESTIVO) +
+    recargoNocturnoValue +
+    dominicalFestivoValue +
     extraDiurnaDominicalValue + 
+    recargoNocturnoDominicalValue +
     extraNocturnaDominicalValue;
   
-  // Valor total
+  // Valor total (para recargos solo se paga el %, no la hora base)
   const totalValue = normalValue + extraDiurnaValue + extraNocturnaValue + 
     recargoNocturnoValue + dominicalFestivoValue + 
-    extraDiurnaDominicalValue + extraNocturnaDominicalValue;
+    extraDiurnaDominicalValue + recargoNocturnoDominicalValue + extraNocturnaDominicalValue;
 
   return {
     ...breakdown,
@@ -634,6 +600,7 @@ const computeHoursValue = (breakdown: HoursBreakdown, monthlySalary: number): Ho
     recargoNocturnoValue,
     dominicalFestivoValue,
     extraDiurnaDominicalValue,
+    recargoNocturnoDominicalValue,
     extraNocturnaDominicalValue,
     totalExtraValue,
     totalValue,
@@ -646,7 +613,7 @@ const computeRecordHoursSimple = (record: AttendanceRecord) => {
   const extraMinutes = breakdown.extraDiurnaMinutes + breakdown.extraNocturnaMinutes +
     breakdown.extraDiurnaDominicalMinutes + breakdown.extraNocturnaDominicalMinutes;
   return {
-    normalMinutes: breakdown.normalMinutes + breakdown.recargoNocturnoMinutes + breakdown.dominicalFestivoMinutes,
+    normalMinutes: breakdown.normalMinutes + breakdown.recargoNocturnoMinutes + breakdown.dominicalFestivoMinutes + breakdown.recargoNocturnoDominicalMinutes,
     extraMinutes,
     totalMinutes: breakdown.totalMinutes,
   };
@@ -883,8 +850,8 @@ const TimeControl = () => {
   
   // Verificar si es el usuario de asistencia (solo puede registrar entrada/salida)
   const isAttendanceUser = user?.email === "asistencia@soldgrup.com";
-  // Verificar si es el usuario administrador que puede agregar horas manualmente
-  const isAdminUser = user?.email === "contacto@soldgrup.com";
+  // Usuarios con acceso completo al módulo (agregar horas manualmente, etc.)
+  const isAdminUser = user?.email === "contacto@soldgrup.com" || user?.email === "contabilidad@soldgrup.com";
   const [initialLoading, setInitialLoading] = useState(false); // Cambiado a false para evitar bloqueo
   const initialLoadRef = useRef(true);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -968,7 +935,59 @@ const TimeControl = () => {
   const resetOvertimeConfig = () => {
     setOvertimeConfig(DEFAULT_OVERTIME_CONFIG);
   };
-  
+
+  // Estado para domingos/festivos compensados (clave: workerId-YYYY-MM-DD)
+  const [compensatedDays, setCompensatedDays] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem('compensatedDays');
+    if (saved) {
+      try { return JSON.parse(saved); } catch { return {}; }
+    }
+    const legacy = localStorage.getItem('compensatedSundays');
+    if (legacy) {
+      try { return JSON.parse(legacy); } catch { return {}; }
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem('compensatedDays', JSON.stringify(compensatedDays));
+  }, [compensatedDays]);
+
+  const toggleCompensatedDay = (workerId: string, date: string) => {
+    setCompensatedDays(prev => {
+      const key = `${workerId}-${date}`;
+      const next = { ...prev, [key]: !prev[key] };
+      if (!next[key]) delete next[key];
+      return next;
+    });
+  };
+
+  const isDayCompensated = (workerId: string, date: string) => {
+    return !!compensatedDays[`${workerId}-${date}`];
+  };
+
+  // Estado para excluir extras individuales del total (workerId -> extraKey -> excluded)
+  const [excludedExtras, setExcludedExtras] = useState<Record<string, Record<string, boolean>>>({});
+
+  const toggleExcludedExtra = (workerId: string, extraKey: string) => {
+    setExcludedExtras(prev => {
+      const workerExclusions = { ...prev[workerId] };
+      if (workerExclusions[extraKey]) {
+        delete workerExclusions[extraKey];
+      } else {
+        workerExclusions[extraKey] = true;
+      }
+      return { ...prev, [workerId]: workerExclusions };
+    });
+  };
+
+  // Estado para expandir/colapsar el desglose día por día de cada categoría de extras
+  const [expandedExtraCategories, setExpandedExtraCategories] = useState<Record<string, boolean>>({});
+  const toggleExpandedExtraCategory = (workerId: string, extraKey: string) => {
+    const k = `${workerId}-${extraKey}`;
+    setExpandedExtraCategories(prev => ({ ...prev, [k]: !prev[k] }));
+  };
+
   const [uploadingEntry, setUploadingEntry] = useState(false);
   const [uploadingExit, setUploadingExit] = useState(false);
   const isUpdatingRecordsRef = useRef(false);
@@ -979,8 +998,11 @@ const TimeControl = () => {
   const [pendingExitFile, setPendingExitFile] = useState<File | null>(null);
   const [pendingExitLocation, setPendingExitLocation] = useState<{ latitude: number | null; longitude: number | null } | null>(null);
   const [pendingExitAdjustment, setPendingExitAdjustment] = useState<{ minutes: number; note: string } | null>(null);
+  const [lunchEnabled, setLunchEnabled] = useState<boolean>(true);
   const [lunchWasNormal, setLunchWasNormal] = useState<boolean>(true);
   const [lunchMinutesTaken, setLunchMinutesTaken] = useState<string>("60");
+  const [dinnerEnabled, setDinnerEnabled] = useState<boolean>(false);
+  const [dinnerMinutesTaken, setDinnerMinutesTaken] = useState<string>("30");
   
   // Estados para certificación de entrada
   const [showEntryCertificationDialog, setShowEntryCertificationDialog] = useState(false);
@@ -1036,8 +1058,12 @@ const TimeControl = () => {
   const [quickManualTime, setQuickManualTime] = useState("");
   const [quickManualDate, setQuickManualDate] = useState("");
   const [quickManualWorkerId, setQuickManualWorkerId] = useState("");
+  const [quickManualLunchEnabled, setQuickManualLunchEnabled] = useState(true);
   const [quickManualLunchNormal, setQuickManualLunchNormal] = useState(true);
   const [quickManualLunchMinutes, setQuickManualLunchMinutes] = useState("60");
+  const [quickManualDinnerEnabled, setQuickManualDinnerEnabled] = useState(false);
+  const [quickManualDinnerMinutes, setQuickManualDinnerMinutes] = useState("30");
+  const [quickManualIsEdit, setQuickManualIsEdit] = useState(false);
   
   // Estados para selección de quincena y mes
   const [selectedFortnight, setSelectedFortnight] = useState<1 | 2>(() => {
@@ -2092,17 +2118,34 @@ const TimeControl = () => {
       const dateTime = new Date(`${quickManualDate}T${quickManualTime}`);
       const timeISO = dateTime.toISOString();
 
-      // Calcular ajuste de almuerzo si es salida
+      // Calcular ajuste de almuerzo y cena si es salida
       let adjustmentMins = 0;
-      let adjustmentNoteText: string | null = null;
+      const notes: string[] = [];
       
-      if (quickManualType === "exit" && !quickManualLunchNormal) {
-        const lunchTaken = parseInt(quickManualLunchMinutes) || 60;
-        adjustmentMins = 60 - lunchTaken;
-        if (adjustmentMins !== 0) {
-          adjustmentNoteText = `Almuerzo: ${lunchTaken} min (ajuste ${adjustmentMins > 0 ? '+' : ''}${adjustmentMins} min)`;
+      if (quickManualType === "exit") {
+        if (quickManualLunchEnabled) {
+          if (quickManualLunchNormal) {
+            adjustmentMins -= 60;
+            notes.push('Almuerzo: 60 min (-60 min)');
+          } else {
+            const lunchTaken = parseInt(quickManualLunchMinutes) || 0;
+            if (lunchTaken > 0) {
+              adjustmentMins -= lunchTaken;
+              notes.push(`Almuerzo: ${lunchTaken} min (-${lunchTaken} min)`);
+            }
+          }
+        }
+        
+        if (quickManualDinnerEnabled) {
+          const dinnerTaken = parseInt(quickManualDinnerMinutes) || 0;
+          if (dinnerTaken > 0) {
+            adjustmentMins -= dinnerTaken;
+            notes.push(`Cena: ${dinnerTaken} min (-${dinnerTaken} min)`);
+          }
         }
       }
+      
+      const adjustmentNoteText = notes.length > 0 ? notes.join(' | ') : 'Sin ajuste de tiempo';
 
       // Verificar si existe registro para la fecha
       const { data: existingRecords, error: queryError } = await supabase
@@ -2204,8 +2247,12 @@ const TimeControl = () => {
       setQuickManualTime("");
       setQuickManualDate("");
       setQuickManualWorkerId("");
+      setQuickManualIsEdit(false);
+      setQuickManualLunchEnabled(true);
       setQuickManualLunchNormal(true);
       setQuickManualLunchMinutes("60");
+      setQuickManualDinnerEnabled(false);
+      setQuickManualDinnerMinutes("30");
     } catch (error: any) {
       console.error("Error saving quick manual time:", error);
       toast({
@@ -2217,13 +2264,28 @@ const TimeControl = () => {
   };
 
   // Función para abrir diálogo de hora manual rápida
-  const openQuickManualDialog = (workerId: string, date: string, type: "entry" | "exit") => {
+  const openQuickManualDialog = (workerId: string, date: string, type: "entry" | "exit", existingTime?: string) => {
     setQuickManualWorkerId(workerId);
     setQuickManualDate(date);
     setQuickManualType(type);
-    setQuickManualTime(type === "entry" ? "08:00" : "17:00");
+    setQuickManualIsEdit(!!existingTime);
+    if (existingTime) {
+      const d = new Date(existingTime);
+      const hh = d.getHours().toString().padStart(2, "0");
+      const mm = d.getMinutes().toString().padStart(2, "0");
+      setQuickManualTime(`${hh}:${mm}`);
+    } else {
+      setQuickManualTime(type === "entry" ? "08:00" : "17:00");
+    }
+    // En domingo/festivo el almuerzo no se descuenta por defecto
+    // (si hubo almuerzo, el usuario debe activarlo manualmente).
+    const targetDate = parseLocalDateFromKey(date);
+    const isDomFestivoTarget = isDominicalOrHoliday(targetDate);
+    setQuickManualLunchEnabled(!isDomFestivoTarget);
     setQuickManualLunchNormal(true);
     setQuickManualLunchMinutes("60");
+    setQuickManualDinnerEnabled(false);
+    setQuickManualDinnerMinutes("30");
     setShowQuickManualDialog(true);
   };
 
@@ -2383,6 +2445,7 @@ const TimeControl = () => {
   // Tipo para totales detallados por trabajador
   type WorkerTotals = HoursBreakdown & {
     hourlyRate: number;
+    compensatedDominicalMinutes: number;
     totalExtraValue: number;
     totalValue: number;
   };
@@ -2392,19 +2455,37 @@ const TimeControl = () => {
     const { start, end } = dateRange;
     
     // Filtrar registros por el rango de fechas seleccionado (quincena/mes)
+    // Usar parseLocalDateFromKey para que YYYY-MM-DD no se interprete como UTC y excluya el primer día
     const filteredRecords = (start && end) 
       ? attendanceRecords.filter((record) => {
-          const recordDate = new Date(record.date);
-          recordDate.setHours(0, 0, 0, 0);
+          const recordDate = parseLocalDateFromKey(record.date);
           return recordDate >= start && recordDate <= end;
         })
       : attendanceRecords;
     
     filteredRecords.forEach((record) => {
       const key = record.worker_id;
-      const stats = computeRecordHours(record);
+      let stats = computeRecordHours(record);
       const worker = workers.find(w => w.id === key);
       const salary = worker?.sueldo || 0;
+      
+      // Si es domingo/festivo compensado, todas las horas pagan solo recargo dominical (80%)
+      const recordDate = parseLocalDateFromKey(record.date);
+      let compensatedMinutesThisRecord = 0;
+      if (isDominicalOrHoliday(recordDate) && isDayCompensated(key, record.date)) {
+        const allDomMinutes = stats.dominicalFestivoMinutes + 
+          stats.extraDiurnaDominicalMinutes + 
+          stats.extraNocturnaDominicalMinutes +
+          stats.recargoNocturnoDominicalMinutes;
+        compensatedMinutesThisRecord = allDomMinutes;
+        stats = {
+          ...stats,
+          dominicalFestivoMinutes: allDomMinutes,
+          extraDiurnaDominicalMinutes: 0,
+          extraNocturnaDominicalMinutes: 0,
+          recargoNocturnoDominicalMinutes: 0,
+        };
+      }
       
       if (!totals[key]) {
         totals[key] = {
@@ -2414,9 +2495,11 @@ const TimeControl = () => {
           recargoNocturnoMinutes: 0,
           dominicalFestivoMinutes: 0,
           extraDiurnaDominicalMinutes: 0,
+          recargoNocturnoDominicalMinutes: 0,
           extraNocturnaDominicalMinutes: 0,
           totalMinutes: 0,
           hourlyRate: salary / MONTHLY_WORK_HOURS,
+          compensatedDominicalMinutes: 0,
           totalExtraValue: 0,
           totalValue: 0,
         };
@@ -2429,8 +2512,10 @@ const TimeControl = () => {
       totals[key].recargoNocturnoMinutes += stats.recargoNocturnoMinutes;
       totals[key].dominicalFestivoMinutes += stats.dominicalFestivoMinutes;
       totals[key].extraDiurnaDominicalMinutes += stats.extraDiurnaDominicalMinutes;
+      totals[key].recargoNocturnoDominicalMinutes += stats.recargoNocturnoDominicalMinutes;
       totals[key].extraNocturnaDominicalMinutes += stats.extraNocturnaDominicalMinutes;
       totals[key].totalMinutes += stats.totalMinutes;
+      totals[key].compensatedDominicalMinutes += compensatedMinutesThisRecord;
     });
     
     // Calcular valores en dinero para cada trabajador
@@ -2441,10 +2526,60 @@ const TimeControl = () => {
       const values = computeHoursValue(t, salary);
       t.totalExtraValue = values.totalExtraValue;
       t.totalValue = values.totalValue;
+      
+      // Para domingos compensados: descontar la hora base (solo se paga el 80% de recargo)
+      if (t.compensatedDominicalMinutes > 0) {
+        const minuteRate = salary / MONTHLY_WORK_HOURS / 60;
+        const baseDeduction = t.compensatedDominicalMinutes * minuteRate;
+        t.totalExtraValue -= baseDeduction;
+        t.totalValue -= baseDeduction;
+      }
     });
     
     return totals;
-  }, [attendanceRecords, workers, dateRange]);
+  }, [attendanceRecords, workers, dateRange, compensatedDays]);
+
+  // Desglose día por día por trabajador (para mostrar en el desplegable de cada categoría)
+  const dailyBreakdownsByWorker = useMemo(() => {
+    const map: Record<string, Array<{ date: string; breakdown: HoursBreakdown; entryTime: string | null; exitTime: string | null; adjustmentNote: string | null; }>> = {};
+    const { start, end } = dateRange;
+    const filteredRecords = (start && end)
+      ? attendanceRecords.filter((record) => {
+          const recordDate = parseLocalDateFromKey(record.date);
+          return recordDate >= start && recordDate <= end;
+        })
+      : attendanceRecords;
+    filteredRecords.forEach((record) => {
+      const wid = record.worker_id;
+      if (!map[wid]) map[wid] = [];
+      let breakdown = computeRecordHours(record);
+      // Aplicar misma compensación dominical que en weeklyTotals
+      const recordDate = parseLocalDateFromKey(record.date);
+      if (isDominicalOrHoliday(recordDate) && isDayCompensated(wid, record.date)) {
+        const allDom =
+          breakdown.dominicalFestivoMinutes +
+          breakdown.extraDiurnaDominicalMinutes +
+          breakdown.extraNocturnaDominicalMinutes +
+          breakdown.recargoNocturnoDominicalMinutes;
+        breakdown = {
+          ...breakdown,
+          dominicalFestivoMinutes: allDom,
+          extraDiurnaDominicalMinutes: 0,
+          extraNocturnaDominicalMinutes: 0,
+          recargoNocturnoDominicalMinutes: 0,
+        };
+      }
+      map[wid].push({
+        date: record.date,
+        breakdown,
+        entryTime: record.entry_time ?? null,
+        exitTime: record.exit_time ?? null,
+        adjustmentNote: record.adjustment_note ?? null,
+      });
+    });
+    Object.values(map).forEach((arr) => arr.sort((a, b) => a.date.localeCompare(b.date)));
+    return map;
+  }, [attendanceRecords, dateRange, compensatedDays]);
 
   // Only disable entry button if there's a complete entry record (with photo)
   const entryButtonDisabled =
@@ -2632,6 +2767,10 @@ const TimeControl = () => {
           latitude: location.latitude,
           longitude: location.longitude,
         });
+        // En domingo/festivo el almuerzo no se descuenta por defecto
+        // (si hubo almuerzo, el usuario debe activarlo manualmente).
+        const isDomFestivoToday = isDominicalOrHoliday(new Date());
+        setLunchEnabled(!isDomFestivoToday);
         setLunchWasNormal(true);
         setLunchMinutesTaken("60");
         setShowExitAdjustmentDialog(true);
@@ -2898,6 +3037,10 @@ const TimeControl = () => {
               latitude: location.latitude,
               longitude: location.longitude,
             });
+            // En domingo/festivo el almuerzo no se descuenta por defecto
+            // (si hubo almuerzo, el usuario debe activarlo manualmente).
+            const isDomFestivoToday = isDominicalOrHoliday(new Date());
+            setLunchEnabled(!isDomFestivoToday);
             setLunchWasNormal(true);
             setLunchMinutesTaken("60");
             setShowExitAdjustmentDialog(true);
@@ -3407,18 +3550,30 @@ const TimeControl = () => {
         console.log("Usando ubicación capturada para salida:", location.latitude, location.longitude);
       }
 
-      // Calcular ajuste basado en tiempo de almuerzo
-      // Almuerzo normal = 60 minutos. Si tomó menos, la diferencia son minutos extra trabajados.
+      // Calcular ajuste basado en tiempo de almuerzo y cena
       let adjustmentMins = 0;
-      let adjustmentNoteText: string | null = null;
-      
-      if (!lunchWasNormal) {
-        const lunchTaken = parseInt(lunchMinutesTaken, 10) || 60;
-        adjustmentMins = 60 - lunchTaken; // Diferencia: minutos extra trabajados
-        if (adjustmentMins !== 0) {
-          adjustmentNoteText = `Almuerzo: ${lunchTaken} min (${adjustmentMins > 0 ? '+' : ''}${adjustmentMins} min)`;
+      const notes: string[] = [];
+
+      if (lunchEnabled) {
+        if (lunchWasNormal) {
+          adjustmentMins -= 60;
+          notes.push('Almuerzo: 60 min (-60 min)');
+        } else {
+          const lunchTaken = parseInt(lunchMinutesTaken, 10) || 0;
+          if (lunchTaken > 0) {
+            adjustmentMins -= lunchTaken;
+            notes.push(`Almuerzo: ${lunchTaken} min (-${lunchTaken} min)`);
+          }
         }
       }
+
+      if (dinnerEnabled) {
+        const dinnerTaken = parseInt(dinnerMinutesTaken, 10) || 0;
+        adjustmentMins -= dinnerTaken;
+        notes.push(`Cena: ${dinnerTaken} min (-${dinnerTaken} min)`);
+      }
+
+      const adjustmentNoteText = notes.length > 0 ? notes.join(' | ') : 'Sin ajuste de tiempo';
 
       // Check if record exists for today
       const { data: existingRecords, error: queryError } = await supabase
@@ -3694,8 +3849,11 @@ const TimeControl = () => {
     setPendingExitFile(null);
     setPendingExitLocation(null);
     setPendingExitAdjustment(null);
+    setLunchEnabled(true);
     setLunchWasNormal(true);
     setLunchMinutesTaken("60");
+    setDinnerEnabled(false);
+    setDinnerMinutesTaken("30");
     setExitHadInjury(null);
     setExitInjuryNotes("");
     setExitHadIncident(null);
@@ -3716,7 +3874,11 @@ const TimeControl = () => {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    // Usar parseLocalDateFromKey para evitar que "YYYY-MM-DD" se interprete como UTC
+    // y en Colombia (UTC-5) muestre el día anterior.
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateString)
+      ? parseLocalDateFromKey(dateString)
+      : new Date(dateString);
     return date.toLocaleDateString("es-CO", {
       year: "numeric",
       month: "long",
@@ -3730,6 +3892,7 @@ const TimeControl = () => {
       style: "currency",
       currency: "COP",
       minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     }).format(value);
   };
 
@@ -3740,7 +3903,11 @@ const TimeControl = () => {
   };
 
   const formatDateShort = (dateString: string) => {
-    const date = new Date(dateString);
+    // Usar parseLocalDateFromKey para evitar que "YYYY-MM-DD" se interprete como UTC
+    // y en Colombia (UTC-5) muestre el día anterior.
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateString)
+      ? parseLocalDateFromKey(dateString)
+      : new Date(dateString);
     return date.toLocaleDateString("es-CO", {
       weekday: "short",
       month: "short",
@@ -3770,8 +3937,7 @@ const TimeControl = () => {
         return true;
       }
 
-      const recordDate = new Date(record.date);
-      recordDate.setHours(0, 0, 0, 0);
+      const recordDate = parseLocalDateFromKey(record.date);
       const { start, end } = dateRange;
 
       if (!start || !end) return true;
@@ -3806,8 +3972,7 @@ const TimeControl = () => {
     if (!start || !end || dateFilter !== "fortnight") return null;
 
     const fortnightRecords = attendanceRecords.filter((record) => {
-      const recordDate = new Date(record.date);
-      recordDate.setHours(0, 0, 0, 0);
+      const recordDate = parseLocalDateFromKey(record.date);
       return recordDate >= start && recordDate <= end;
     });
 
@@ -4283,10 +4448,40 @@ const TimeControl = () => {
                               <span className="text-sm font-medium text-muted-foreground">%</span>
                             </div>
                             <p className="text-xs text-muted-foreground mt-1">
-                              Valor: hora ordinaria + {item.percentage}%
+                              {item.id === 'recargo_nocturno' || item.id === 'recargo_nocturno_dominical'
+                                ? `Valor: solo el ${item.percentage}% de recargo`
+                                : item.id === 'dominical_festivo'
+                                ? `Valor: hora ordinaria + ${item.percentage}% (compensado: solo el ${item.percentage}% de recargo)`
+                                : `Valor: hora ordinaria + ${item.percentage}%`}
                             </p>
                           </div>
                         </div>
+                        
+                        {/* Segunda franja horaria (si aplica) */}
+                        {item.startTime2 !== undefined && item.endTime2 !== undefined && (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 pt-3 border-t border-dashed">
+                            <div>
+                              <Label htmlFor={`start2-${item.id}`}>Hora Inicio (Franja 2)</Label>
+                              <Input
+                                id={`start2-${item.id}`}
+                                type="time"
+                                value={item.startTime2}
+                                onChange={(e) => updateOvertimeConfigItem(item.id, 'startTime2', e.target.value)}
+                                className="mt-1"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor={`end2-${item.id}`}>Hora Fin (Franja 2)</Label>
+                              <Input
+                                id={`end2-${item.id}`}
+                                type="time"
+                                value={item.endTime2}
+                                onChange={(e) => updateOvertimeConfigItem(item.id, 'endTime2', e.target.value)}
+                                className="mt-1"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -4757,11 +4952,20 @@ const TimeControl = () => {
                       ? "bg-orange-50 border border-orange-200" 
                       : ""
                   }`}>
-                    <p className={`text-sm ${
-                      todaysRecordForSelectedWorker.is_manual_entry 
-                        ? "text-orange-700 font-medium" 
-                        : "text-muted-foreground"
-                    }`}>
+                    <p 
+                      className={`text-sm ${
+                        todaysRecordForSelectedWorker.is_manual_entry 
+                          ? "text-orange-700 font-medium cursor-pointer hover:underline" 
+                          : "text-muted-foreground"
+                      }`}
+                      onClick={() => {
+                        if (todaysRecordForSelectedWorker.is_manual_entry && isAdminUser && selectedWorkerId) {
+                          const today = new Date();
+                          const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+                          openQuickManualDialog(selectedWorkerId, dateKey, "entry", todaysRecordForSelectedWorker.entry_time!);
+                        }
+                      }}
+                    >
                       Entrada: {getEntryTimeLabel()}
                       {todaysRecordForSelectedWorker.is_manual_entry && (
                         <span className="ml-1">🔶 Manual</span>
@@ -4791,11 +4995,20 @@ const TimeControl = () => {
                       ? "bg-orange-50 border border-orange-200" 
                       : ""
                   }`}>
-                    <p className={`text-sm ${
-                      todaysRecordForSelectedWorker.is_manual_exit 
-                        ? "text-orange-700 font-medium" 
-                        : "text-muted-foreground"
-                    }`}>
+                    <p 
+                      className={`text-sm ${
+                        todaysRecordForSelectedWorker.is_manual_exit 
+                          ? "text-orange-700 font-medium cursor-pointer hover:underline" 
+                          : "text-muted-foreground"
+                      }`}
+                      onClick={() => {
+                        if (todaysRecordForSelectedWorker.is_manual_exit && isAdminUser && selectedWorkerId) {
+                          const today = new Date();
+                          const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+                          openQuickManualDialog(selectedWorkerId, dateKey, "exit", todaysRecordForSelectedWorker.exit_time!);
+                        }
+                      }}
+                    >
                       Salida: {formatTime(todaysRecordForSelectedWorker.exit_time)}
                       {todaysRecordForSelectedWorker.is_manual_exit && (
                         <span className="ml-1">🔶 Manual</span>
@@ -4845,16 +5058,36 @@ const TimeControl = () => {
                   const worker = workers.find((w) => w.id === workerId);
                   const hasSalary = worker?.sueldo && worker.sueldo > 0;
                   const formatMoney = (value: number) => 
-                    new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(value);
+                    new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(value);
                   
-                  // Calcular totales de horas
-                  // Horas ordinarias = normales + recargo nocturno + dominical/festivo
-                  const totalOrdinaryMinutes = totals.normalMinutes + totals.recargoNocturnoMinutes + totals.dominicalFestivoMinutes;
-                  // Horas extra = todas las extras
+                  const totalOrdinaryMinutes = totals.normalMinutes + totals.recargoNocturnoMinutes + 
+                    totals.dominicalFestivoMinutes + totals.recargoNocturnoDominicalMinutes;
                   const totalExtraMinutes = totals.extraDiurnaMinutes + totals.extraNocturnaMinutes + 
                     totals.extraDiurnaDominicalMinutes + totals.extraNocturnaDominicalMinutes;
-                  // Total trabajado = ordinarias + extras
                   const calculatedTotalMinutes = totalOrdinaryMinutes + totalExtraMinutes;
+
+                  const salary = worker?.sueldo || 0;
+                  const values = hasSalary ? computeHoursValue(totals, salary) : null;
+                  let compensationDeduction = 0;
+                  if (values && totals.compensatedDominicalMinutes > 0) {
+                    const minuteRate = salary / MONTHLY_WORK_HOURS / 60;
+                    compensationDeduction = totals.compensatedDominicalMinutes * minuteRate;
+                  }
+
+                  const extraItems = [
+                    { key: 'extraDiurna', label: 'Extra diurna (+25%)', minutes: totals.extraDiurnaMinutes, value: values?.extraDiurnaValue ?? 0 },
+                    { key: 'extraNocturna', label: 'Extra nocturna (+75%)', minutes: totals.extraNocturnaMinutes, value: values?.extraNocturnaValue ?? 0 },
+                    { key: 'recargoNocturno', label: 'Recargo nocturno (+35%)', minutes: totals.recargoNocturnoMinutes, value: values?.recargoNocturnoValue ?? 0 },
+                    { key: 'dominicalFestivo', label: 'Dominical/Festivo (+80%)', minutes: totals.dominicalFestivoMinutes, value: (values?.dominicalFestivoValue ?? 0) - compensationDeduction },
+                    { key: 'extraDiurnaDominical', label: 'Extra diurna dom/fest (+115%)', minutes: totals.extraDiurnaDominicalMinutes, value: values?.extraDiurnaDominicalValue ?? 0 },
+                    { key: 'recargoNocturnoDominical', label: 'Recargo noct. dom/fest (+115%)', minutes: totals.recargoNocturnoDominicalMinutes, value: values?.recargoNocturnoDominicalValue ?? 0 },
+                    { key: 'extraNocturnaDominical', label: 'Extra nocturna dom/fest (+165%)', minutes: totals.extraNocturnaDominicalMinutes, value: values?.extraNocturnaDominicalValue ?? 0 },
+                  ].filter(item => item.minutes > 0);
+
+                  const workerToggles = excludedExtras[workerId] || {};
+                  const filteredTotal = extraItems.reduce((sum, item) => 
+                    sum + (workerToggles[item.key] ? 0 : item.value), 0);
+                  const allEnabled = extraItems.every(item => !workerToggles[item.key]);
                   
                   return (
                     <Card key={`totals-${workerId}`} className="p-4 bg-gradient-to-br from-muted/50 to-muted/30 border-l-4 border-l-primary">
@@ -4875,7 +5108,6 @@ const TimeControl = () => {
                         </div>
                       </div>
                       
-                      {/* Desglose de horas */}
                       <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                         <div className="p-2 bg-background/50 rounded">
                           <p className="text-muted-foreground">Horas ordinarias</p>
@@ -4887,64 +5119,139 @@ const TimeControl = () => {
                         </div>
                       </div>
                       
-                      {/* Desglose detallado de extras */}
-                      {totalExtraMinutes > 0 && (
-                        <div className="space-y-1 text-xs border-t pt-2">
+                      {extraItems.length > 0 && (
+                        <div className="space-y-1.5 text-xs border-t pt-2">
                           <p className="font-medium text-muted-foreground mb-1">Desglose de extras y recargos:</p>
-                          {totals.extraDiurnaMinutes > 0 && (
-                            <div className="flex justify-between">
-                              <span>Extra diurna (+25%)</span>
-                              <span className="font-medium">{formatMinutes(totals.extraDiurnaMinutes)}</span>
-                            </div>
-                          )}
-                          {totals.extraNocturnaMinutes > 0 && (
-                            <div className="flex justify-between">
-                              <span>Extra nocturna (+75%)</span>
-                              <span className="font-medium">{formatMinutes(totals.extraNocturnaMinutes)}</span>
-                            </div>
-                          )}
-                          {totals.recargoNocturnoMinutes > 0 && (
-                            <div className="flex justify-between">
-                              <span>Recargo nocturno (+35%)</span>
-                              <span className="font-medium">{formatMinutes(totals.recargoNocturnoMinutes)}</span>
-                            </div>
-                          )}
-                          {totals.dominicalFestivoMinutes > 0 && (
-                            <div className="flex justify-between">
-                              <span>Dominical/Festivo (+80%)</span>
-                              <span className="font-medium">{formatMinutes(totals.dominicalFestivoMinutes)}</span>
-                            </div>
-                          )}
-                          {totals.extraDiurnaDominicalMinutes > 0 && (
-                            <div className="flex justify-between">
-                              <span>Extra diurna dom/fest (+115%)</span>
-                              <span className="font-medium">{formatMinutes(totals.extraDiurnaDominicalMinutes)}</span>
-                            </div>
-                          )}
-                          {totals.extraNocturnaDominicalMinutes > 0 && (
-                            <div className="flex justify-between">
-                              <span>Extra nocturna dom/fest (+165%)</span>
-                              <span className="font-medium">{formatMinutes(totals.extraNocturnaDominicalMinutes)}</span>
-                            </div>
-                          )}
+                          {extraItems.map((item) => {
+                            const isExcluded = !!workerToggles[item.key];
+                            const isExpanded = !!expandedExtraCategories[`${workerId}-${item.key}`];
+                            const minutesKey: keyof HoursBreakdown = (
+                              item.key === 'extraDiurna' ? 'extraDiurnaMinutes' :
+                              item.key === 'extraNocturna' ? 'extraNocturnaMinutes' :
+                              item.key === 'recargoNocturno' ? 'recargoNocturnoMinutes' :
+                              item.key === 'dominicalFestivo' ? 'dominicalFestivoMinutes' :
+                              item.key === 'extraDiurnaDominical' ? 'extraDiurnaDominicalMinutes' :
+                              item.key === 'recargoNocturnoDominical' ? 'recargoNocturnoDominicalMinutes' :
+                              'extraNocturnaDominicalMinutes'
+                            );
+                            const dailyEntries = (dailyBreakdownsByWorker[workerId] || [])
+                              .filter((d) => (d.breakdown[minutesKey] as number) > 0);
+                            return (
+                              <div key={item.key} className={`rounded px-1 transition-colors ${isExcluded ? "opacity-40" : ""}`}>
+                                <div className="flex items-center justify-between gap-2 py-0.5">
+                                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={!isExcluded}
+                                      onChange={() => toggleExcludedExtra(workerId, item.key)}
+                                      className="h-3 w-3 rounded border-gray-300 accent-primary cursor-pointer"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleExpandedExtraCategory(workerId, item.key)}
+                                      className="flex items-center gap-1 flex-1 min-w-0 text-left hover:underline cursor-pointer"
+                                      title={isExpanded ? "Ocultar detalle por día" : "Ver detalle por día"}
+                                    >
+                                      <span className="text-muted-foreground text-[10px]">{isExpanded ? '▼' : '▶'}</span>
+                                      <span className={`truncate ${isExcluded ? "line-through" : ""}`}>
+                                        {item.label}
+                                        {item.key === 'dominicalFestivo' && Object.keys(compensatedDays).some(k => k.startsWith(workerId + '-') && compensatedDays[k]) && (
+                                          <span className="ml-1 text-blue-600 text-[10px]">(comp.)</span>
+                                        )}
+                                      </span>
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="font-medium">{formatMinutes(item.minutes)}</span>
+                                    {hasSalary && (
+                                      <span className={`font-medium min-w-[80px] text-right ${isExcluded ? "line-through text-muted-foreground" : "text-green-600"}`}>
+                                        {formatMoney(item.value)}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                {isExpanded && (
+                                  <div className="ml-6 mt-1 mb-2 border-l-2 border-muted pl-2 space-y-0.5">
+                                    {dailyEntries.length === 0 ? (
+                                      <p className="text-[11px] text-muted-foreground italic">Sin registros que aporten a esta categoría.</p>
+                                    ) : (
+                                      <>
+                                        {dailyEntries.map((d) => {
+                                          const mins = d.breakdown[minutesKey] as number;
+                                          const dayValue = hasSalary ? mins * (totals.hourlyRate / 60) * (
+                                            item.key === 'extraDiurna' ? (1 + SURCHARGES.EXTRA_DIURNA) :
+                                            item.key === 'extraNocturna' ? (1 + SURCHARGES.EXTRA_NOCTURNA) :
+                                            item.key === 'recargoNocturno' ? SURCHARGES.RECARGO_NOCTURNO :
+                                            item.key === 'dominicalFestivo' ? (1 + SURCHARGES.DOMINICAL_FESTIVO) :
+                                            item.key === 'extraDiurnaDominical' ? (1 + SURCHARGES.EXTRA_DIURNA_DOMINICAL) :
+                                            item.key === 'recargoNocturnoDominical' ? SURCHARGES.RECARGO_NOCTURNO_DOMINICAL :
+                                            (1 + SURCHARGES.EXTRA_NOCTURNA_DOMINICAL)
+                                          ) : 0;
+                                          const entryStr = d.entryTime ? new Date(d.entryTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--';
+                                          const exitStr = d.exitTime ? new Date(d.exitTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--';
+                                          return (
+                                            <div key={`${item.key}-${d.date}`} className="flex items-center justify-between gap-2 text-[11px]">
+                                              <div className="flex flex-col flex-1 min-w-0">
+                                                <span className="font-medium text-foreground">{formatDateShort(d.date)}</span>
+                                                <span className="text-muted-foreground">
+                                                  {entryStr} → {exitStr}
+                                                  {d.adjustmentNote && d.adjustmentNote !== 'Sin ajuste de tiempo' && (
+                                                    <span className="ml-1 text-amber-600 truncate" title={d.adjustmentNote}>· {d.adjustmentNote}</span>
+                                                  )}
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                <span className="font-medium">{formatMinutes(mins)}</span>
+                                                {hasSalary && (
+                                                  <span className="font-medium min-w-[80px] text-right text-green-700">
+                                                    {formatMoney(dayValue)}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                        <div className="flex items-center justify-between gap-2 pt-1 mt-1 border-t border-dashed text-[11px]">
+                                          <span className="text-muted-foreground">Suma ({dailyEntries.length} {dailyEntries.length === 1 ? 'día' : 'días'})</span>
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-semibold">{formatMinutes(item.minutes)}</span>
+                                            {hasSalary && (
+                                              <span className="font-semibold min-w-[80px] text-right text-green-700">{formatMoney(item.value)}</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                       
-                      {/* Valores en dinero */}
-                      {hasSalary && totalExtraMinutes > 0 && (
+                      {hasSalary && extraItems.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-dashed">
                           <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium">Valor extras y recargos:</span>
-                            <span className="text-lg font-bold text-green-600">
-                              {formatMoney(totals.totalExtraValue)}
+                            <span className="text-sm font-medium">
+                              Valor extras y recargos{!allEnabled && <span className="text-[10px] text-amber-600 ml-1">(filtrado)</span>}:
+                            </span>
+                            <span className={`text-lg font-bold ${allEnabled ? "text-green-600" : "text-amber-600"}`}>
+                              {formatMoney(filteredTotal)}
                             </span>
                           </div>
+                          {!allEnabled && (
+                            <div className="flex justify-between items-center mt-1">
+                              <span className="text-[10px] text-muted-foreground">Total completo (sin filtro):</span>
+                              <span className="text-xs text-muted-foreground">{formatMoney(totals.totalExtraValue)}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                       
-                      {!hasSalary && totalExtraMinutes > 0 && (
+                      {!hasSalary && extraItems.length > 0 && (
                         <p className="text-xs text-amber-600 mt-2 italic">
-                          ⚠️ Registra el sueldo del trabajador para ver el valor en dinero
+                          Registra el sueldo del trabajador para ver el valor en dinero
                         </p>
                       )}
                     </Card>
@@ -5116,9 +5423,34 @@ const TimeControl = () => {
                         </TableCell>
                         {fortnightDays.map((day) => {
                           const record = getRecordForWorkerAndDate(worker.id, day);
+                          const isDaySunday = day.getDay() === 0;
+                          const dateKey = toDateKey(day);
+                          const isDayHoliday = isHolidayDate(dateKey);
+                          const isDominicalOrFestivo = isDaySunday || isDayHoliday;
+                          const isCompensated = isDominicalOrFestivo && isDayCompensated(worker.id, dateKey);
                           return (
                             <TableCell key={day.toISOString()} className="p-2">
                               <div className="flex flex-col gap-1 min-h-[60px]">
+                                {isDominicalOrFestivo && (
+                                  <label
+                                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium cursor-pointer select-none transition-colors ${
+                                      isCompensated
+                                        ? "bg-blue-100 text-blue-700 border border-blue-300"
+                                        : "bg-muted/50 text-muted-foreground border border-transparent hover:bg-muted"
+                                    }`}
+                                    title={isCompensated 
+                                      ? `${isDaySunday ? "Domingo" : "Festivo"} compensado: solo paga recargo 80%` 
+                                      : `Marcar como ${isDaySunday ? "domingo" : "festivo"} compensado`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isCompensated}
+                                      onChange={() => toggleCompensatedDay(worker.id, dateKey)}
+                                      className="h-3 w-3 rounded border-gray-300"
+                                    />
+                                    Comp.
+                                  </label>
+                                )}
                                 {/* Entrada */}
                                 <div className={`flex items-center justify-center p-2 rounded border min-h-[28px] ${
                                   record?.is_manual_entry 
@@ -5127,24 +5459,30 @@ const TimeControl = () => {
                                 }`}>
                                   {record?.entry_time ? (
                                     <button
-                                      onClick={() => record.entry_photo_url && setViewingPhoto({
-                                        url: record.entry_photo_url,
-                                        latitude: record.entry_latitude,
-                                        longitude: record.entry_longitude,
-                                        type: "entry",
-                                        entry_conditions_ok: record.entry_conditions_ok,
-                                        entry_conditions_notes: record.entry_conditions_notes,
-                                      })}
+                                      onClick={() => {
+                                        if (record.is_manual_entry && isAdminUser) {
+                                          openQuickManualDialog(worker.id, toDateKey(day), "entry", record.entry_time!);
+                                        } else if (record.entry_photo_url) {
+                                          setViewingPhoto({
+                                            url: record.entry_photo_url,
+                                            latitude: record.entry_latitude,
+                                            longitude: record.entry_longitude,
+                                            type: "entry",
+                                            entry_conditions_ok: record.entry_conditions_ok,
+                                            entry_conditions_notes: record.entry_conditions_notes,
+                                          });
+                                        }
+                                      }}
                                       className={`text-sm font-medium ${
                                         record.is_manual_entry
-                                          ? "text-orange-700"
+                                          ? "text-orange-700 hover:text-orange-900 hover:underline cursor-pointer"
                                           : record.entry_photo_url
                                           ? "text-green-700 hover:text-green-900 hover:underline cursor-pointer"
                                           : "text-green-700"
                                       }`}
                                       title={
                                         record.is_manual_entry 
-                                          ? "Entrada agregada manualmente" 
+                                          ? "Clic para editar entrada manual" 
                                           : record.entry_photo_url 
                                           ? "Clic para ver foto" 
                                           : ""
@@ -5177,28 +5515,34 @@ const TimeControl = () => {
                                 }`}>
                                   {record?.exit_time ? (
                                     <button
-                                      onClick={() => record.exit_photo_url && setViewingPhoto({
-                                        url: record.exit_photo_url,
-                                        latitude: record.exit_latitude,
-                                        longitude: record.exit_longitude,
-                                        type: "exit",
-                                        exit_had_injury: record.exit_had_injury,
-                                        exit_injury_notes: record.exit_injury_notes,
-                                        exit_had_incident: record.exit_had_incident,
-                                        exit_incident_notes: record.exit_incident_notes,
-                                        exit_conditions_ok: record.exit_conditions_ok,
-                                        exit_conditions_notes: record.exit_conditions_notes,
-                                      })}
+                                      onClick={() => {
+                                        if (record.is_manual_exit && isAdminUser) {
+                                          openQuickManualDialog(worker.id, toDateKey(day), "exit", record.exit_time!);
+                                        } else if (record.exit_photo_url) {
+                                          setViewingPhoto({
+                                            url: record.exit_photo_url,
+                                            latitude: record.exit_latitude,
+                                            longitude: record.exit_longitude,
+                                            type: "exit",
+                                            exit_had_injury: record.exit_had_injury,
+                                            exit_injury_notes: record.exit_injury_notes,
+                                            exit_had_incident: record.exit_had_incident,
+                                            exit_incident_notes: record.exit_incident_notes,
+                                            exit_conditions_ok: record.exit_conditions_ok,
+                                            exit_conditions_notes: record.exit_conditions_notes,
+                                          });
+                                        }
+                                      }}
                                       className={`text-sm font-medium ${
                                         record.is_manual_exit
-                                          ? "text-orange-700"
+                                          ? "text-orange-700 hover:text-orange-900 hover:underline cursor-pointer"
                                           : record.exit_photo_url
                                           ? "text-red-700 hover:text-red-900 hover:underline cursor-pointer"
                                           : "text-red-700"
                                       }`}
                                       title={
                                         record.is_manual_exit 
-                                          ? "Salida agregada manualmente" 
+                                          ? "Clic para editar salida manual" 
                                           : record.exit_photo_url 
                                           ? "Clic para ver foto" 
                                           : ""
@@ -5277,11 +5621,20 @@ const TimeControl = () => {
                             <TableHead>Hora Entrada</TableHead>
                             <TableHead>Hora Salida</TableHead>
                             <TableHead>Ajuste</TableHead>
+                            <TableHead>Desglose</TableHead>
                             <TableHead>Fotos</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {records.map((record) => (
+                          {records.map((record) => {
+                            const recordBreakdown = computeRecordHours(record);
+                            const fmtMin = (m: number) => {
+                              const r = Math.round(m);
+                              const h = Math.floor(r / 60);
+                              const mm = r % 60;
+                              return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
+                            };
+                            return (
                             <TableRow key={record.id}>
                               <TableCell className="font-medium">
                                 {getWorkerName(record.worker_id)}
@@ -5289,17 +5642,23 @@ const TimeControl = () => {
                               <TableCell>
                                 {record.entry_time ? (
                                   <button
-                                    onClick={() => record.entry_photo_url && setViewingPhoto({
-                                      url: record.entry_photo_url,
-                                      latitude: record.entry_latitude,
-                                      longitude: record.entry_longitude,
-                                      type: "entry",
-                                      entry_conditions_ok: record.entry_conditions_ok,
-                                      entry_conditions_notes: record.entry_conditions_notes,
-                                    })}
+                                    onClick={() => {
+                                      if (record.is_manual_entry && isAdminUser) {
+                                        openQuickManualDialog(record.worker_id, record.date, "entry", record.entry_time!);
+                                      } else if (record.entry_photo_url) {
+                                        setViewingPhoto({
+                                          url: record.entry_photo_url,
+                                          latitude: record.entry_latitude,
+                                          longitude: record.entry_longitude,
+                                          type: "entry",
+                                          entry_conditions_ok: record.entry_conditions_ok,
+                                          entry_conditions_notes: record.entry_conditions_notes,
+                                        });
+                                      }
+                                    }}
                                     className={`font-medium ${
                                       record.is_manual_entry
-                                        ? "text-orange-600"
+                                        ? "text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
                                         : "text-green-600"
                                     } ${
                                       record.entry_photo_url && !record.is_manual_entry
@@ -5308,7 +5667,7 @@ const TimeControl = () => {
                                     }`}
                                     title={
                                       record.is_manual_entry 
-                                        ? "Entrada agregada manualmente" 
+                                        ? "Clic para editar entrada manual" 
                                         : record.entry_photo_url 
                                         ? "Clic para ver foto" 
                                         : ""
@@ -5327,21 +5686,27 @@ const TimeControl = () => {
                                 <div className="flex items-center gap-2">
                                   {record.exit_time ? (
                                     <button
-                                      onClick={() => record.exit_photo_url && setViewingPhoto({
-                                        url: record.exit_photo_url,
-                                        latitude: record.exit_latitude,
-                                        longitude: record.exit_longitude,
-                                        type: "exit",
-                                        exit_had_injury: record.exit_had_injury,
-                                        exit_injury_notes: record.exit_injury_notes,
-                                        exit_had_incident: record.exit_had_incident,
-                                        exit_incident_notes: record.exit_incident_notes,
-                                        exit_conditions_ok: record.exit_conditions_ok,
-                                        exit_conditions_notes: record.exit_conditions_notes,
-                                      })}
+                                      onClick={() => {
+                                        if (record.is_manual_exit && isAdminUser) {
+                                          openQuickManualDialog(record.worker_id, record.date, "exit", record.exit_time!);
+                                        } else if (record.exit_photo_url) {
+                                          setViewingPhoto({
+                                            url: record.exit_photo_url,
+                                            latitude: record.exit_latitude,
+                                            longitude: record.exit_longitude,
+                                            type: "exit",
+                                            exit_had_injury: record.exit_had_injury,
+                                            exit_injury_notes: record.exit_injury_notes,
+                                            exit_had_incident: record.exit_had_incident,
+                                            exit_incident_notes: record.exit_incident_notes,
+                                            exit_conditions_ok: record.exit_conditions_ok,
+                                            exit_conditions_notes: record.exit_conditions_notes,
+                                          });
+                                        }
+                                      }}
                                       className={`font-medium ${
                                         record.is_manual_exit
-                                          ? "text-orange-600"
+                                          ? "text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
                                           : "text-red-600"
                                       } ${
                                         record.exit_photo_url && !record.is_manual_exit
@@ -5350,7 +5715,7 @@ const TimeControl = () => {
                                       }`}
                                       title={
                                         record.is_manual_exit 
-                                          ? "Salida agregada manualmente" 
+                                          ? "Clic para editar salida manual" 
                                           : record.exit_photo_url 
                                           ? "Clic para ver foto" 
                                           : ""
@@ -5402,6 +5767,39 @@ const TimeControl = () => {
                                 )}
                               </TableCell>
                               <TableCell>
+                                {recordBreakdown.totalMinutes > 0 ? (
+                                  <div className="flex flex-col gap-0.5 text-[11px] leading-tight">
+                                    <span className="font-medium text-foreground">Total: {fmtMin(recordBreakdown.totalMinutes)}</span>
+                                    {recordBreakdown.normalMinutes > 0 && (
+                                      <span className="text-muted-foreground">Normal: {fmtMin(recordBreakdown.normalMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.extraDiurnaMinutes > 0 && (
+                                      <span className="text-amber-600">Extra diurna: {fmtMin(recordBreakdown.extraDiurnaMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.extraNocturnaMinutes > 0 && (
+                                      <span className="text-indigo-600">Extra nocturna: {fmtMin(recordBreakdown.extraNocturnaMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.recargoNocturnoMinutes > 0 && (
+                                      <span className="text-blue-600">Recargo noct.: {fmtMin(recordBreakdown.recargoNocturnoMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.dominicalFestivoMinutes > 0 && (
+                                      <span className="text-rose-600">Dom/Fest: {fmtMin(recordBreakdown.dominicalFestivoMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.extraDiurnaDominicalMinutes > 0 && (
+                                      <span className="text-rose-600">Extra D dom: {fmtMin(recordBreakdown.extraDiurnaDominicalMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.extraNocturnaDominicalMinutes > 0 && (
+                                      <span className="text-rose-600">Extra N dom: {fmtMin(recordBreakdown.extraNocturnaDominicalMinutes)}</span>
+                                    )}
+                                    {recordBreakdown.recargoNocturnoDominicalMinutes > 0 && (
+                                      <span className="text-rose-600">Recargo N dom: {fmtMin(recordBreakdown.recargoNocturnoDominicalMinutes)}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
                                 <div className="flex gap-2">
                                   {record.entry_photo_url && (
                                     <Button
@@ -5447,7 +5845,8 @@ const TimeControl = () => {
                                 </div>
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </div>
@@ -5459,7 +5858,7 @@ const TimeControl = () => {
         </Card>
         )}
 
-        {/* Exit Time Adjustment Dialog - Almuerzo */}
+        {/* Exit Time Adjustment Dialog - Almuerzo y Cena */}
         <Dialog open={showExitAdjustmentDialog} onOpenChange={(open) => !open && cancelExitUpload()}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
@@ -5468,106 +5867,188 @@ const TimeControl = () => {
                 Registrar Salida
               </DialogTitle>
               <DialogDescription>
-                Indica cómo fue el tiempo de almuerzo hoy.
+                Indica los tiempos de comida de hoy.
               </DialogDescription>
             </DialogHeader>
             
             <div className="space-y-4 py-4">
-              {/* Opción de almuerzo normal */}
+              {/* === ALMUERZO === */}
               <div className="space-y-3">
-                <Label className="text-sm font-medium">¿Tomó la hora de almuerzo completa?</Label>
-                
-                <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-semibold flex items-center gap-2">🍽️ Almuerzo</Label>
                   <button
                     type="button"
-                    onClick={() => {
-                      setLunchWasNormal(true);
-                      setLunchMinutesTaken("60");
-                    }}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      lunchWasNormal 
-                        ? 'border-primary bg-primary/10 text-primary' 
-                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                    onClick={() => { setLunchEnabled(!lunchEnabled); if (!lunchEnabled) { setLunchWasNormal(true); setLunchMinutesTaken("60"); } }}
+                    className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                      lunchEnabled
+                        ? 'bg-primary text-white'
+                        : 'bg-muted text-muted-foreground'
                     }`}
                   >
-                    <div className="text-2xl mb-1">✅</div>
-                    <div className="font-medium">Sí</div>
-                    <div className="text-xs text-muted-foreground">1 hora normal</div>
-                  </button>
-                  
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLunchWasNormal(false);
-                      setLunchMinutesTaken("30");
-                    }}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      !lunchWasNormal 
-                        ? 'border-amber-500 bg-amber-50 text-amber-700' 
-                        : 'border-muted-foreground/20 hover:border-muted-foreground/40'
-                    }`}
-                  >
-                    <div className="text-2xl mb-1">⏱️</div>
-                    <div className="font-medium">No</div>
-                    <div className="text-xs text-muted-foreground">Tiempo diferente</div>
+                    {lunchEnabled ? 'Activado' : 'No tomó'}
                   </button>
                 </div>
-              </div>
-              
-              {/* Input de minutos si no fue normal */}
-              {!lunchWasNormal && (
-                <div className="space-y-2 p-4 bg-amber-50 rounded-lg border border-amber-200">
-                  <Label htmlFor="lunch-minutes" className="text-sm font-medium text-amber-800">
-                    ¿Cuántos minutos de almuerzo tomó?
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="lunch-minutes"
-                      type="number"
-                      min="0"
-                      max="60"
-                      value={lunchMinutesTaken}
-                      onChange={(e) => setLunchMinutesTaken(e.target.value)}
-                      className="w-24 text-center text-lg font-medium"
-                    />
-                    <span className="text-sm text-amber-700">minutos</span>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    {[0, 15, 30, 45].map((mins) => (
+
+                {lunchEnabled && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
                       <button
-                        key={mins}
                         type="button"
-                        onClick={() => setLunchMinutesTaken(mins.toString())}
-                        className={`px-3 py-1 text-xs rounded-full transition-all ${
-                          lunchMinutesTaken === mins.toString()
-                            ? 'bg-amber-600 text-white'
-                            : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                        onClick={() => { setLunchWasNormal(true); setLunchMinutesTaken("60"); }}
+                        className={`p-3 rounded-lg border-2 transition-all ${
+                          lunchWasNormal
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-muted-foreground/20 hover:border-muted-foreground/40'
                         }`}
                       >
-                        {mins} min
+                        <div className="text-xl mb-1">✅</div>
+                        <div className="font-medium text-sm">Sí</div>
+                        <div className="text-[10px] text-muted-foreground">1 hora normal</div>
                       </button>
-                    ))}
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => { setLunchWasNormal(false); setLunchMinutesTaken("30"); }}
+                        className={`p-3 rounded-lg border-2 transition-all ${
+                          !lunchWasNormal
+                            ? 'border-amber-500 bg-amber-50 text-amber-700'
+                            : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                        }`}
+                      >
+                        <div className="text-xl mb-1">⏱️</div>
+                        <div className="font-medium text-sm">No</div>
+                        <div className="text-[10px] text-muted-foreground">Tiempo diferente</div>
+                      </button>
+                    </div>
+
+                    {!lunchWasNormal && (
+                      <div className="space-y-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                        <Label htmlFor="lunch-minutes" className="text-xs font-medium text-amber-800">
+                          ¿Cuántos minutos de almuerzo tomó?
+                        </Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            id="lunch-minutes"
+                            type="number"
+                            min="0"
+                            max="120"
+                            value={lunchMinutesTaken}
+                            onChange={(e) => setLunchMinutesTaken(e.target.value)}
+                            className="w-20 text-center text-sm font-medium"
+                          />
+                          <span className="text-xs text-amber-700">minutos</span>
+                        </div>
+                        <div className="flex gap-1.5 mt-1">
+                          {[0, 15, 30, 45].map((mins) => (
+                            <button
+                              key={mins}
+                              type="button"
+                              onClick={() => setLunchMinutesTaken(mins.toString())}
+                              className={`px-2.5 py-0.5 text-[10px] rounded-full transition-all ${
+                                lunchMinutesTaken === mins.toString()
+                                  ? 'bg-amber-600 text-white'
+                                  : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                              }`}
+                            >
+                              {mins} min
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Separador */}
+              <div className="border-t" />
+
+              {/* === CENA === */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-semibold flex items-center gap-2">🌙 Cena</Label>
+                  <button
+                    type="button"
+                    onClick={() => { setDinnerEnabled(!dinnerEnabled); if (!dinnerEnabled) { setDinnerMinutesTaken("30"); } }}
+                    className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                      dinnerEnabled
+                        ? 'bg-primary text-white'
+                        : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {dinnerEnabled ? 'Activado' : 'No aplica'}
+                  </button>
                 </div>
-              )}
-              
-              {/* Resumen del ajuste */}
-              {!lunchWasNormal && (() => {
-                const lunchTaken = parseInt(lunchMinutesTaken) || 60;
-                const extraMinutes = 60 - lunchTaken;
+
+                {dinnerEnabled && (
+                  <div className="space-y-2 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                    <Label htmlFor="dinner-minutes" className="text-xs font-medium text-indigo-800">
+                      ¿Cuántos minutos de cena tomó?
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">Se restan del tiempo trabajado (no genera extra)</p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="dinner-minutes"
+                        type="number"
+                        min="0"
+                        max="120"
+                        value={dinnerMinutesTaken}
+                        onChange={(e) => setDinnerMinutesTaken(e.target.value)}
+                        className="w-20 text-center text-sm font-medium"
+                      />
+                      <span className="text-xs text-indigo-700">minutos</span>
+                    </div>
+                    <div className="flex gap-1.5 mt-1">
+                      {[15, 30, 45, 60].map((mins) => (
+                        <button
+                          key={mins}
+                          type="button"
+                          onClick={() => setDinnerMinutesTaken(mins.toString())}
+                          className={`px-2.5 py-0.5 text-[10px] rounded-full transition-all ${
+                            dinnerMinutesTaken === mins.toString()
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                          }`}
+                        >
+                          {mins} min
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Resumen de ajustes */}
+              {(() => {
+                let totalAdj = 0;
+                const summaryParts: string[] = [];
+                if (lunchEnabled) {
+                  if (lunchWasNormal) {
+                    totalAdj -= 60;
+                    summaryParts.push('Almuerzo: 60 min (-60 min)');
+                  } else {
+                    const lt = parseInt(lunchMinutesTaken) || 0;
+                    if (lt > 0) {
+                      totalAdj -= lt;
+                      summaryParts.push(`Almuerzo: ${lt} min (-${lt} min)`);
+                    }
+                  }
+                }
+                if (dinnerEnabled) {
+                  const dt = parseInt(dinnerMinutesTaken) || 0;
+                  if (dt > 0) {
+                    totalAdj -= dt;
+                    summaryParts.push(`Cena: ${dt} min (-${dt} min)`);
+                  }
+                }
+                if (summaryParts.length === 0) return null;
                 return (
-                  <div className={`p-3 rounded-lg ${extraMinutes >= 0 ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
-                    <p className={`text-sm font-medium ${extraMinutes >= 0 ? 'text-green-800' : 'text-amber-800'}`}>
-                      {extraMinutes > 0 && (
-                        <span>✅ Se sumarán <strong>{extraMinutes} minutos</strong> extra por almuerzo reducido</span>
-                      )}
-                      {extraMinutes < 0 && (
-                        <span>⚠️ Se restarán <strong>{Math.abs(extraMinutes)} minutos</strong> por almuerzo extendido</span>
-                      )}
-                      {extraMinutes === 0 && (
-                        <span>Sin ajuste de tiempo</span>
-                      )}
+                  <div className={`p-3 rounded-lg ${totalAdj >= 0 ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                    <p className={`text-sm font-medium ${totalAdj >= 0 ? 'text-green-800' : 'text-amber-800'}`}>
+                      {totalAdj > 0 && <span>✅ Se sumarán <strong>{totalAdj} minutos</strong> extra</span>}
+                      {totalAdj < 0 && <span>⏱️ Se restarán <strong>{Math.abs(totalAdj)} minutos</strong></span>}
+                      {totalAdj === 0 && <span>Sin ajuste de tiempo</span>}
                     </p>
+                    <p className="text-[10px] text-muted-foreground mt-1">{summaryParts.join(' | ')}</p>
                   </div>
                 );
               })()}
@@ -6031,15 +6512,19 @@ const TimeControl = () => {
               setQuickManualTime("");
               setQuickManualDate("");
               setQuickManualWorkerId("");
+              setQuickManualIsEdit(false);
+              setQuickManualLunchEnabled(true);
               setQuickManualLunchNormal(true);
               setQuickManualLunchMinutes("60");
+              setQuickManualDinnerEnabled(false);
+              setQuickManualDinnerMinutes("30");
             }
           }}>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Clock className="h-5 w-5 text-orange-600" />
-                  Agregar {quickManualType === "entry" ? "Entrada" : "Salida"} Manual
+                  {quickManualIsEdit ? "Editar" : "Agregar"} {quickManualType === "entry" ? "Entrada" : "Salida"} Manual
                 </DialogTitle>
                 <DialogDescription>
                   {workers.find(w => w.id === quickManualWorkerId)?.first_name} {workers.find(w => w.id === quickManualWorkerId)?.last_name} - {quickManualDate ? new Date(quickManualDate + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" }) : ""}
@@ -6059,101 +6544,186 @@ const TimeControl = () => {
                   />
                 </div>
 
-                {/* Ajuste de almuerzo - Solo para salida */}
+                {/* Almuerzo y Cena - Solo para salida */}
                 {quickManualType === "exit" && (
                   <>
+                    {/* === ALMUERZO === */}
                     <div className="space-y-3">
-                      <Label className="text-sm font-medium">¿Tomó la hora de almuerzo completa?</Label>
-                      
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold flex items-center gap-2">🍽️ Almuerzo</Label>
                         <button
                           type="button"
-                          onClick={() => {
-                            setQuickManualLunchNormal(true);
-                            setQuickManualLunchMinutes("60");
-                          }}
-                          className={`p-3 rounded-lg border-2 transition-all ${
-                            quickManualLunchNormal 
-                              ? 'border-primary bg-primary/10 text-primary' 
-                              : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                          onClick={() => { setQuickManualLunchEnabled(!quickManualLunchEnabled); if (!quickManualLunchEnabled) { setQuickManualLunchNormal(true); setQuickManualLunchMinutes("60"); } }}
+                          className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                            quickManualLunchEnabled
+                              ? 'bg-primary text-white'
+                              : 'bg-muted text-muted-foreground'
                           }`}
                         >
-                          <div className="text-xl mb-1">✅</div>
-                          <div className="font-medium text-sm">Sí</div>
-                          <div className="text-xs text-muted-foreground">1 hora normal</div>
-                        </button>
-                        
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setQuickManualLunchNormal(false);
-                            setQuickManualLunchMinutes("30");
-                          }}
-                          className={`p-3 rounded-lg border-2 transition-all ${
-                            !quickManualLunchNormal 
-                              ? 'border-amber-500 bg-amber-50 text-amber-700' 
-                              : 'border-muted-foreground/20 hover:border-muted-foreground/40'
-                          }`}
-                        >
-                          <div className="text-xl mb-1">⏱️</div>
-                          <div className="font-medium text-sm">No</div>
-                          <div className="text-xs text-muted-foreground">Diferente</div>
+                          {quickManualLunchEnabled ? 'Activado' : 'No tomó'}
                         </button>
                       </div>
-                    </div>
-                    
-                    {/* Input de minutos si no fue normal */}
-                    {!quickManualLunchNormal && (
-                      <div className="space-y-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
-                        <Label htmlFor="quick-lunch-minutes" className="text-sm font-medium text-amber-800">
-                          ¿Cuántos minutos de almuerzo tomó?
-                        </Label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="quick-lunch-minutes"
-                            type="number"
-                            min="0"
-                            max="60"
-                            value={quickManualLunchMinutes}
-                            onChange={(e) => setQuickManualLunchMinutes(e.target.value)}
-                            className="w-24 text-center font-medium"
-                          />
-                          <span className="text-sm text-amber-700">minutos</span>
-                        </div>
-                        <div className="flex gap-2 mt-2">
-                          {[0, 15, 30, 45].map((mins) => (
+
+                      {quickManualLunchEnabled && (
+                        <>
+                          <div className="grid grid-cols-2 gap-3">
                             <button
-                              key={mins}
                               type="button"
-                              onClick={() => setQuickManualLunchMinutes(mins.toString())}
-                              className={`px-2 py-1 text-xs rounded-full transition-all ${
-                                quickManualLunchMinutes === mins.toString()
-                                  ? 'bg-amber-600 text-white'
-                                  : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                              onClick={() => { setQuickManualLunchNormal(true); setQuickManualLunchMinutes("60"); }}
+                              className={`p-3 rounded-lg border-2 transition-all ${
+                                quickManualLunchNormal 
+                                  ? 'border-primary bg-primary/10 text-primary' 
+                                  : 'border-muted-foreground/20 hover:border-muted-foreground/40'
                               }`}
                             >
-                              {mins}m
+                              <div className="text-xl mb-1">✅</div>
+                              <div className="font-medium text-sm">Sí</div>
+                              <div className="text-[10px] text-muted-foreground">1 hora normal</div>
                             </button>
-                          ))}
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() => { setQuickManualLunchNormal(false); setQuickManualLunchMinutes("30"); }}
+                              className={`p-3 rounded-lg border-2 transition-all ${
+                                !quickManualLunchNormal 
+                                  ? 'border-amber-500 bg-amber-50 text-amber-700' 
+                                  : 'border-muted-foreground/20 hover:border-muted-foreground/40'
+                              }`}
+                            >
+                              <div className="text-xl mb-1">⏱️</div>
+                              <div className="font-medium text-sm">No</div>
+                              <div className="text-[10px] text-muted-foreground">Tiempo diferente</div>
+                            </button>
+                          </div>
+
+                          {!quickManualLunchNormal && (
+                            <div className="space-y-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                              <Label htmlFor="quick-lunch-minutes" className="text-xs font-medium text-amber-800">
+                                ¿Cuántos minutos de almuerzo tomó?
+                              </Label>
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  id="quick-lunch-minutes"
+                                  type="number"
+                                  min="0"
+                                  max="120"
+                                  value={quickManualLunchMinutes}
+                                  onChange={(e) => setQuickManualLunchMinutes(e.target.value)}
+                                  className="w-20 text-center text-sm font-medium"
+                                />
+                                <span className="text-xs text-amber-700">minutos</span>
+                              </div>
+                              <div className="flex gap-1.5 mt-1">
+                                {[0, 15, 30, 45].map((mins) => (
+                                  <button
+                                    key={mins}
+                                    type="button"
+                                    onClick={() => setQuickManualLunchMinutes(mins.toString())}
+                                    className={`px-2.5 py-0.5 text-[10px] rounded-full transition-all ${
+                                      quickManualLunchMinutes === mins.toString()
+                                        ? 'bg-amber-600 text-white'
+                                        : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                    }`}
+                                  >
+                                    {mins} min
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Separador */}
+                    <div className="border-t" />
+
+                    {/* === CENA === */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold flex items-center gap-2">🌙 Cena</Label>
+                        <button
+                          type="button"
+                          onClick={() => { setQuickManualDinnerEnabled(!quickManualDinnerEnabled); if (!quickManualDinnerEnabled) { setQuickManualDinnerMinutes("30"); } }}
+                          className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                            quickManualDinnerEnabled
+                              ? 'bg-primary text-white'
+                              : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {quickManualDinnerEnabled ? 'Activado' : 'No aplica'}
+                        </button>
                       </div>
-                    )}
-                    
-                    {/* Resumen del ajuste */}
-                    {!quickManualLunchNormal && (() => {
-                      const lunchTaken = parseInt(quickManualLunchMinutes) || 60;
-                      const extraMinutes = 60 - lunchTaken;
+
+                      {quickManualDinnerEnabled && (
+                        <div className="space-y-2 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                          <Label htmlFor="quick-dinner-minutes" className="text-xs font-medium text-indigo-800">
+                            ¿Cuántos minutos de cena tomó?
+                          </Label>
+                          <p className="text-[10px] text-muted-foreground">Se restan del tiempo trabajado (no genera extra)</p>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              id="quick-dinner-minutes"
+                              type="number"
+                              min="0"
+                              max="120"
+                              value={quickManualDinnerMinutes}
+                              onChange={(e) => setQuickManualDinnerMinutes(e.target.value)}
+                              className="w-20 text-center text-sm font-medium"
+                            />
+                            <span className="text-xs text-indigo-700">minutos</span>
+                          </div>
+                          <div className="flex gap-1.5 mt-1">
+                            {[15, 30, 45, 60].map((mins) => (
+                              <button
+                                key={mins}
+                                type="button"
+                                onClick={() => setQuickManualDinnerMinutes(mins.toString())}
+                                className={`px-2.5 py-0.5 text-[10px] rounded-full transition-all ${
+                                  quickManualDinnerMinutes === mins.toString()
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                                }`}
+                              >
+                                {mins} min
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Resumen de ajustes */}
+                    {(() => {
+                      let totalAdj = 0;
+                      const summaryParts: string[] = [];
+                      if (quickManualLunchEnabled) {
+                        if (quickManualLunchNormal) {
+                          totalAdj -= 60;
+                          summaryParts.push('Almuerzo: 60 min (-60 min)');
+                        } else {
+                          const lt = parseInt(quickManualLunchMinutes) || 0;
+                          if (lt > 0) {
+                            totalAdj -= lt;
+                            summaryParts.push(`Almuerzo: ${lt} min (-${lt} min)`);
+                          }
+                        }
+                      }
+                      if (quickManualDinnerEnabled) {
+                        const dt = parseInt(quickManualDinnerMinutes) || 0;
+                        if (dt > 0) {
+                          totalAdj -= dt;
+                          summaryParts.push(`Cena: ${dt} min (-${dt} min)`);
+                        }
+                      }
+                      if (summaryParts.length === 0) return null;
                       return (
-                        <div className={`p-2 rounded-lg text-sm ${extraMinutes >= 0 ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
-                          {extraMinutes > 0 && (
-                            <span>✅ Se sumarán <strong>{extraMinutes} min</strong> extra</span>
-                          )}
-                          {extraMinutes < 0 && (
-                            <span>⚠️ Se restarán <strong>{Math.abs(extraMinutes)} min</strong></span>
-                          )}
-                          {extraMinutes === 0 && (
-                            <span>Sin ajuste de tiempo</span>
-                          )}
+                        <div className={`p-3 rounded-lg ${totalAdj >= 0 ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                          <p className={`text-sm font-medium ${totalAdj >= 0 ? 'text-green-800' : 'text-amber-800'}`}>
+                            {totalAdj > 0 && <span>✅ Se sumarán <strong>{totalAdj} minutos</strong> extra</span>}
+                            {totalAdj < 0 && <span>⏱️ Se restarán <strong>{Math.abs(totalAdj)} minutos</strong></span>}
+                            {totalAdj === 0 && <span>Sin ajuste de tiempo</span>}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground mt-1">{summaryParts.join(' | ')}</p>
                         </div>
                       );
                     })()}
@@ -6163,7 +6733,7 @@ const TimeControl = () => {
                 {/* Advertencia */}
                 <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
                   <p className="text-sm text-orange-800">
-                    🔶 Este registro se marcará como agregado manualmente.
+                    🔶 Este registro se marcará como {quickManualIsEdit ? "editado" : "agregado"} manualmente.
                   </p>
                 </div>
               </div>
@@ -6175,8 +6745,12 @@ const TimeControl = () => {
                   setQuickManualTime("");
                   setQuickManualDate("");
                   setQuickManualWorkerId("");
+                  setQuickManualIsEdit(false);
+                  setQuickManualLunchEnabled(true);
                   setQuickManualLunchNormal(true);
                   setQuickManualLunchMinutes("60");
+                  setQuickManualDinnerEnabled(false);
+                  setQuickManualDinnerMinutes("30");
                 }}>
                   Cancelar
                 </Button>
@@ -6186,7 +6760,7 @@ const TimeControl = () => {
                   disabled={!quickManualTime}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Guardar {quickManualType === "entry" ? "Entrada" : "Salida"}
+                  {quickManualIsEdit ? "Actualizar" : "Guardar"} {quickManualType === "entry" ? "Entrada" : "Salida"}
                 </Button>
               </DialogFooter>
             </DialogContent>

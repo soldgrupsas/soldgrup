@@ -33,6 +33,7 @@ const ROLES = [
   { key: "admin", label: "Administrador" },
   { key: "user", label: "Usuario General" },
   { key: "mantenimiento", label: "Mantenimiento" },
+  { key: "contabilidad", label: "Contabilidad" },
 ] as const;
 
 const AdminRoles = () => {

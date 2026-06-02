@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import soldgrupLogo from "@/assets/soldgrup-logo.webp";
+import { isContabilidadAccountEmail } from "@/lib/permissions";
 
 const Auth = () => {
   const navigate = useNavigate();

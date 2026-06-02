@@ -94,7 +94,7 @@ const ensureAdmin = async (userToken: string) => {
   return userId;
 };
 
-const validateRole = (role: string) => ['admin', 'user', 'mantenimiento'].includes(role);
+const validateRole = (role: string) => ['admin', 'user', 'mantenimiento', 'contabilidad'].includes(role);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
