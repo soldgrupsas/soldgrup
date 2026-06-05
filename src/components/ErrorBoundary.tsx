@@ -15,6 +15,18 @@ interface State {
   errorInfo: ErrorInfo | null;
 }
 
+const isChunkLoadError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const name = error instanceof Error ? error.name : "";
+  return (
+    name === "ChunkLoadError" ||
+    /failed to fetch dynamically imported module/i.test(message) ||
+    /importing a module script failed/i.test(message) ||
+    /error loading dynamically imported module/i.test(message) ||
+    /dynamically imported module/i.test(message)
+  );
+};
+
 class ErrorBoundaryClass extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
@@ -23,6 +35,18 @@ class ErrorBoundaryClass extends Component<Props, State> {
       error: null,
       errorInfo: null,
     };
+  }
+
+  componentDidMount() {
+    // Si la app se mantuvo estable unos segundos, liberar la bandera de recarga por chunk
+    // para permitir un nuevo intento de auto-recarga en el futuro.
+    setTimeout(() => {
+      try {
+        sessionStorage.removeItem("eb_chunk_reload");
+      } catch {
+        /* ignore */
+      }
+    }, 4000);
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -51,6 +75,26 @@ class ErrorBoundaryClass extends Component<Props, State> {
       return;
     }
 
+    // Error al descargar un chunk (red inestable o despliegue nuevo con HTML viejo en caché):
+    // forzar una recarga completa UNA sola vez para traer los assets actualizados.
+    if (isChunkLoadError(error)) {
+      let alreadyReloaded = false;
+      try {
+        alreadyReloaded = sessionStorage.getItem("eb_chunk_reload") === "1";
+      } catch {
+        /* ignore */
+      }
+      if (!alreadyReloaded) {
+        try {
+          sessionStorage.setItem("eb_chunk_reload", "1");
+        } catch {
+          /* ignore */
+        }
+        window.location.reload();
+        return;
+      }
+    }
+
     console.error("ErrorBoundary caught an error:", error, errorInfo);
     this.setState({
       error,
@@ -69,6 +113,21 @@ class ErrorBoundaryClass extends Component<Props, State> {
       }, 2000);
     }
   }
+
+  handleCopyError = () => {
+    const error = this.state.error;
+    const details = [
+      error?.toString() ?? "Error desconocido",
+      this.state.errorInfo?.componentStack ?? "",
+      `URL: ${window.location.href}`,
+      `UserAgent: ${navigator.userAgent}`,
+    ].join("\n");
+    try {
+      navigator.clipboard?.writeText(details);
+    } catch {
+      /* ignore */
+    }
+  };
 
   handleReset = () => {
     this.setState({
@@ -104,15 +163,23 @@ class ErrorBoundaryClass extends Component<Props, State> {
                 ? "Tu sesión ha expirado. Serás redirigido al login en unos momentos..."
                 : "Lo sentimos, ocurrió un error inesperado. Por favor, intenta recargar la página."}
             </p>
-            {process.env.NODE_ENV === "development" && this.state.error && (
+            {this.state.error && (
               <details className="mt-4 p-4 bg-muted rounded-md">
                 <summary className="cursor-pointer font-semibold mb-2">
-                  Detalles del error (solo en desarrollo)
+                  Detalles del error
                 </summary>
-                <pre className="text-xs overflow-auto">
+                <pre className="text-xs overflow-auto max-h-64 whitespace-pre-wrap break-words">
                   {this.state.error.toString()}
                   {this.state.errorInfo?.componentStack}
                 </pre>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="mt-3"
+                  onClick={this.handleCopyError}
+                >
+                  Copiar detalles
+                </Button>
               </details>
             )}
             <div className="flex gap-2 mt-6">

@@ -4,28 +4,39 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Suspense } from "react";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider } from "@/contexts/AuthContext";
-import Home from "@/pages/Home";
-import Dashboard from "@/pages/Dashboard";
-import CreateProposal from "@/pages/CreateProposal";
-import PublicProposal from "@/pages/PublicProposal";
+
+// Auth se carga de inmediato porque es la primera pantalla; el resto se carga
+// bajo demanda (code-splitting) para aligerar la descarga inicial en gama baja.
+// lazyWithRetry reintenta ante fallos de red y recarga si el chunk quedó obsoleto.
 import Auth from "@/pages/Auth";
-import UserManagement from "@/pages/UserManagement";
-import EquipmentList from "@/pages/EquipmentList";
-import CreateEquipment from "@/pages/CreateEquipment";
-import NotFound from "@/pages/NotFound";
-import AdminPanel from "@/pages/admin/AdminPanel";
-import AdminRoles from "@/pages/admin/AdminRoles";
-import MaintenanceReports from "@/pages/MaintenanceReports";
-import MaintenanceReportWizard from "@/pages/MaintenanceReportWizard";
-import MaintenanceReportTypeSelector from "@/pages/MaintenanceReportTypeSelector";
-import ElevatorMaintenanceReportWizard from "@/pages/ElevatorMaintenanceReportWizard";
-import GeneralMaintenanceReport from "@/pages/GeneralMaintenanceReport";
-import BridgeCraneMaintenanceReport from "@/pages/BridgeCraneMaintenanceReport";
-import MaintenanceReportEditRouter from "@/pages/MaintenanceReportEditRouter";
-import TimeControl from "@/pages/TimeControl";
+const Home = lazyWithRetry(() => import("@/pages/Home"), "Home");
+const Dashboard = lazyWithRetry(() => import("@/pages/Dashboard"), "Dashboard");
+const CreateProposal = lazyWithRetry(() => import("@/pages/CreateProposal"), "CreateProposal");
+const PublicProposal = lazyWithRetry(() => import("@/pages/PublicProposal"), "PublicProposal");
+const UserManagement = lazyWithRetry(() => import("@/pages/UserManagement"), "UserManagement");
+const EquipmentList = lazyWithRetry(() => import("@/pages/EquipmentList"), "EquipmentList");
+const CreateEquipment = lazyWithRetry(() => import("@/pages/CreateEquipment"), "CreateEquipment");
+const NotFound = lazyWithRetry(() => import("@/pages/NotFound"), "NotFound");
+const AdminPanel = lazyWithRetry(() => import("@/pages/admin/AdminPanel"), "AdminPanel");
+const AdminRoles = lazyWithRetry(() => import("@/pages/admin/AdminRoles"), "AdminRoles");
+const MaintenanceReports = lazyWithRetry(() => import("@/pages/MaintenanceReports"), "MaintenanceReports");
+const MaintenanceReportTypeSelector = lazyWithRetry(() => import("@/pages/MaintenanceReportTypeSelector"), "MaintenanceReportTypeSelector");
+const ElevatorMaintenanceReportWizard = lazyWithRetry(() => import("@/pages/ElevatorMaintenanceReportWizard"), "ElevatorMaintenanceReportWizard");
+const GeneralMaintenanceReport = lazyWithRetry(() => import("@/pages/GeneralMaintenanceReport"), "GeneralMaintenanceReport");
+const BridgeCraneMaintenanceReport = lazyWithRetry(() => import("@/pages/BridgeCraneMaintenanceReport"), "BridgeCraneMaintenanceReport");
+const MaintenanceReportEditRouter = lazyWithRetry(() => import("@/pages/MaintenanceReportEditRouter"), "MaintenanceReportEditRouter");
+const TimeControl = lazyWithRetry(() => import("@/pages/TimeControl"), "TimeControl");
+
+const PageLoader = () => (
+  <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="text-xl">Cargando...</div>
+  </div>
+);
 
 // Crear queryClient FUERA del componente para evitar recreación en cada render
 // Esto previene que QueryClientProvider se remonte y cause duplicación de la UI
@@ -54,6 +65,7 @@ const App = () => {
           <Sonner />
           <AuthProvider>
             <BrowserRouter basename={baseUrl}>
+              <Suspense fallback={<PageLoader />}>
               <Routes>
                 <Route path="/" element={<Navigate to="/auth" replace />} />
                 <Route path="/auth" element={<Auth />} />
@@ -80,6 +92,7 @@ const App = () => {
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </Suspense>
             </BrowserRouter>
           </AuthProvider>
         </TooltipProvider>

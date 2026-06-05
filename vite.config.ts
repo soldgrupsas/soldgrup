@@ -22,6 +22,17 @@ export default defineConfig(({ mode }) => {
         }
         return false;
       },
+      output: {
+        // Separar dependencias pesadas en chunks propios para que el navegador
+        // los descargue en paralelo, los cachee entre versiones y no se carguen
+        // si la pantalla no los necesita (clave en dispositivos de gama baja).
+        manualChunks: {
+          "vendor-three": ["three", "@react-three/fiber", "@react-three/drei"],
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-supabase": ["@supabase/supabase-js"],
+          "vendor-charts": ["recharts"],
+        },
+      },
     },
   },
   plugins: [react()],

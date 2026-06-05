@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Calendar, User } from "lucide-react";
-import Model3DViewer from "@/components/Model3DViewer";
+import { Building2, Calendar, User, Loader2 } from "lucide-react";
 import soldgrupLogo from "@/assets/soldgrup-logo.webp";
+
+// El visor 3D arrastra three.js; se carga solo cuando la propuesta tiene un modelo.
+const Model3DViewer = lazy(() => import("@/components/Model3DViewer"));
 
 interface ProposalData {
   id: string;
@@ -395,14 +397,22 @@ const PublicProposal = () => {
               <p className="text-muted-foreground mb-4">
                 Interactúa con el modelo: Click + arrastrar para rotar, scroll para hacer zoom
               </p>
-              <Model3DViewer
-                key={modelKey}
-                modelUrl={proposal.model_3d_url}
-                height="600px"
-                enableZoom={true}
-                enablePan={true}
-                autoRotate={false}
-              />
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center" style={{ height: "600px" }}>
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                }
+              >
+                <Model3DViewer
+                  key={modelKey}
+                  modelUrl={proposal.model_3d_url}
+                  height="600px"
+                  enableZoom={true}
+                  enablePan={true}
+                  autoRotate={false}
+                />
+              </Suspense>
             </Card>
           )}
 

@@ -1,10 +1,12 @@
-import { useRef } from "react";
+import { useRef, lazy, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Upload, X, Box } from "lucide-react";
-import Model3DViewer from "./Model3DViewer";
+import { Upload, X, Box, Loader2 } from "lucide-react";
+
+// El visor 3D arrastra three.js (~varios cientos de KB); se carga solo cuando hay un modelo que mostrar.
+const Model3DViewer = lazy(() => import("./Model3DViewer"));
 
 interface Model3DUploaderProps {
   onFileSelect: (file: File) => void;
@@ -117,13 +119,21 @@ const Model3DUploader = ({ onFileSelect, preview, onRemove }: Model3DUploaderPro
           {previewUrl && (
             <div>
               <Label className="mb-2 block">Vista Previa del Modelo 3D</Label>
-              <Model3DViewer
-                modelUrl={previewUrl}
-                height="400px"
-                enableZoom={true}
-                enablePan={true}
-                autoRotate={true}
-              />
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center" style={{ height: "400px" }}>
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                }
+              >
+                <Model3DViewer
+                  modelUrl={previewUrl}
+                  height="400px"
+                  enableZoom={true}
+                  enablePan={true}
+                  autoRotate={true}
+                />
+              </Suspense>
               <p className="text-sm text-muted-foreground mt-2 text-center">
                 🔄 El modelo rota automáticamente • Click + arrastrar para control manual • Scroll para zoom
               </p>

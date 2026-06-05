@@ -13,6 +13,7 @@ import {
   Calendar,
   Filter,
   Camera,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
+import { compressImage } from "@/lib/imageCompression";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -845,7 +847,7 @@ const getGoogleMapsUrl = (latitude: number, longitude: number): string => {
 
 const TimeControl = () => {
   const navigate = useNavigate();
-  const { user, loading: authLoading, session } = useAuth();
+  const { user, loading: authLoading, session, signOut } = useAuth();
   const { toast } = useToast();
   
   // Verificar si es el usuario de asistencia (solo puede registrar entrada/salida)
@@ -888,6 +890,17 @@ const TimeControl = () => {
       autoSaveTimerRef.current = undefined;
     }
   }, []);
+
+  const handleSignOut = useCallback(async () => {
+    clearAutoSaveTimer();
+    try {
+      await signOut();
+    } catch (error) {
+      console.error("Error al cerrar sesión:", error);
+    }
+    // Forzar recarga completa para que la próxima persona inicie con una sesión limpia
+    window.location.href = "/auth";
+  }, [clearAutoSaveTimer, signOut]);
   const clearAutoSaveNewWorkerTimer = useCallback(() => {
     if (autoSaveNewWorkerTimerRef.current) {
       window.clearTimeout(autoSaveNewWorkerTimerRef.current);
@@ -1164,10 +1177,20 @@ const TimeControl = () => {
       // Cargar trabajadores - SIMPLE
       setWorkers(workersData || []);
 
-      const { data: recordsData, error: recordsError } = await supabase
+      // El usuario de asistencia solo necesita confirmar su marca del día: cargamos
+      // únicamente los registros de HOY. Así la pantalla abre rápido y de forma constante
+      // sin importar cuánto crezca el histórico (clave en dispositivos de gama baja).
+      // El administrador sí carga el histórico completo.
+      let recordsQuery = supabase
         .from("attendance_records")
         .select("*")
         .order("date", { ascending: false });
+
+      if (isAttendanceUser) {
+        recordsQuery = recordsQuery.eq("date", toDateKey(new Date()));
+      }
+
+      const { data: recordsData, error: recordsError } = await recordsQuery;
 
       if (recordsError) {
         console.error("Error loading attendance records:", recordsError);
@@ -1214,7 +1237,7 @@ const TimeControl = () => {
         initialLoadRef.current = false;
       }
     }
-  }, [toast, user]);
+  }, [toast, user, isAttendanceUser]);
 
   useEffect(() => {
     // Solo cargar datos cuando el usuario esté autenticado y sea la carga inicial
@@ -1239,12 +1262,15 @@ const TimeControl = () => {
       throw new Error("No hay sesión activa");
     }
 
-    const fileName = `${workerId}/photo_${Date.now()}_${sanitizeFileName(file.name)}`;
+    // Comprimir/redimensionar antes de subir para evitar fallos en gama baja y redes lentas.
+    const fileToUpload = await compressImage(file);
+
+    const fileName = `${workerId}/photo_${Date.now()}_${sanitizeFileName(fileToUpload.name)}`;
     const storagePath = encodeStoragePath(fileName);
 
     const { error: uploadError } = await supabase.storage
       .from(PHOTO_BUCKET)
-      .upload(storagePath, file, { upsert: true });
+      .upload(storagePath, fileToUpload, { upsert: true });
 
     if (uploadError) {
       throw uploadError;
@@ -2309,15 +2335,18 @@ const TimeControl = () => {
       }
     }
 
+    // Comprimir/redimensionar antes de subir para evitar fallos en gama baja y redes lentas.
+    const fileToUpload = await compressImage(file);
+
     const today = toDateKey(new Date());
     const timestamp = Date.now();
-    const fileName = `${selectedWorkerId}/${today}/${type}_${timestamp}_${sanitizeFileName(file.name)}`;
+    const fileName = `${selectedWorkerId}/${today}/${type}_${timestamp}_${sanitizeFileName(fileToUpload.name)}`;
     const storagePath = encodeStoragePath(fileName);
 
     try {
       const { error: uploadError } = await supabase.storage
         .from(PHOTO_BUCKET)
-        .upload(storagePath, file, { upsert: true });
+        .upload(storagePath, fileToUpload, { upsert: true });
 
       if (uploadError) {
         // Si es un error de autenticación, redirigir al login
@@ -4070,6 +4099,15 @@ const TimeControl = () => {
               </p>
             </div>
           </div>
+          <Button
+            onClick={handleSignOut}
+            variant="outline"
+            size="lg"
+            className="w-full md:w-auto"
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Cerrar Sesión
+          </Button>
         </div>
 
         {/* Worker Management - Oculto para usuario de asistencia */}
