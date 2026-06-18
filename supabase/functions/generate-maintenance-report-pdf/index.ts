@@ -395,19 +395,49 @@ Deno.serve(async (req) => {
     };
 
     const toOptimizedImageUrl = (rawUrl: string): string => {
-      // Transform object public URL to render URL with resizing and JPEG format
+      // Transform object public URL to render URL with resizing and JPEG format.
+      // Las fotos se muestran en el PDF a un ancho máximo de ~330pt, por lo que un
+      // ancho de 1000px es más que suficiente. Reducirlas aquí evita que la función
+      // se quede sin memoria al incrustar muchas evidencias.
       // Example:
       // https://<ref>.supabase.co/storage/v1/object/public/<bucket>/<path>
-      // -> https://<ref>.supabase.co/storage/v1/render/image/public/<bucket>/<path>?width=1600&quality=85&format=jpeg
+      // -> https://<ref>.supabase.co/storage/v1/render/image/public/<bucket>/<path>?width=1000&quality=72&format=jpeg
       try {
         const url = new URL(rawUrl);
         url.pathname = url.pathname.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/');
-        url.searchParams.set('width', '1200');
-        url.searchParams.set('quality', '80');
+        url.searchParams.set('width', '1000');
+        url.searchParams.set('quality', '72');
         url.searchParams.set('format', 'jpeg');
         return url.toString();
       } catch {
         return rawUrl; // fallback
+      }
+    };
+
+    // Tamaño máximo que dejamos pasar sin re-procesar. Si la imagen descargada
+    // supera esto (o no es JPEG/PNG), la decodificamos y la reducimos dentro de la
+    // función para garantizar que SIEMPRE entre en el PDF sin agotar la memoria,
+    // independientemente de si el transformador de imágenes de Supabase está activo.
+    const MAX_EMBED_BYTES = 1_200_000;
+
+    const normalizeForPdf = async (
+      result: { bytes: Uint8Array; contentType: string },
+    ): Promise<{ bytes: Uint8Array; contentType: string }> => {
+      const type = (result.contentType || '').toLowerCase();
+      const isSupported = type.includes('jpeg') || type.includes('jpg') || type.includes('png');
+
+      // Imagen pequeña y de formato soportado: usar tal cual.
+      if (isSupported && result.bytes.length <= MAX_EMBED_BYTES) return result;
+
+      // Imagen grande o de formato dudoso: redimensionar y re-codificar a JPEG baseline.
+      try {
+        const decoded = await Image.decode(result.bytes);
+        const resized = decoded.width > 1400 ? decoded.resize(1400, Image.RESIZE_AUTO) : decoded;
+        const jpeg = await resized.encodeJPEG(72);
+        return { bytes: new Uint8Array(jpeg), contentType: 'image/jpeg' };
+      } catch (error) {
+        console.warn('No se pudo redimensionar la imagen, se intenta con el original', error);
+        return result;
       }
     };
 
@@ -424,13 +454,11 @@ Deno.serve(async (req) => {
 
       const publicUrl = preferredPublic?.publicUrl ?? fallbackPublic?.publicUrl ?? null;
 
-      const fetchOptimized = async () => {
-        if (!publicUrl) return null;
-        const targetUrl = record.optimized_path ? publicUrl : toOptimizedImageUrl(publicUrl);
+      const fetchFromUrl = async (targetUrl: string) => {
         try {
           const response = await fetch(targetUrl, { headers: { accept: 'image/jpeg,image/png;q=0.9,*/*;q=0.8' } });
           if (!response.ok) {
-            console.warn('Optimized image fetch failed', targetUrl, response.status);
+            console.warn('Image fetch failed', targetUrl, response.status);
             return null;
           }
           const ab = await response.arrayBuffer();
@@ -440,9 +468,24 @@ Deno.serve(async (req) => {
             contentType,
           };
         } catch (error) {
-          console.warn('Optimized image fetch error', targetUrl, error);
+          console.warn('Image fetch error', targetUrl, error);
           return null;
         }
+      };
+
+      // SIEMPRE intentar primero la versión reducida vía el transformador de imágenes,
+      // sin importar si ya existe optimized_path. Esto mantiene cada imagen pequeña
+      // (clave para no agotar la memoria de la función con muchas evidencias).
+      const fetchTransformed = async () => {
+        if (!publicUrl) return null;
+        return await fetchFromUrl(toOptimizedImageUrl(publicUrl));
+      };
+
+      // Fallback intermedio: si el transformador no está disponible, usar el archivo
+      // optimizado almacenado tal cual (1600px) antes de recurrir al original completo.
+      const fetchStoredOptimized = async () => {
+        if (!record.optimized_path || !publicUrl) return null;
+        return await fetchFromUrl(publicUrl);
       };
 
       const fetchOriginal = async () => {
@@ -464,12 +507,14 @@ Deno.serve(async (req) => {
         }
       };
 
-      return (await fetchOptimized()) ?? (await fetchOriginal());
+      const raw = (await fetchTransformed()) ?? (await fetchStoredOptimized()) ?? (await fetchOriginal());
+      if (!raw) return null;
+      return await normalizeForPdf(raw);
     };
 
     const photos: MaintenanceReportPdfPayload['photos'] = [];
     const photoGroups: NonNullable<MaintenanceReportPdfPayload['photoGroups']> = [];
-    const MAX_PHOTOS = 24;
+    const MAX_PHOTOS = 60;
     const CONCURRENCY = 4;
 
     // Build a lookup from DB record id -> storagePhotos record
@@ -511,7 +556,7 @@ Deno.serve(async (req) => {
 
           const result = await downloadPhoto(dbRecord);
           if (!result) continue;
-          if (result.bytes.length > 2_500_000) continue;
+          if (result.bytes.length > 4_000_000) continue;
           const type = result.contentType.toLowerCase();
           if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) continue;
 
@@ -531,7 +576,7 @@ Deno.serve(async (req) => {
 
         const result = await downloadPhoto(sp);
         if (!result) continue;
-        if (result.bytes.length > 2_500_000) continue;
+        if (result.bytes.length > 4_000_000) continue;
         const type = result.contentType.toLowerCase();
         if (!type.includes('jpeg') && !type.includes('jpg') && !type.includes('png')) continue;
 
@@ -552,7 +597,7 @@ Deno.serve(async (req) => {
         const results = await Promise.all(chunk.map((record) => downloadPhoto(record)));
         results.forEach((result, indexInChunk) => {
           if (!result) return;
-          if (result.bytes.length > 2_500_000) {
+          if (result.bytes.length > 4_000_000) {
             console.warn('Foto omitida por tamaño (bytes):', result.bytes.length);
             return;
           }

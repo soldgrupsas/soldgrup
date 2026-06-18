@@ -627,7 +627,7 @@ export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPa
       } else {
         return null;
       }
-      if (bytes.length > 2_500_000) {
+      if (bytes.length > 4_000_000) {
         console.warn('Foto omitida por tamaño (bytes):', photo.url, bytes.length);
         return null;
       }
