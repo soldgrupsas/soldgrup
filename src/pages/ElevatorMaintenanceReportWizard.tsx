@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { compressImage } from "@/lib/imageCompression";
 import { RichTextEditor } from "@/components/RichTextEditor";
 
 // Función helper para extraer solo la parte de fecha (YYYY-MM-DD) de un valor
@@ -255,7 +256,6 @@ type UploadTask = {
 };
 
 const PHOTO_BUCKET = "maintenance-report-photos";
-const LARGE_FILE_THRESHOLD = 8 * 1024 * 1024;
 
 const uploadButtonCopy: Record<PhotoUploadState['status'], string> = {
   idle: "Subir foto",
@@ -792,58 +792,6 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
 
   const initialLoadRef = useRef(true);
 
-  const compressImageFile = async (file: File): Promise<File> => {
-    const MAX_DIMENSION = 1600;
-    const QUALITY = 0.82;
-
-    const loadImage = (): Promise<HTMLImageElement> =>
-      new Promise((resolve, reject) => {
-        const objectUrl = URL.createObjectURL(file);
-        const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(objectUrl);
-          resolve(img);
-        };
-        img.onerror = (error) => {
-          URL.revokeObjectURL(objectUrl);
-          reject(error);
-        };
-        img.src = objectUrl;
-      });
-
-    try {
-      const image = await loadImage();
-      const scale = Math.min(
-        MAX_DIMENSION / image.width,
-        MAX_DIMENSION / image.height,
-        1,
-      );
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return file;
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-      const blob: Blob | null = await new Promise((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", QUALITY),
-      );
-
-      if (!blob) {
-        return file;
-      }
-
-      const compressedFile = new File([blob], `${file.name.split(".")[0]}.jpg`, {
-        type: "image/jpeg",
-        lastModified: Date.now(),
-      });
-
-      return compressedFile;
-    } catch (error) {
-      console.warn("No se pudo comprimir la imagen, se usará el archivo original.", error);
-      return file;
-    }
-  };
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -1625,22 +1573,20 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       }));
     }
 
-    if (originalFile.size > LARGE_FILE_THRESHOLD) {
-      updatePhotoUploadState(actualImageId, {
-        status: "preparing",
-        progress: 0,
-        message: "Optimizando la imagen antes de subirla...",
-      });
-    }
+    updatePhotoUploadState(actualImageId, {
+      status: "preparing",
+      progress: 0,
+      message: "Optimizando la imagen antes de subirla...",
+    });
 
+    // Siempre convertimos a JPEG (incluyendo HEIC de iPhone) y redimensionamos,
+    // porque el servidor no puede procesar formatos como HEIC/HEIF.
     let preparedFile = originalFile;
-    if (originalFile.size > LARGE_FILE_THRESHOLD) {
-      try {
-        preparedFile = await compressImageFile(originalFile);
-      } catch (error) {
-        console.warn("No se pudo comprimir la imagen localmente", error);
-        preparedFile = originalFile;
-      }
+    try {
+      preparedFile = await compressImage(originalFile);
+    } catch (error) {
+      console.warn("No se pudo comprimir la imagen localmente", error);
+      preparedFile = originalFile;
     }
 
     uploadQueueRef.current = [
