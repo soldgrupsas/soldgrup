@@ -460,6 +460,23 @@ const parseLocalDateFromKey = (dateKey: string): Date => {
   return new Date(y, m - 1, d);
 };
 
+// Parsea una fecha (string "YYYY-MM-DD", ISO o Date) SIEMPRE en zona local, evitando
+// el desfase de un día que ocurre al interpretar "YYYY-MM-DD" como UTC (Colombia UTC-5).
+const parseLocalDate = (value: string | Date): Date => {
+  if (value instanceof Date) return value;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  return new Date(value);
+};
+
+// Formatea una fecha para mostrar (es-CO) usando la fecha local, sin desfase de día
+const formatDisplayDate = (value: string | Date | null | undefined): string => {
+  if (!value) return "";
+  return parseLocalDate(value).toLocaleDateString("es-CO");
+};
+
 // Verifica si una fecha es festivo
 const isHoliday = (date: Date) => HOLIDAYS.includes(toDateKey(date));
 
@@ -516,6 +533,22 @@ const getScheduleGapMinutes = (day: string): number => {
     );
   }
   return gap;
+};
+
+// Ventanas horarias de pausa (almuerzo) del día, como minutos del día [inicio, fin)
+const getScheduleGapWindows = (day: string): { startMin: number; endMin: number }[] => {
+  const intervals = activeScheduleByDay[day];
+  if (!intervals || intervals.length < 2) return [];
+  const sorted = [...intervals].sort(
+    (a, b) => timeStringToMinutes(a.start) - timeStringToMinutes(b.start)
+  );
+  const windows: { startMin: number; endMin: number }[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const startMin = timeStringToMinutes(sorted[i - 1].end);
+    const endMin = timeStringToMinutes(sorted[i].start);
+    if (endMin > startMin) windows.push({ startMin, endMin });
+  }
+  return windows;
 };
 
 // Calcula los minutos nocturnos dentro de un rango de tiempo
@@ -624,52 +657,6 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
   
   const isDomFestivo = isDominicalOrHoliday(entry);
   const intervals = intervalsForDate(entry);
-  
-  let normalMinutes = 0;
-  let recargoNocturnoMinutes = 0;
-  
-  // Calcular minutos dentro del horario laboral normal
-  intervals.forEach((interval) => {
-    const intervalStart = new Date(entry);
-    intervalStart.setHours(
-      Number(interval.start.split(":")[0]),
-      Number(interval.start.split(":")[1]),
-      0, 0
-    );
-    const intervalEnd = new Date(entry);
-    intervalEnd.setHours(
-      Number(interval.end.split(":")[0]),
-      Number(interval.end.split(":")[1]),
-      0, 0
-    );
-
-    const overlapStart = new Date(Math.max(entry.getTime(), intervalStart.getTime()));
-    const overlapEnd = new Date(Math.min(exit.getTime(), intervalEnd.getTime()));
-
-    if (overlapEnd > overlapStart) {
-      const overlapMinutes = (overlapEnd.getTime() - overlapStart.getTime()) / 60000;
-      normalMinutes += overlapMinutes;
-      
-      const nightInOverlap = calculateNightMinutes(overlapStart, overlapEnd);
-      recargoNocturnoMinutes += nightInOverlap;
-    }
-  });
-
-  // Minutos extra son los que están fuera del horario normal
-  const extraMinutes = Math.max(0, totalMinutes - normalMinutes);
-  
-  // Calcular minutos nocturnos en las horas extra
-  let extraNightMinutes = 0;
-  if (extraMinutes > 0) {
-    const totalNightMinutes = calculateNightMinutes(entry, exit);
-    extraNightMinutes = Math.max(0, totalNightMinutes - recargoNocturnoMinutes);
-  }
-  
-  // Extra diurna inicial = todas las horas extra que no son nocturnas (sin considerar aún la cena)
-  // Esta cifra puede estar sub-calculada si hay cena, porque los minutos crudos nocturnos
-  // (extraNightMinutes) se calculan sobre el rango entrada→salida sin descontar la cena.
-  // Más abajo se reasignan los minutos de cena del lado nocturno hacia el diurno.
-  const extraDayMinutesInitial = Math.max(0, extraMinutes - extraNightMinutes);
 
   // Si es dominical o festivo, TODAS las horas trabajadas tienen recargo dominical/festivo (80%)
   if (isDomFestivo) {
@@ -686,71 +673,109 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
     };
   }
 
-  // La cena ocurre en horario nocturno (≥ 7 PM): el descuento de la cena se aplica
-  // al extra nocturno crudo, no a la franja diurna. Así, una jornada que termine
-  // a las 11:30 PM con 2h diurnas (5–7 PM) y cena de 30 min en la franja nocturna
-  // mantiene 2h extra diurnas y resta solo del extra nocturno.
-  let dinnerDeductionMins = 0;
-  if (record.adjustment_note) {
-    const dinnerMatch = record.adjustment_note.match(/Cena:\s*(\d+)\s*min/);
-    if (dinnerMatch) dinnerDeductionMins = parseInt(dinnerMatch[1]) || 0;
-  }
-  const dinnerShift = Math.min(dinnerDeductionMins, extraNightMinutes);
-  const finalExtraNight = extraNightMinutes - dinnerShift;
-  // Devolver los minutos de cena al lado diurno (que los había absorbido en el cálculo crudo)
-  const extraDayMinutes = extraDayMinutesInitial + dinnerShift;
-
-  // Día normal (no festivo ni domingo)
-  let finalNormalMinutes = normalMinutes - recargoNocturnoMinutes;
-  let finalRecargo = recargoNocturnoMinutes;
-  let finalExtraDay = extraDayMinutes;
-  let finalExtraNightMinutes = finalExtraNight;
-  const classifiedTotal = finalNormalMinutes + finalRecargo + finalExtraDay + finalExtraNightMinutes;
-  if (classifiedTotal > totalMinutes && totalMinutes >= 0) {
-    let excess = classifiedTotal - totalMinutes;
-    const normRed = Math.min(excess, finalNormalMinutes);
-    finalNormalMinutes -= normRed;
-    excess -= normRed;
-    if (excess > 0) {
-      const recRed = Math.min(excess, finalRecargo);
-      finalRecargo -= recRed;
-      excess -= recRed;
-    }
-  }
-
-  // REGLA DE HORAS EXTRA POR UMBRAL DIARIO:
-  // El umbral diario es la jornada oficial de ESE día según el horario configurado
-  // (suma de los intervalos, ya sin almuerzo). Solo se cuenta hora extra cuando lo
-  // realmente trabajado supera esa jornada, sin importar a qué hora entre o salga.
+  // UMBRAL DIARIO = jornada oficial de ESE día según el horario configurado
+  // (suma de los intervalos, ya sin almuerzo).
   //  - Lun–Vie: 8:00–12:00 + 13:00–16:45 = 7h45m → extra después de 7h45m.
   //  - Sábado: 8:00–11:15 = 3h15m → extra después de 3h15m.
   const scheduledDailyMinutes = intervals.reduce(
     (sum, interval) => sum + (timeStringToMinutes(interval.end) - timeStringToMinutes(interval.start)),
     0
   );
-  const allowedExtra = Math.max(0, totalMinutes - scheduledDailyMinutes);
-  const currentExtra = finalExtraDay + finalExtraNightMinutes;
-  if (currentExtra > allowedExtra) {
-    let excess = currentExtra - allowedExtra;
-    // Primero el extra diurno pasa a ser hora ordinaria normal
-    const dayToNormal = Math.min(excess, finalExtraDay);
-    finalExtraDay -= dayToNormal;
-    finalNormalMinutes += dayToNormal;
-    excess -= dayToNormal;
-    // Luego el extra nocturno pasa a ser trabajo ordinario nocturno (con recargo del 35%)
-    if (excess > 0) {
-      const nightToRecargo = Math.min(excess, finalExtraNightMinutes);
-      finalExtraNightMinutes -= nightToRecargo;
-      finalRecargo += nightToRecargo;
-      excess -= nightToRecargo;
+
+  // CLASIFICACIÓN ANCLADA AL HORARIO OFICIAL:
+  // La jornada ordinaria (7h45m entre semana / 3h15m sábado) se ancla a la franja
+  // oficial del día [dayStart, dayEnd] (p.ej. 8:00–16:45). Reglas:
+  //  1) Lo trabajado DENTRO de la franja es ordinario.
+  //  2) Lo trabajado FUERA de la franja (madrugada / noche) es EXTRA, clasificado por
+  //     la hora real del reloj (antes de 6am o desde 7pm = nocturna; resto = diurna).
+  //  3) Si NO se completó la franja (entró tarde o salió temprano), la parte faltante
+  //     de la jornada ordinaria se toma de las horas trabajadas fuera MÁS CERCANAS a la
+  //     franja. Así, si alguien inicia temprano, esas horas cercanas al horario cuentan
+  //     como ordinarias y solo el extremo (lo más lejano) queda como extra.
+  const dayKey = entry.getDay().toString();
+  const dayStart = getDayStartMinutes(dayKey);
+  const dayEnd = getDayEndMinutes(dayKey);
+  const gapWindows = getScheduleGapWindows(dayKey);
+  const isInLunch = (d: Date) => {
+    const m = d.getHours() * 60 + d.getMinutes();
+    return gapWindows.some((w) => m >= w.startMin && m < w.endMin);
+  };
+
+  // Línea de tiempo de minutos efectivamente trabajados (excluye la pausa de almuerzo)
+  const workedClock: Date[] = [];
+  const cursor = new Date(entry);
+  while (cursor < exit) {
+    if (!isInLunch(cursor)) workedClock.push(new Date(cursor));
+    cursor.setMinutes(cursor.getMinutes() + 1);
+  }
+
+  // Ajustar la lista a los minutos realmente trabajados (totalMinutes ya considera
+  // almuerzo/cena/ajustes). Si sobran minutos (p.ej. cena al final del turno nocturno),
+  // se quitan los del FINAL; si faltan (ajuste manual positivo), se añaden como diurnos.
+  let workedList = workedClock;
+  if (workedList.length > totalMinutes) {
+    workedList = workedList.slice(0, Math.round(totalMinutes));
+  }
+
+  type WorkedMinute = { night: boolean; inWindow: boolean; dist: number };
+  const workedMinutes: WorkedMinute[] = workedList.map((t) => {
+    const mod = t.getHours() * 60 + t.getMinutes();
+    const inWindow =
+      dayStart !== null && dayEnd !== null && mod >= dayStart && mod < dayEnd;
+    let dist = 0;
+    if (!inWindow && dayStart !== null && dayEnd !== null) {
+      dist = mod < dayStart ? dayStart - mod : mod - dayEnd;
+    }
+    return { night: isNightHour(t.getHours()), inWindow, dist };
+  });
+
+  // Objetivo de horas ordinarias = jornada oficial del día (o lo trabajado, si es menor)
+  const ordinaryTarget = Math.min(workedMinutes.length, scheduledDailyMinutes);
+
+  // 1) Ordinarias: primero lo de dentro de la franja; 2) luego lo de fuera más cercano
+  const insideWindow = workedMinutes.filter((m) => m.inWindow);
+  const outsideWindow = workedMinutes
+    .filter((m) => !m.inWindow)
+    .sort((a, b) => a.dist - b.dist);
+  const ordinarySet = new Set<WorkedMinute>();
+  let assigned = 0;
+  for (const m of insideWindow) {
+    if (assigned >= ordinaryTarget) break;
+    ordinarySet.add(m);
+    assigned++;
+  }
+  for (const m of outsideWindow) {
+    if (assigned >= ordinaryTarget) break;
+    ordinarySet.add(m);
+    assigned++;
+  }
+
+  let normalM = 0;
+  let recargoM = 0;
+  let extraDayM = 0;
+  let extraNightM = 0;
+  for (const m of workedMinutes) {
+    if (ordinarySet.has(m)) {
+      if (m.night) recargoM++; else normalM++;
+    } else {
+      if (m.night) extraNightM++; else extraDayM++;
     }
   }
 
+  // Si faltan minutos por ajuste manual positivo, completarlos (asumidos diurnos)
+  let leftover = Math.round(totalMinutes) - workedMinutes.length;
+  if (leftover > 0) {
+    const toOrdinary = Math.min(leftover, Math.max(0, scheduledDailyMinutes - assigned));
+    normalM += toOrdinary;
+    leftover -= toOrdinary;
+    extraDayM += leftover;
+  }
+
   return {
-    normalMinutes: finalNormalMinutes,
-    extraDiurnaMinutes: finalExtraDay,
-    extraNocturnaMinutes: finalExtraNightMinutes,
-    recargoNocturnoMinutes: finalRecargo,
+    normalMinutes: normalM,
+    extraDiurnaMinutes: extraDayM,
+    extraNocturnaMinutes: extraNightM,
+    recargoNocturnoMinutes: recargoM,
     dominicalFestivoMinutes: 0,
     extraDiurnaDominicalMinutes: 0,
     recargoNocturnoDominicalMinutes: 0,
@@ -2070,7 +2095,7 @@ const TimeControl = () => {
 
   const calculateAge = (fechaNacimiento: string | null): number | null => {
     if (!fechaNacimiento) return null;
-    const birthDate = new Date(fechaNacimiento);
+    const birthDate = parseLocalDate(fechaNacimiento);
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
@@ -4832,7 +4857,7 @@ const TimeControl = () => {
                       )}
                       {worker.fecha_ingreso && (
                         <p className="text-xs text-muted-foreground">
-                          Ingreso: {new Date(worker.fecha_ingreso).toLocaleDateString("es-CO")}
+                          Ingreso: {formatDisplayDate(worker.fecha_ingreso)}
                         </p>
                       )}
                     </div>
@@ -5471,7 +5496,7 @@ const TimeControl = () => {
                       <Label className="text-muted-foreground">Fecha de Nacimiento</Label>
                       <p className="font-medium">
                         {viewingWorkerProfile.fecha_nacimiento
-                          ? new Date(viewingWorkerProfile.fecha_nacimiento).toLocaleDateString("es-CO")
+                          ? formatDisplayDate(viewingWorkerProfile.fecha_nacimiento)
                           : "No registrada"}
                       </p>
                     </div>
@@ -5479,7 +5504,7 @@ const TimeControl = () => {
                       <Label className="text-muted-foreground">Fecha de Ingreso</Label>
                       <p className="font-medium">
                         {viewingWorkerProfile.fecha_ingreso
-                          ? new Date(viewingWorkerProfile.fecha_ingreso).toLocaleDateString("es-CO")
+                          ? formatDisplayDate(viewingWorkerProfile.fecha_ingreso)
                           : "No registrada"}
                       </p>
                     </div>
