@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
 import {
   Table,
@@ -163,36 +164,196 @@ const HOLIDAYS = [
 ];
 
 // Horario laboral de la empresa
-// Lunes a Viernes: 8am - 12pm y 1pm - 5pm (8 horas con 1 hora almuerzo)
-// Sábado: 8am - 12pm (4 horas)
+// Lunes a Viernes: 8am - 12pm y 1pm - 4:45pm (7h45m con 1 hora almuerzo)
+// Sábado: 8am - 11:15am (3h15m)
 // Domingo: No se trabaja
-const SCHEDULE_BY_DAY: Record<string, { start: string; end: string }[]> = {
+// Este horario es configurable desde la interfaz (sección "Horario Laboral").
+type ScheduleInterval = { start: string; end: string };
+type WorkSchedule = Record<string, ScheduleInterval[]>;
+
+// Etiquetas legibles por día (0 = domingo ... 6 = sábado)
+const DAY_LABELS: Record<string, string> = {
+  "1": "Lunes",
+  "2": "Martes",
+  "3": "Miércoles",
+  "4": "Jueves",
+  "5": "Viernes",
+  "6": "Sábado",
+  "0": "Domingo",
+};
+
+// Orden de visualización de los días (lunes primero, domingo al final)
+const DAY_ORDER = ["1", "2", "3", "4", "5", "6", "0"];
+
+// Convierte "HH:MM" (24h) a una etiqueta legible tipo "12:00 PM"
+const formatTimeLabel = (hhmm: string): string => {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${m.toString().padStart(2, "0")} ${period}`;
+};
+
+const DEFAULT_SCHEDULE_BY_DAY: WorkSchedule = {
   "0": [], // Domingo - no se trabaja
   "1": [   // Lunes
     { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
+    { start: "13:00", end: "16:45" },
   ],
   "2": [   // Martes
     { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
+    { start: "13:00", end: "16:45" },
   ],
   "3": [   // Miércoles
     { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
+    { start: "13:00", end: "16:45" },
   ],
   "4": [   // Jueves
     { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
+    { start: "13:00", end: "16:45" },
   ],
   "5": [   // Viernes
     { start: "08:00", end: "12:00" },
-    { start: "13:00", end: "17:00" },
+    { start: "13:00", end: "16:45" },
   ],
-  "6": [{ start: "08:00", end: "12:00" }], // Sábado
+  "6": [{ start: "08:00", end: "11:15" }], // Sábado
 };
 
-// Constantes de legislación laboral colombiana
-const MONTHLY_WORK_HOURS = 220; // Intensidad laboral mensual en Colombia
+const WORK_SCHEDULE_STORAGE_KEY = "workSchedule";
+
+// Carga el horario guardado en localStorage (si existe), combinándolo con el
+// horario por defecto para tolerar configuraciones antiguas o incompletas.
+const loadStoredSchedule = (): WorkSchedule => {
+  try {
+    const saved = localStorage.getItem(WORK_SCHEDULE_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === "object") {
+        return { ...DEFAULT_SCHEDULE_BY_DAY, ...parsed };
+      }
+    }
+  } catch {
+    // Ignorar y usar valores por defecto
+  }
+  return DEFAULT_SCHEDULE_BY_DAY;
+};
+
+// Horario activo usado por las funciones de cálculo (nivel de módulo para que las
+// funciones puras puedan leerlo). Se mantiene sincronizado con el estado de React.
+let activeScheduleByDay: WorkSchedule = loadStoredSchedule();
+const setActiveScheduleByDay = (schedule: WorkSchedule) => {
+  activeScheduleByDay = schedule;
+};
+
+// Claves de configuración compartida en Supabase (tabla app_settings).
+// Permiten que el horario y las horas extras sean iguales para todos los usuarios.
+const WORK_SCHEDULE_SETTING_KEY = "time_control_work_schedule";
+const OVERTIME_CONFIG_SETTING_KEY = "time_control_overtime_config";
+
+// Lee un valor de configuración compartida desde Supabase; null si no existe
+const fetchAppSetting = async <T,>(key: string): Promise<T | null> => {
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.value as unknown as T) ?? null;
+};
+
+// Crea o actualiza un valor de configuración compartida en Supabase
+const saveAppSetting = async (key: string, value: unknown): Promise<void> => {
+  const { data: userData } = await supabase.auth.getUser();
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key,
+      value: value as Json,
+      updated_by: userData?.user?.id ?? null,
+    },
+    { onConflict: "key" }
+  );
+  if (error) throw error;
+};
+
+// Intensidad laboral mensual (horas) usada para calcular el valor de la hora ordinaria
+// (sueldo ÷ horas/mes). Se mantiene a nivel de módulo para que computeHoursValue pueda
+// leerlo; se sincroniza con la configuración compartida (overtimeConfig.monthlyWorkHours).
+const DEFAULT_MONTHLY_WORK_HOURS = 210;
+let activeMonthlyWorkHours = DEFAULT_MONTHLY_WORK_HOURS;
+const setActiveMonthlyWorkHours = (hours: number) => {
+  activeMonthlyWorkHours = hours;
+};
+
+// Hook reutilizable para un mapa booleano (clave -> true) compartido entre todos los
+// usuarios vía Supabase (tabla app_settings), con respaldo en localStorage.
+// Se usa para marcadores por día/trabajador como "compensado" o "no laborado".
+const useSharedBooleanMap = (
+  settingKey: string,
+  storageKey: string,
+  legacyStorageKey?: string
+) => {
+  const [map, setMap] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) return JSON.parse(saved);
+      if (legacyStorageKey) {
+        const legacy = localStorage.getItem(legacyStorageKey);
+        if (legacy) return JSON.parse(legacy);
+      }
+    } catch {
+      // ignorar
+    }
+    return {};
+  });
+  const lastSavedRef = useRef<string>(JSON.stringify(map));
+
+  // Cargar el mapa compartido desde Supabase al montar
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const remote = await fetchAppSetting<Record<string, boolean>>(settingKey);
+        if (cancelled || !remote) return;
+        const serialized = JSON.stringify(remote);
+        lastSavedRef.current = serialized;
+        localStorage.setItem(storageKey, serialized);
+        setMap(remote);
+      } catch {
+        // Sin conexión: se mantiene el valor local
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settingKey, storageKey]);
+
+  // Autoguardado en Supabase (con respaldo instantáneo en localStorage)
+  useEffect(() => {
+    const serialized = JSON.stringify(map);
+    if (serialized === lastSavedRef.current) return;
+    localStorage.setItem(storageKey, serialized);
+    const handler = setTimeout(async () => {
+      try {
+        await saveAppSetting(settingKey, map);
+      } catch {
+        // Queda respaldado en localStorage aunque falle la base de datos
+      } finally {
+        lastSavedRef.current = serialized;
+      }
+    }, 600);
+    return () => clearTimeout(handler);
+  }, [map, settingKey, storageKey]);
+
+  const toggle = useCallback((key: string) => {
+    setMap((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (!next[key]) delete next[key];
+      return next;
+    });
+  }, []);
+
+  return [map, toggle] as const;
+};
 
 // Recargos según ley colombiana (porcentajes sobre hora ordinaria)
 const SURCHARGES = {
@@ -229,7 +390,7 @@ type OvertimeConfig = {
 // Configuración por defecto de horas extras (ley colombiana)
 const DEFAULT_OVERTIME_CONFIG: OvertimeConfig = {
   items: [
-    { id: "extra_diurna", name: "Extra Diurna", startTime: "06:00", endTime: "19:00", percentage: 25, description: "Fuera del horario laboral (L-V 8am-5pm, Sáb 8am-12pm)" },
+    { id: "extra_diurna", name: "Extra Diurna", startTime: "06:00", endTime: "19:00", percentage: 25, description: "Fuera del horario laboral configurado" },
     { id: "extra_nocturna", name: "Extra Nocturna", startTime: "19:00", endTime: "06:00", percentage: 75, description: "Hora extra nocturna (7pm-6am)" },
     { id: "recargo_nocturno", name: "Recargo Nocturno", startTime: "19:00", endTime: "06:00", percentage: 35, description: "Recargo por trabajo nocturno ordinario" },
     { id: "dominical_festivo", name: "Dominical/Festivo", startTime: "00:00", endTime: "23:59", percentage: 80, description: "Recargo dominical o festivo" },
@@ -237,7 +398,7 @@ const DEFAULT_OVERTIME_CONFIG: OvertimeConfig = {
     { id: "recargo_nocturno_dominical", name: "Recargo Nocturno Dominical", startTime: "00:00", endTime: "06:00", startTime2: "19:00", endTime2: "23:59", percentage: 115, description: "Recargo nocturno en dominical/festivo" },
     { id: "extra_nocturna_dominical", name: "Extra Nocturna Dominical", startTime: "00:00", endTime: "06:00", startTime2: "19:00", endTime2: "23:59", percentage: 165, description: "Hora extra nocturna en dominical/festivo" },
   ],
-  monthlyWorkHours: 220, // Intensidad laboral mensual en Colombia
+  monthlyWorkHours: DEFAULT_MONTHLY_WORK_HOURS, // Intensidad laboral mensual
 };
 
 // Tipo para el desglose detallado de horas
@@ -313,17 +474,48 @@ const isNightHour = (hour: number): boolean => {
   return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;
 };
 
-// Obtiene los intervalos de trabajo para una fecha
+const timeStringToMinutes = (value: string) => {
+  const [hours, minutes] = value.split(":").map((part) => Number(part));
+  return hours * 60 + minutes;
+};
+
+// Obtiene los intervalos de trabajo para una fecha usando el horario configurado
 const intervalsForDate = (date: Date) => {
   // En festivos no hay horario laboral normal
   if (isHoliday(date)) return [];
   const day = date.getDay().toString();
-  return SCHEDULE_BY_DAY[day] ?? [];
+  return activeScheduleByDay[day] ?? [];
 };
 
-const timeStringToMinutes = (value: string) => {
-  const [hours, minutes] = value.split(":").map((part) => Number(part));
-  return hours * 60 + minutes;
+// Minuto de inicio de la jornada (primer intervalo) para un día; null si no se trabaja
+const getDayStartMinutes = (day: string): number | null => {
+  const intervals = activeScheduleByDay[day];
+  if (!intervals || intervals.length === 0) return null;
+  return Math.min(...intervals.map((i) => timeStringToMinutes(i.start)));
+};
+
+// Minuto de fin de la jornada (último intervalo) para un día; null si no se trabaja
+const getDayEndMinutes = (day: string): number | null => {
+  const intervals = activeScheduleByDay[day];
+  if (!intervals || intervals.length === 0) return null;
+  return Math.max(...intervals.map((i) => timeStringToMinutes(i.end)));
+};
+
+// Minutos totales de pausas (almuerzo) entre intervalos consecutivos de un día
+const getScheduleGapMinutes = (day: string): number => {
+  const intervals = activeScheduleByDay[day];
+  if (!intervals || intervals.length < 2) return 0;
+  const sorted = [...intervals].sort(
+    (a, b) => timeStringToMinutes(a.start) - timeStringToMinutes(b.start)
+  );
+  let gap = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    gap += Math.max(
+      0,
+      timeStringToMinutes(sorted[i].start) - timeStringToMinutes(sorted[i - 1].end)
+    );
+  }
+  return gap;
 };
 
 // Calcula los minutos nocturnos dentro de un rango de tiempo
@@ -342,59 +534,43 @@ const calculateNightMinutes = (startTime: Date, endTime: Date): number => {
   return nightMinutes;
 };
 
-// Función para normalizar las horas de entrada/salida según tolerancias
-// - Entrada: Si marca hasta 20 min antes de las 8am, cuenta desde las 8am
-// - Salida L-V: Si marca hasta 10 min después de las 5pm, cuenta hasta las 5pm
-// - Salida Sábado: Si marca hasta 10 min después de las 12pm, cuenta hasta las 12pm
+// Tolerancias aplicadas contra el horario configurado
+const ENTRY_TOLERANCE_MINUTES = 20; // marca hasta 20 min antes del inicio → cuenta desde el inicio
+const EXIT_TOLERANCE_MINUTES = 10;  // marca hasta 10 min después del fin → cuenta hasta el fin
+
+// Función para normalizar las horas de entrada/salida según tolerancias.
+// Los límites (inicio y fin de jornada) se obtienen del horario laboral configurado,
+// por lo que se adaptan automáticamente si se modifica el horario desde la interfaz.
+// - Entrada: si marca hasta 20 min antes del inicio de la jornada, cuenta desde el inicio.
+// - Salida: si marca hasta 10 min después del fin de la jornada, cuenta hasta el fin.
 const normalizeWorkTime = (entry: Date | null, exit: Date | null): { normalizedEntry: Date | null, normalizedExit: Date | null } => {
   let normalizedEntry = entry ? new Date(entry) : null;
   let normalizedExit = exit ? new Date(exit) : null;
-  
-  // Normalizar entrada: si marca entre 7:40 y 8:00, ajustar a 8:00
+
+  // Normalizar entrada según el inicio de la jornada de ese día
   if (normalizedEntry) {
-    const entryHour = normalizedEntry.getHours();
-    const entryMinutes = normalizedEntry.getMinutes();
-    const entryTotalMinutes = entryHour * 60 + entryMinutes;
-    
-    // 7:40 = 460 minutos, 8:00 = 480 minutos
-    const ENTRY_TOLERANCE_START = 7 * 60 + 40; // 7:40 AM
-    const STANDARD_ENTRY_TIME = 8 * 60; // 8:00 AM
-    
-    // Si la entrada es entre 7:40 y 8:00, ajustar a 8:00
-    if (entryTotalMinutes >= ENTRY_TOLERANCE_START && entryTotalMinutes < STANDARD_ENTRY_TIME) {
-      normalizedEntry.setHours(8, 0, 0, 0);
+    const day = normalizedEntry.getDay().toString();
+    const dayStart = getDayStartMinutes(day);
+    if (dayStart !== null) {
+      const entryTotalMinutes = normalizedEntry.getHours() * 60 + normalizedEntry.getMinutes();
+      if (entryTotalMinutes >= dayStart - ENTRY_TOLERANCE_MINUTES && entryTotalMinutes < dayStart) {
+        normalizedEntry.setHours(Math.floor(dayStart / 60), dayStart % 60, 0, 0);
+      }
     }
   }
-  
-  // Normalizar salida según el día de la semana
+
+  // Normalizar salida según el fin de la jornada de ese día
   if (normalizedExit) {
-    const exitHour = normalizedExit.getHours();
-    const exitMinutes = normalizedExit.getMinutes();
-    const exitTotalMinutes = exitHour * 60 + exitMinutes;
-    const dayOfWeek = normalizedExit.getDay(); // 0=Dom, 1=Lun, 2=Mar, ..., 6=Sáb
-    
-    // Sábado (día 6): horario hasta 12pm
-    if (dayOfWeek === 6) {
-      const SATURDAY_END_TIME = 12 * 60; // 12:00 PM
-      const SATURDAY_TOLERANCE_END = 12 * 60 + 10; // 12:10 PM
-      
-      // Si la salida es entre 12:00 y 12:10, ajustar a 12:00
-      if (exitTotalMinutes >= SATURDAY_END_TIME && exitTotalMinutes <= SATURDAY_TOLERANCE_END) {
-        normalizedExit.setHours(12, 0, 0, 0);
-      }
-    }
-    // Lunes a Viernes (días 1-5): horario hasta 5pm
-    else if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-      const WEEKDAY_END_TIME = 17 * 60; // 5:00 PM
-      const WEEKDAY_TOLERANCE_END = 17 * 60 + 10; // 5:10 PM
-      
-      // Si la salida es entre 5:00 y 5:10, ajustar a 5:00
-      if (exitTotalMinutes >= WEEKDAY_END_TIME && exitTotalMinutes <= WEEKDAY_TOLERANCE_END) {
-        normalizedExit.setHours(17, 0, 0, 0);
+    const day = normalizedExit.getDay().toString();
+    const dayEnd = getDayEndMinutes(day);
+    if (dayEnd !== null) {
+      const exitTotalMinutes = normalizedExit.getHours() * 60 + normalizedExit.getMinutes();
+      if (exitTotalMinutes >= dayEnd && exitTotalMinutes <= dayEnd + EXIT_TOLERANCE_MINUTES) {
+        normalizedExit.setHours(Math.floor(dayEnd / 60), dayEnd % 60, 0, 0);
       }
     }
   }
-  
+
   return { normalizedEntry, normalizedExit };
 };
 
@@ -438,7 +614,11 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
   const exitMinutesOfDay = exit.getHours() * 60 + exit.getMinutes();
   const isSaturdayLongShift = dayOfWeek === 6 && exitMinutesOfDay >= 15 * 60; // salida ≥ 3:00 PM
   const shouldAutoDeductLunch = !processedViaDialog && !isHoliday(entry) && (isWeekday || isSaturdayLongShift);
-  const legacyGapDeduction = shouldAutoDeductLunch ? 60 : 0;
+  // La pausa de almuerzo se obtiene del horario configurado (hueco entre intervalos).
+  // Para jornadas largas de sábado se usa la pausa de un día laboral típico (lunes).
+  const weekdayLunchGap = getScheduleGapMinutes("1");
+  const dayLunchGap = isWeekday ? getScheduleGapMinutes(dayOfWeek.toString()) : weekdayLunchGap;
+  const legacyGapDeduction = shouldAutoDeductLunch ? dayLunchGap : 0;
 
   const totalMinutes = Math.max(0, rawMinutes + adjustment - legacyGapDeduction);
   
@@ -523,7 +703,9 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
   // Día normal (no festivo ni domingo)
   let finalNormalMinutes = normalMinutes - recargoNocturnoMinutes;
   let finalRecargo = recargoNocturnoMinutes;
-  const classifiedTotal = finalNormalMinutes + finalRecargo + extraDayMinutes + finalExtraNight;
+  let finalExtraDay = extraDayMinutes;
+  let finalExtraNightMinutes = finalExtraNight;
+  const classifiedTotal = finalNormalMinutes + finalRecargo + finalExtraDay + finalExtraNightMinutes;
   if (classifiedTotal > totalMinutes && totalMinutes >= 0) {
     let excess = classifiedTotal - totalMinutes;
     const normRed = Math.min(excess, finalNormalMinutes);
@@ -536,10 +718,38 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
     }
   }
 
+  // REGLA DE HORAS EXTRA POR UMBRAL DIARIO:
+  // El umbral diario es la jornada oficial de ESE día según el horario configurado
+  // (suma de los intervalos, ya sin almuerzo). Solo se cuenta hora extra cuando lo
+  // realmente trabajado supera esa jornada, sin importar a qué hora entre o salga.
+  //  - Lun–Vie: 8:00–12:00 + 13:00–16:45 = 7h45m → extra después de 7h45m.
+  //  - Sábado: 8:00–11:15 = 3h15m → extra después de 3h15m.
+  const scheduledDailyMinutes = intervals.reduce(
+    (sum, interval) => sum + (timeStringToMinutes(interval.end) - timeStringToMinutes(interval.start)),
+    0
+  );
+  const allowedExtra = Math.max(0, totalMinutes - scheduledDailyMinutes);
+  const currentExtra = finalExtraDay + finalExtraNightMinutes;
+  if (currentExtra > allowedExtra) {
+    let excess = currentExtra - allowedExtra;
+    // Primero el extra diurno pasa a ser hora ordinaria normal
+    const dayToNormal = Math.min(excess, finalExtraDay);
+    finalExtraDay -= dayToNormal;
+    finalNormalMinutes += dayToNormal;
+    excess -= dayToNormal;
+    // Luego el extra nocturno pasa a ser trabajo ordinario nocturno (con recargo del 35%)
+    if (excess > 0) {
+      const nightToRecargo = Math.min(excess, finalExtraNightMinutes);
+      finalExtraNightMinutes -= nightToRecargo;
+      finalRecargo += nightToRecargo;
+      excess -= nightToRecargo;
+    }
+  }
+
   return {
     normalMinutes: finalNormalMinutes,
-    extraDiurnaMinutes: extraDayMinutes,
-    extraNocturnaMinutes: finalExtraNight,
+    extraDiurnaMinutes: finalExtraDay,
+    extraNocturnaMinutes: finalExtraNightMinutes,
     recargoNocturnoMinutes: finalRecargo,
     dominicalFestivoMinutes: 0,
     extraDiurnaDominicalMinutes: 0,
@@ -551,7 +761,7 @@ const computeRecordHours = (record: AttendanceRecord): HoursBreakdown => {
 
 // Calcula el valor en dinero del desglose de horas
 const computeHoursValue = (breakdown: HoursBreakdown, monthlySalary: number): HoursValue => {
-  const hourlyRate = monthlySalary / MONTHLY_WORK_HOURS;
+  const hourlyRate = monthlySalary / activeMonthlyWorkHours;
   const minuteRate = hourlyRate / 60;
   
   // Valor de horas normales (sin recargo)
@@ -928,11 +1138,98 @@ const TimeControl = () => {
     return DEFAULT_OVERTIME_CONFIG;
   });
   const [showOvertimeConfig, setShowOvertimeConfig] = useState(false);
-  
-  // Guardar configuración de horas extras en localStorage cuando cambie
+
+  // Estado de autoguardado de la configuración de horas extras (compartida en Supabase)
+  const [overtimeSaving, setOvertimeSaving] = useState(false);
+  const [overtimePendingSave, setOvertimePendingSave] = useState(false);
+  const [overtimeLastSavedAt, setOvertimeLastSavedAt] = useState<Date | null>(null);
+  const overtimeConfigRef = useRef(overtimeConfig);
+  const lastSavedOvertimeRef = useRef<string>(JSON.stringify(overtimeConfig));
+
   useEffect(() => {
-    localStorage.setItem('overtimeConfig', JSON.stringify(overtimeConfig));
+    overtimeConfigRef.current = overtimeConfig;
   }, [overtimeConfig]);
+
+  // Red de seguridad: guardar en localStorage si el usuario cierra/recarga la página
+  useEffect(() => {
+    const flush = () => {
+      localStorage.setItem("overtimeConfig", JSON.stringify(overtimeConfigRef.current));
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
+
+  // Cargar la configuración de horas extras COMPARTIDA desde Supabase al montar
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const remote = await fetchAppSetting<OvertimeConfig>(OVERTIME_CONFIG_SETTING_KEY);
+        if (cancelled) return;
+        if (remote) {
+          const merged: OvertimeConfig = {
+            ...DEFAULT_OVERTIME_CONFIG,
+            ...remote,
+            monthlyWorkHours: remote.monthlyWorkHours || DEFAULT_OVERTIME_CONFIG.monthlyWorkHours,
+          };
+          const serialized = JSON.stringify(merged);
+          lastSavedOvertimeRef.current = serialized;
+          localStorage.setItem("overtimeConfig", serialized);
+          setOvertimeConfig(merged);
+          setOvertimeLastSavedAt(new Date());
+        } else {
+          await saveAppSetting(OVERTIME_CONFIG_SETTING_KEY, overtimeConfigRef.current);
+          if (cancelled) return;
+          lastSavedOvertimeRef.current = JSON.stringify(overtimeConfigRef.current);
+          setOvertimeLastSavedAt(new Date());
+        }
+      } catch {
+        // Sin conexión o error: se mantiene el valor de localStorage
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autoguardado de la configuración de horas extras en Supabase (con indicador visible)
+  useEffect(() => {
+    const serialized = JSON.stringify(overtimeConfig);
+    if (serialized === lastSavedOvertimeRef.current) return;
+
+    setOvertimePendingSave(true);
+    const handler = setTimeout(async () => {
+      setOvertimeSaving(true);
+      localStorage.setItem("overtimeConfig", serialized);
+      try {
+        await saveAppSetting(OVERTIME_CONFIG_SETTING_KEY, overtimeConfig);
+        setOvertimeLastSavedAt(new Date());
+      } catch {
+        // Queda respaldado en localStorage aunque falle la base de datos
+      } finally {
+        lastSavedOvertimeRef.current = serialized;
+        setOvertimePendingSave(false);
+        setOvertimeSaving(false);
+      }
+    }, 800);
+
+    return () => clearTimeout(handler);
+  }, [overtimeConfig]);
+
+  const overtimeSavedTimestamp = overtimeLastSavedAt
+    ? new Intl.DateTimeFormat("es-CO", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(overtimeLastSavedAt)
+    : null;
+
+  // Mantener sincronizada la intensidad laboral mensual (usada por computeHoursValue)
+  useEffect(() => {
+    const hours = overtimeConfig.monthlyWorkHours || DEFAULT_MONTHLY_WORK_HOURS;
+    setActiveMonthlyWorkHours(hours);
+  }, [overtimeConfig.monthlyWorkHours]);
   
   // Función para actualizar un item de la configuración
   const updateOvertimeConfigItem = (itemId: string, field: keyof OvertimeConfigItem, value: string | number) => {
@@ -949,34 +1246,195 @@ const TimeControl = () => {
     setOvertimeConfig(DEFAULT_OVERTIME_CONFIG);
   };
 
-  // Estado para domingos/festivos compensados (clave: workerId-YYYY-MM-DD)
-  const [compensatedDays, setCompensatedDays] = useState<Record<string, boolean>>(() => {
-    const saved = localStorage.getItem('compensatedDays');
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return {}; }
-    }
-    const legacy = localStorage.getItem('compensatedSundays');
-    if (legacy) {
-      try { return JSON.parse(legacy); } catch { return {}; }
-    }
-    return {};
-  });
+  // Estado para el horario laboral editable (afecta el cálculo de horas extras)
+  const [workSchedule, setWorkScheduleState] = useState<WorkSchedule>(() => loadStoredSchedule());
+  const [showScheduleConfig, setShowScheduleConfig] = useState(false);
 
+  // Estado de autoguardado del horario (mismo comportamiento que los informes de mantenimiento)
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [schedulePendingSave, setSchedulePendingSave] = useState(false);
+  const [scheduleLastSavedAt, setScheduleLastSavedAt] = useState<Date | null>(null);
+  const workScheduleRef = useRef(workSchedule);
+  // Última versión ya guardada (serializada) para evitar guardados innecesarios / bucles
+  const lastSavedScheduleRef = useRef<string>(JSON.stringify(workSchedule));
+
+  // Mantener una referencia siempre actualizada del horario
   useEffect(() => {
-    localStorage.setItem('compensatedDays', JSON.stringify(compensatedDays));
-  }, [compensatedDays]);
+    workScheduleRef.current = workSchedule;
+  }, [workSchedule]);
 
-  const toggleCompensatedDay = (workerId: string, date: string) => {
-    setCompensatedDays(prev => {
-      const key = `${workerId}-${date}`;
-      const next = { ...prev, [key]: !prev[key] };
-      if (!next[key]) delete next[key];
+  // Red de seguridad: guardar en localStorage si el usuario cierra/recarga la página
+  useEffect(() => {
+    const flush = () => {
+      localStorage.setItem(
+        WORK_SCHEDULE_STORAGE_KEY,
+        JSON.stringify(workScheduleRef.current)
+      );
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
+
+  // Cargar el horario COMPARTIDO desde Supabase al montar (todos los usuarios ven lo mismo)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const remote = await fetchAppSetting<WorkSchedule>(WORK_SCHEDULE_SETTING_KEY);
+        if (cancelled) return;
+        if (remote) {
+          const merged = { ...DEFAULT_SCHEDULE_BY_DAY, ...remote };
+          const serialized = JSON.stringify(merged);
+          lastSavedScheduleRef.current = serialized; // evita re-guardar lo recién cargado
+          localStorage.setItem(WORK_SCHEDULE_STORAGE_KEY, serialized);
+          setActiveScheduleByDay(merged);
+          setWorkScheduleState(merged);
+          setScheduleLastSavedAt(new Date());
+        } else {
+          // Aún no existe en la base de datos: sembrarla con el valor actual
+          await saveAppSetting(WORK_SCHEDULE_SETTING_KEY, workScheduleRef.current);
+          if (cancelled) return;
+          lastSavedScheduleRef.current = JSON.stringify(workScheduleRef.current);
+          setScheduleLastSavedAt(new Date());
+        }
+      } catch {
+        // Sin conexión o error: se mantiene el valor de localStorage
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autoguardado del horario en Supabase (con indicador visible)
+  useEffect(() => {
+    // Mantener el horario activo (usado por las funciones de cálculo) siempre sincronizado
+    setActiveScheduleByDay(workSchedule);
+
+    const serialized = JSON.stringify(workSchedule);
+    // Si no hay cambios reales (o se acaba de cargar desde la BD), no guardar
+    if (serialized === lastSavedScheduleRef.current) return;
+
+    setSchedulePendingSave(true);
+    const handler = setTimeout(async () => {
+      setScheduleSaving(true);
+      // Respaldo instantáneo en localStorage
+      localStorage.setItem(WORK_SCHEDULE_STORAGE_KEY, serialized);
+      try {
+        await saveAppSetting(WORK_SCHEDULE_SETTING_KEY, workSchedule);
+        setScheduleLastSavedAt(new Date());
+      } catch {
+        // Queda respaldado en localStorage aunque falle la base de datos
+      } finally {
+        lastSavedScheduleRef.current = serialized;
+        setSchedulePendingSave(false);
+        setScheduleSaving(false);
+      }
+    }, 800);
+
+    return () => clearTimeout(handler);
+  }, [workSchedule]);
+
+  const scheduleSavedTimestamp = scheduleLastSavedAt
+    ? new Intl.DateTimeFormat("es-CO", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(scheduleLastSavedAt)
+    : null;
+
+  // Actualiza el estado y sincroniza inmediatamente el horario activo para que los
+  // cálculos de la siguiente renderización usen el horario más reciente.
+  const applyWorkSchedule = (
+    updater: WorkSchedule | ((prev: WorkSchedule) => WorkSchedule)
+  ) => {
+    setWorkScheduleState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      setActiveScheduleByDay(next);
       return next;
     });
   };
 
+  const updateScheduleInterval = (
+    day: string,
+    index: number,
+    field: keyof ScheduleInterval,
+    value: string
+  ) => {
+    applyWorkSchedule((prev) => ({
+      ...prev,
+      [day]: (prev[day] ?? []).map((interval, i) =>
+        i === index ? { ...interval, [field]: value } : interval
+      ),
+    }));
+  };
+
+  const addScheduleInterval = (day: string) => {
+    applyWorkSchedule((prev) => {
+      const existing = prev[day] ?? [];
+      // Sugerir un intervalo por defecto según lo que ya exista ese día
+      const suggested: ScheduleInterval =
+        existing.length === 0
+          ? { start: "08:00", end: "12:00" }
+          : { start: "13:00", end: "16:45" };
+      return { ...prev, [day]: [...existing, suggested] };
+    });
+  };
+
+  const removeScheduleInterval = (day: string, index: number) => {
+    applyWorkSchedule((prev) => ({
+      ...prev,
+      [day]: (prev[day] ?? []).filter((_, i) => i !== index),
+    }));
+  };
+
+  const resetWorkSchedule = () => {
+    applyWorkSchedule(DEFAULT_SCHEDULE_BY_DAY);
+  };
+
+  // Horas semanales totales según el horario configurado (para mostrar en la UI)
+  const scheduleWeeklyHours = useMemo(() => {
+    let totalMinutes = 0;
+    DAY_ORDER.forEach((day) => {
+      (workSchedule[day] ?? []).forEach((interval) => {
+        totalMinutes += Math.max(
+          0,
+          timeStringToMinutes(interval.end) - timeStringToMinutes(interval.start)
+        );
+      });
+    });
+    return totalMinutes / 60;
+  }, [workSchedule]);
+
+  // Domingos/festivos compensados (clave: workerId-YYYY-MM-DD), COMPARTIDO entre usuarios
+  const [compensatedDays, toggleCompensatedDayKey] = useSharedBooleanMap(
+    "time_control_compensated_days",
+    "compensatedDays",
+    "compensatedSundays"
+  );
+
+  const toggleCompensatedDay = (workerId: string, date: string) => {
+    toggleCompensatedDayKey(`${workerId}-${date}`);
+  };
+
   const isDayCompensated = (workerId: string, date: string) => {
     return !!compensatedDays[`${workerId}-${date}`];
+  };
+
+  // Días deshabilitados / no laborados (clave: workerId-YYYY-MM-DD), COMPARTIDO entre usuarios.
+  // Un día deshabilitado se excluye por completo del cálculo de horas y totales.
+  const [disabledDays, toggleDisabledDayKey] = useSharedBooleanMap(
+    "time_control_disabled_days",
+    "disabledDays"
+  );
+
+  const toggleDisabledDay = (workerId: string, date: string) => {
+    toggleDisabledDayKey(`${workerId}-${date}`);
+  };
+
+  const isDayDisabled = (workerId: string, date: string) => {
+    return !!disabledDays[`${workerId}-${date}`];
   };
 
   // Estado para excluir extras individuales del total (workerId -> extraKey -> excluded)
@@ -2301,7 +2759,19 @@ const TimeControl = () => {
       const mm = d.getMinutes().toString().padStart(2, "0");
       setQuickManualTime(`${hh}:${mm}`);
     } else {
-      setQuickManualTime(type === "entry" ? "08:00" : "17:00");
+      // Sugerir la hora según el horario laboral configurado para ese día
+      const dayKey = parseLocalDateFromKey(date).getDay().toString();
+      const toHHMM = (minutes: number) =>
+        `${Math.floor(minutes / 60).toString().padStart(2, "0")}:${(minutes % 60)
+          .toString()
+          .padStart(2, "0")}`;
+      const startMin = getDayStartMinutes(dayKey);
+      const endMin = getDayEndMinutes(dayKey);
+      if (type === "entry") {
+        setQuickManualTime(startMin !== null ? toHHMM(startMin) : "08:00");
+      } else {
+        setQuickManualTime(endMin !== null ? toHHMM(endMin) : "16:45");
+      }
     }
     // En domingo/festivo el almuerzo no se descuenta por defecto
     // (si hubo almuerzo, el usuario debe activarlo manualmente).
@@ -2494,6 +2964,8 @@ const TimeControl = () => {
     
     filteredRecords.forEach((record) => {
       const key = record.worker_id;
+      // Omitir días deshabilitados / no laborados
+      if (isDayDisabled(key, record.date)) return;
       let stats = computeRecordHours(record);
       const worker = workers.find(w => w.id === key);
       const salary = worker?.sueldo || 0;
@@ -2527,7 +2999,7 @@ const TimeControl = () => {
           recargoNocturnoDominicalMinutes: 0,
           extraNocturnaDominicalMinutes: 0,
           totalMinutes: 0,
-          hourlyRate: salary / MONTHLY_WORK_HOURS,
+          hourlyRate: salary / (overtimeConfig.monthlyWorkHours || DEFAULT_MONTHLY_WORK_HOURS),
           compensatedDominicalMinutes: 0,
           totalExtraValue: 0,
           totalValue: 0,
@@ -2558,7 +3030,7 @@ const TimeControl = () => {
       
       // Para domingos compensados: descontar la hora base (solo se paga el 80% de recargo)
       if (t.compensatedDominicalMinutes > 0) {
-        const minuteRate = salary / MONTHLY_WORK_HOURS / 60;
+        const minuteRate = salary / (overtimeConfig.monthlyWorkHours || DEFAULT_MONTHLY_WORK_HOURS) / 60;
         const baseDeduction = t.compensatedDominicalMinutes * minuteRate;
         t.totalExtraValue -= baseDeduction;
         t.totalValue -= baseDeduction;
@@ -2566,7 +3038,7 @@ const TimeControl = () => {
     });
     
     return totals;
-  }, [attendanceRecords, workers, dateRange, compensatedDays]);
+  }, [attendanceRecords, workers, dateRange, compensatedDays, disabledDays, workSchedule, overtimeConfig.monthlyWorkHours]);
 
   // Desglose día por día por trabajador (para mostrar en el desplegable de cada categoría)
   const dailyBreakdownsByWorker = useMemo(() => {
@@ -2580,6 +3052,8 @@ const TimeControl = () => {
       : attendanceRecords;
     filteredRecords.forEach((record) => {
       const wid = record.worker_id;
+      // Omitir días deshabilitados / no laborados
+      if (isDayDisabled(wid, record.date)) return;
       if (!map[wid]) map[wid] = [];
       let breakdown = computeRecordHours(record);
       // Aplicar misma compensación dominical que en weeklyTotals
@@ -2608,7 +3082,7 @@ const TimeControl = () => {
     });
     Object.values(map).forEach((arr) => arr.sort((a, b) => a.date.localeCompare(b.date)));
     return map;
-  }, [attendanceRecords, dateRange, compensatedDays]);
+  }, [attendanceRecords, dateRange, compensatedDays, disabledDays, workSchedule, overtimeConfig.monthlyWorkHours]);
 
   // Only disable entry button if there's a complete entry record (with photo)
   const entryButtonDisabled =
@@ -4413,6 +4887,155 @@ const TimeControl = () => {
         </Card>
         )}
 
+        {/* Horario Laboral - Solo visible para administrador */}
+        {!isAttendanceUser && (
+          <Card className="p-6">
+            <div
+              className="flex items-center justify-between cursor-pointer"
+              onClick={() => setShowScheduleConfig(!showScheduleConfig)}
+            >
+              <div>
+                <h2 className="text-2xl font-semibold">Horario Laboral</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Total semanal: {scheduleWeeklyHours.toLocaleString("es-CO", { maximumFractionDigits: 2 })} horas
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-muted-foreground text-right">
+                  {scheduleSaving
+                    ? "Guardando…"
+                    : schedulePendingSave
+                      ? "Cambios pendientes por guardar"
+                      : scheduleSavedTimestamp
+                        ? `Guardado a las ${scheduleSavedTimestamp}`
+                        : "Guardado automáticamente"}
+                </div>
+                <Button variant="ghost" size="icon">
+                  {showScheduleConfig ? (
+                    <X className="h-5 w-5" />
+                  ) : (
+                    <Edit2 className="h-5 w-5" />
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {showScheduleConfig && (
+              <div className="mt-6 space-y-6">
+                <p className="text-sm text-muted-foreground">
+                  Configure la jornada de cada día. Las horas fuera de estos intervalos se
+                  contabilizan como horas extra. Puede agregar varios intervalos por día
+                  (por ejemplo, mañana y tarde con pausa de almuerzo). Los cambios se guardan
+                  automáticamente y aplican para <strong>todos los usuarios</strong>.
+                </p>
+
+                <div className="space-y-4">
+                  {DAY_ORDER.map((day) => {
+                    const intervals = workSchedule[day] ?? [];
+                    return (
+                      <div key={day} className="p-4 border rounded-lg bg-muted/30">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-semibold text-lg">{DAY_LABELS[day]}</h4>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addScheduleInterval(day)}
+                            className="gap-1"
+                          >
+                            <Plus className="h-4 w-4" />
+                            Agregar intervalo
+                          </Button>
+                        </div>
+
+                        {intervals.length === 0 ? (
+                          <p className="text-sm text-muted-foreground italic">
+                            No se trabaja este día.
+                          </p>
+                        ) : (
+                          <div className="space-y-3">
+                            {intervals.map((interval, index) => {
+                              const prevInterval = index > 0 ? intervals[index - 1] : null;
+                              const lunchGap = prevInterval
+                                ? timeStringToMinutes(interval.start) - timeStringToMinutes(prevInterval.end)
+                                : 0;
+                              return (
+                              <div key={index} className="space-y-3">
+                              {prevInterval && lunchGap > 0 && (
+                                <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                                  <span aria-hidden>🍽️</span>
+                                  <span>
+                                    Almuerzo: {formatTimeLabel(prevInterval.end)} – {formatTimeLabel(interval.start)}
+                                    {" "}({lunchGap} min · se descuenta de la jornada)
+                                  </span>
+                                </div>
+                              )}
+                              <div
+                                className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end"
+                              >
+                                <div>
+                                  <Label htmlFor={`sch-start-${day}-${index}`}>Hora Inicio</Label>
+                                  <Input
+                                    id={`sch-start-${day}-${index}`}
+                                    type="time"
+                                    value={interval.start}
+                                    onChange={(e) =>
+                                      updateScheduleInterval(day, index, "start", e.target.value)
+                                    }
+                                    className="mt-1"
+                                  />
+                                </div>
+                                <div>
+                                  <Label htmlFor={`sch-end-${day}-${index}`}>Hora Fin</Label>
+                                  <Input
+                                    id={`sch-end-${day}-${index}`}
+                                    type="time"
+                                    value={interval.end}
+                                    onChange={(e) =>
+                                      updateScheduleInterval(day, index, "end", e.target.value)
+                                    }
+                                    className="mt-1"
+                                  />
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => removeScheduleInterval(day, index)}
+                                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  title="Eliminar intervalo"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="p-3 rounded bg-blue-50 border border-blue-200 text-sm text-blue-800">
+                  Cuando un día tiene dos o más intervalos, el hueco entre ellos se
+                  considera pausa de almuerzo y se descuenta automáticamente de la jornada.
+                </div>
+
+                {/* Botón para resetear */}
+                <div className="flex justify-end gap-2 pt-4 border-t">
+                  <Button
+                    variant="outline"
+                    onClick={resetWorkSchedule}
+                    className="text-amber-600 border-amber-300 hover:bg-amber-50"
+                  >
+                    Restaurar Horario por Defecto
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
         {/* Configuración de Horas Extras - Solo visible para administrador */}
         {!isAttendanceUser && (
           <Card className="p-6">
@@ -4421,13 +5044,24 @@ const TimeControl = () => {
               onClick={() => setShowOvertimeConfig(!showOvertimeConfig)}
             >
               <h2 className="text-2xl font-semibold">Configuración de Horas Extras</h2>
-              <Button variant="ghost" size="icon">
-                {showOvertimeConfig ? (
-                  <X className="h-5 w-5" />
-                ) : (
-                  <Edit2 className="h-5 w-5" />
-                )}
-              </Button>
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-muted-foreground text-right">
+                  {overtimeSaving
+                    ? "Guardando…"
+                    : overtimePendingSave
+                      ? "Cambios pendientes por guardar"
+                      : overtimeSavedTimestamp
+                        ? `Guardado a las ${overtimeSavedTimestamp}`
+                        : "Guardado automáticamente"}
+                </div>
+                <Button variant="ghost" size="icon">
+                  {showOvertimeConfig ? (
+                    <X className="h-5 w-5" />
+                  ) : (
+                    <Edit2 className="h-5 w-5" />
+                  )}
+                </Button>
+              </div>
             </div>
             
             {showOvertimeConfig && (
@@ -4556,10 +5190,26 @@ const TimeControl = () => {
                   </div>
                   <p className="text-xs text-green-600 mt-2">
                     Este valor se usa para calcular el valor de la hora ordinaria (sueldo mensual ÷ intensidad laboral).
-                    El valor por defecto en Colombia es 220 horas.
+                    Valor actual de la empresa: 210 horas.
                   </p>
                 </div>
-                
+
+                {/* Info: umbral de horas extra por día */}
+                <div className="p-4 border rounded-lg bg-indigo-50 border-indigo-200">
+                  <h4 className="font-semibold text-lg mb-2 text-indigo-800">¿Cuándo se cuenta hora extra?</h4>
+                  <p className="text-sm text-indigo-700">
+                    Se cuenta como hora extra todo lo que se trabaje por encima de la jornada oficial de cada día
+                    (según el <strong>Horario Laboral</strong> configurado arriba), sin importar a qué hora entre o salga el trabajador:
+                  </p>
+                  <ul className="text-sm text-indigo-700 list-disc list-inside mt-2 space-y-1">
+                    <li>Lunes a Viernes: después de <strong>7 h 45 min</strong> (8:00 a.m. – 4:45 p.m. con almuerzo).</li>
+                    <li>Sábado: después de <strong>3 h 15 min</strong> (8:00 a.m. – 11:15 a.m.).</li>
+                  </ul>
+                  <p className="text-xs text-indigo-600 mt-2">
+                    Para cambiar estos límites, edite el horario en la sección "Horario Laboral".
+                  </p>
+                </div>
+
                 {/* Botón para resetear */}
                 <div className="flex justify-end gap-2 pt-4 border-t">
                   <Button
@@ -5108,7 +5758,7 @@ const TimeControl = () => {
                   const values = hasSalary ? computeHoursValue(totals, salary) : null;
                   let compensationDeduction = 0;
                   if (values && totals.compensatedDominicalMinutes > 0) {
-                    const minuteRate = salary / MONTHLY_WORK_HOURS / 60;
+                    const minuteRate = salary / (overtimeConfig.monthlyWorkHours || DEFAULT_MONTHLY_WORK_HOURS) / 60;
                     compensationDeduction = totals.compensatedDominicalMinutes * minuteRate;
                   }
 
@@ -5466,10 +6116,29 @@ const TimeControl = () => {
                           const isDayHoliday = isHolidayDate(dateKey);
                           const isDominicalOrFestivo = isDaySunday || isDayHoliday;
                           const isCompensated = isDominicalOrFestivo && isDayCompensated(worker.id, dateKey);
+                          const isDisabled = isDayDisabled(worker.id, dateKey);
                           return (
-                            <TableCell key={day.toISOString()} className="p-2">
-                              <div className="flex flex-col gap-1 min-h-[60px]">
-                                {isDominicalOrFestivo && (
+                            <TableCell key={day.toISOString()} className={`p-2 ${isDisabled ? "bg-muted/40" : ""}`}>
+                              <div className={`flex flex-col gap-1 min-h-[60px] ${isDisabled ? "opacity-60" : ""}`}>
+                                <label
+                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium cursor-pointer select-none transition-colors ${
+                                    isDisabled
+                                      ? "bg-red-100 text-red-700 border border-red-300"
+                                      : "bg-muted/50 text-muted-foreground border border-transparent hover:bg-muted"
+                                  }`}
+                                  title={isDisabled
+                                    ? "Día deshabilitado: no cuenta en los totales. Clic para habilitar."
+                                    : "Marcar el día como NO laborado (se excluye de los totales)"}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isDisabled}
+                                    onChange={() => toggleDisabledDay(worker.id, dateKey)}
+                                    className="h-3 w-3 rounded border-gray-300"
+                                  />
+                                  {isDisabled ? "No laboró" : "Deshab."}
+                                </label>
+                                {isDominicalOrFestivo && !isDisabled && (
                                   <label
                                     className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium cursor-pointer select-none transition-colors ${
                                       isCompensated
