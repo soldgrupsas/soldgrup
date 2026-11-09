@@ -28,7 +28,7 @@ const Home = () => {
     
     // Asistencia: redirigir directamente al control de horas (no tiene Home)
     if (user && user.email === "asistencia@soldgrup.com") {
-      navigate("/time-control");
+      navigate("/asistencia");
     }
   }, [user, loading, navigate]);
 

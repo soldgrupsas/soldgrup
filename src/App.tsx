@@ -88,7 +88,8 @@ const App = () => {
                 <Route path="/maintenance-reports/new/elevadores" element={<ProtectedRoute><ElevatorMaintenanceReportWizard equipmentType="elevadores" /></ProtectedRoute>} />
                 <Route path="/maintenance-reports/new/mantenimientos-generales" element={<ProtectedRoute><GeneralMaintenanceReport /></ProtectedRoute>} />
                 <Route path="/maintenance-reports/:id/edit" element={<ProtectedRoute><MaintenanceReportEditRouter /></ProtectedRoute>} />
-                <Route path="/time-control" element={<ProtectedRoute><TimeControl /></ProtectedRoute>} />
+                <Route path="/asistencia" element={<TimeControl kioskMode />} />
+                <Route path="/time-control" element={<TimeControl />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

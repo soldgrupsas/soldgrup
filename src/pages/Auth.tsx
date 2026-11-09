@@ -23,7 +23,7 @@ const Auth = () => {
       if (session && event === "SIGNED_IN") {
         // Si es el usuario de asistencia, redirigir directamente al control de horas
         if (session.user.email === "asistencia@soldgrup.com") {
-          navigate("/time-control");
+          navigate("/asistencia");
         } else {
           navigate("/home");
         }

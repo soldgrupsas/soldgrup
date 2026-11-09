@@ -14,6 +14,7 @@ import {
   Filter,
   Camera,
   LogOut,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,6 +24,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { compressImage } from "@/lib/imageCompression";
 import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
+import { kioskSupabase } from "@/integrations/supabase/kioskClient";
+import { MODULES } from "@/lib/permissions";
 import type { Json } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -1080,18 +1083,50 @@ const getGoogleMapsUrl = (latitude: number, longitude: number): string => {
   return `https://www.google.com/maps?q=${latitude},${longitude}`;
 };
 
-const TimeControl = () => {
+const ATTENDANCE_EMAIL = "asistencia@soldgrup.com";
+
+const withTimeout = async <T,>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+};
+
+const TimeControl = ({ kioskMode = false }: { kioskMode?: boolean }) => {
   const navigate = useNavigate();
-  const { user, loading: authLoading, session, signOut } = useAuth();
+  const {
+    user,
+    loading: authLoading,
+    session,
+    signOut,
+    isAdmin,
+    isAdminLoading,
+    permissionsLoading,
+    hasModuleAccess,
+  } = useAuth();
   const { toast } = useToast();
-  
-  // Verificar si es el usuario de asistencia (solo puede registrar entrada/salida)
-  const isAttendanceUser = user?.email === "asistencia@soldgrup.com";
+
+  // La marcación abre sin sesión. Mientras no haya un usuario de gestión,
+  // se muestra solo el registro de entrada/salida.
+  const isAttendanceUser =
+    kioskMode ||
+    authLoading ||
+    !user ||
+    user.email === ATTENDANCE_EMAIL;
+  const attendanceDb = isAttendanceUser ? kioskSupabase : supabase;
   // Usuarios con acceso completo al módulo (agregar horas manualmente, etc.)
   const isAdminUser = user?.email === "contacto@soldgrup.com" || user?.email === "contabilidad@soldgrup.com";
   const [initialLoading, setInitialLoading] = useState(false); // Cambiado a false para evitar bloqueo
   const initialLoadRef = useRef(true);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [workersLoading, setWorkersLoading] = useState(true);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>("");
   const [showAddWorker, setShowAddWorker] = useState(false);
@@ -1184,8 +1219,10 @@ const TimeControl = () => {
     return () => window.removeEventListener("beforeunload", flush);
   }, []);
 
-  // Cargar la configuración de horas extras COMPARTIDA desde Supabase al montar
+  // Cargar la configuración de horas extras COMPARTIDA desde Supabase al montar.
+  // La marcación no la necesita y no debe esperar una sesión.
   useEffect(() => {
+    if (isAttendanceUser) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1215,11 +1252,11 @@ const TimeControl = () => {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAttendanceUser]);
 
   // Autoguardado de la configuración de horas extras en Supabase (con indicador visible)
   useEffect(() => {
+    if (isAttendanceUser) return;
     const serialized = JSON.stringify(overtimeConfig);
     if (serialized === lastSavedOvertimeRef.current) return;
 
@@ -1240,7 +1277,7 @@ const TimeControl = () => {
     }, 800);
 
     return () => clearTimeout(handler);
-  }, [overtimeConfig]);
+  }, [overtimeConfig, isAttendanceUser]);
 
   const overtimeSavedTimestamp = overtimeLastSavedAt
     ? new Intl.DateTimeFormat("es-CO", {
@@ -1300,8 +1337,10 @@ const TimeControl = () => {
     return () => window.removeEventListener("beforeunload", flush);
   }, []);
 
-  // Cargar el horario COMPARTIDO desde Supabase al montar (todos los usuarios ven lo mismo)
+  // Cargar el horario COMPARTIDO desde Supabase al montar (todos los usuarios ven lo mismo).
+  // La marcación usa el horario local y no consulta la sesión.
   useEffect(() => {
+    if (isAttendanceUser) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1329,13 +1368,13 @@ const TimeControl = () => {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAttendanceUser]);
 
   // Autoguardado del horario en Supabase (con indicador visible)
   useEffect(() => {
     // Mantener el horario activo (usado por las funciones de cálculo) siempre sincronizado
     setActiveScheduleByDay(workSchedule);
+    if (isAttendanceUser) return;
 
     const serialized = JSON.stringify(workSchedule);
     // Si no hay cambios reales (o se acaba de cargar desde la BD), no guardar
@@ -1359,7 +1398,7 @@ const TimeControl = () => {
     }, 800);
 
     return () => clearTimeout(handler);
-  }, [workSchedule]);
+  }, [workSchedule, isAttendanceUser]);
 
   const scheduleSavedTimestamp = scheduleLastSavedAt
     ? new Intl.DateTimeFormat("es-CO", {
@@ -1569,14 +1608,43 @@ const TimeControl = () => {
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      window.location.href = "/auth";
-    }
-  }, [authLoading, user]);
+  const clearedKioskSessionRef = useRef(false);
+  const loadedModeRef = useRef<"kiosk" | "admin" | null>(null);
 
-  // Verificar si hay un error de refresh token bloqueando y limpiarlo
+  // La cuenta de marcación no debe conservar sesión: el refresco del token
+  // deja la pantalla congelada. Se cierra solo en este dispositivo.
   useEffect(() => {
+    if (clearedKioskSessionRef.current || authLoading) return;
+    if (user?.email !== ATTENDANCE_EMAIL) return;
+    clearedKioskSessionRef.current = true;
+    void supabase.auth.signOut({ scope: "local" });
+  }, [authLoading, user?.email]);
+
+  useEffect(() => {
+    if (isAttendanceUser || authLoading || isAdminLoading || permissionsLoading) return;
+    if (user && !isAdmin && !hasModuleAccess(MODULES.TIME_CONTROL)) {
+      toast({
+        title: "Acceso denegado",
+        description: "No tienes permiso para acceder a esta sección",
+        variant: "destructive",
+      });
+      window.location.href = "/home";
+    }
+  }, [
+    isAttendanceUser,
+    authLoading,
+    isAdminLoading,
+    permissionsLoading,
+    user,
+    isAdmin,
+    hasModuleAccess,
+    toast,
+  ]);
+
+  // Verificar si hay un error de refresh token bloqueando y limpiarlo.
+  // En la marcación no se consulta la sesión: esa espera es la que congela la pantalla.
+  useEffect(() => {
+    if (isAttendanceUser) return;
     const checkAndClearInvalidTokens = async () => {
       try {
         const { error } = await supabase.auth.getSession();
@@ -1592,10 +1660,9 @@ const TimeControl = () => {
         // Ignorar errores silenciosamente
       }
     };
-    
-    // Verificar una vez al montar el componente
+
     checkAndClearInvalidTokens();
-  }, []);
+  }, [isAttendanceUser]);
 
   // Listener para errores de autenticación globales - simplificado para evitar bloqueos
   useEffect(() => {
@@ -1605,8 +1672,8 @@ const TimeControl = () => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!isMounted) return;
 
-      // Solo redirigir en SIGNED_OUT explícito, no en TOKEN_REFRESHED
-      if (event === "SIGNED_OUT" && !session && user) {
+      // La marcación se queda en esta pantalla. Solo la gestión vuelve al login.
+      if (event === "SIGNED_OUT" && !session && user && user.email !== ATTENDANCE_EMAIL && !kioskMode) {
         console.warn("Sesión cerrada, redirigiendo al login");
         // Limpiar timeout anterior si existe
         if (redirectTimeout) {
@@ -1635,36 +1702,57 @@ const TimeControl = () => {
   }, [user]);
 
   const fetchData = useCallback(async (showLoading = false) => {
-    if (!user) {
-      if (initialLoadRef.current) {
-        setInitialLoading(false);
-      }
-      return;
-    }
-    
+    setWorkersLoading(true);
     try {
-      // Solo mostrar loading si es la carga inicial
       if (showLoading && initialLoadRef.current) {
         setInitialLoading(true);
       }
 
-      const { data: workersData, error: workersError } = await supabase
-        .from("workers")
-        .select("*")
-        .order("created_at", { ascending: false });
+      if (isAttendanceUser) {
+        const { data: kioskWorkers, error: workersError } = await withTimeout(
+          (kioskSupabase as any).rpc("kiosk_list_workers"),
+          20000,
+          "No se pudo cargar la lista de trabajadores. Pulsa Refrescar.",
+        );
 
-      if (workersError) {
-        console.error("Error loading workers:", workersError);
-        throw new Error(`Error al cargar trabajadores: ${workersError.message}`);
+        if (workersError) {
+          console.error("Error loading workers:", workersError);
+          throw new Error(`Error al cargar trabajadores: ${workersError.message}`);
+        }
+
+        setWorkers(
+          ((kioskWorkers || []) as { id: string; first_name: string; last_name: string }[]).map(
+            (worker) => ({
+              id: worker.id,
+              first_name: worker.first_name,
+              last_name: worker.last_name,
+              photo_url: null,
+              cedula: null,
+              fecha_nacimiento: null,
+              fecha_ingreso: null,
+              eps: null,
+              arl: null,
+              cargo: null,
+              sueldo: null,
+              created_at: "",
+            }),
+          ),
+        );
+      } else {
+        const { data: workersData, error: workersError } = await supabase
+          .from("workers")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (workersError) {
+          console.error("Error loading workers:", workersError);
+          throw new Error(`Error al cargar trabajadores: ${workersError.message}`);
+        }
+        setWorkers(workersData || []);
       }
-      // Cargar trabajadores - SIMPLE
-      setWorkers(workersData || []);
 
-      // El usuario de asistencia solo necesita confirmar su marca del día: cargamos
-      // únicamente los registros de HOY. Así la pantalla abre rápido y de forma constante
-      // sin importar cuánto crezca el histórico (clave en dispositivos de gama baja).
-      // El administrador sí carga el histórico completo.
-      let recordsQuery = supabase
+      // La marcación solo necesita los registros de hoy. La gestión carga el histórico.
+      let recordsQuery = attendanceDb
         .from("attendance_records")
         .select("*")
         .order("date", { ascending: false });
@@ -1714,24 +1802,22 @@ const TimeControl = () => {
       setWorkers([]);
       setAttendanceRecords([]);
     } finally {
+      setWorkersLoading(false);
       // Solo resetear loading inicial si es la primera carga
       if (initialLoadRef.current) {
         setInitialLoading(false);
         initialLoadRef.current = false;
       }
     }
-  }, [toast, user, isAttendanceUser]);
+  }, [toast, isAttendanceUser, attendanceDb]);
 
   useEffect(() => {
-    // Solo cargar datos cuando el usuario esté autenticado y sea la carga inicial
-    if (!authLoading && user && initialLoadRef.current) {
-      void fetchData();
-    } else if (!authLoading && !user) {
-      setInitialLoading(false);
-      initialLoadRef.current = false;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user]);
+    if (authLoading && !kioskMode) return;
+    const mode = isAttendanceUser ? "kiosk" : "admin";
+    if (loadedModeRef.current === mode) return;
+    loadedModeRef.current = mode;
+    void fetchData();
+  }, [authLoading, kioskMode, isAttendanceUser, fetchData]);
 
 
   const isFileInputOpenRef = useRef(false);
@@ -2513,7 +2599,7 @@ const TimeControl = () => {
       }
 
       // Verificar si existe registro para la fecha
-      const { data: existingRecords, error: queryError } = await supabase
+      const { data: existingRecords, error: queryError } = await attendanceDb
         .from("attendance_records")
         .select("*")
         .eq("worker_id", manualWorkerId)
@@ -2547,7 +2633,7 @@ const TimeControl = () => {
           updateData.exit_longitude = null;
         }
 
-        const { data: updatedData, error } = await supabase
+        const { data: updatedData, error } = await attendanceDb
           .from("attendance_records")
           .update(updateData)
           .eq("id", existingRecord.id)
@@ -2575,7 +2661,7 @@ const TimeControl = () => {
           is_manual_exit: !!manualExitTime,
         };
 
-        const { data: insertedData, error } = await supabase
+        const { data: insertedData, error } = await attendanceDb
           .from("attendance_records")
           .insert(newRecord)
           .select();
@@ -2657,7 +2743,7 @@ const TimeControl = () => {
       const adjustmentNoteText = notes.length > 0 ? notes.join(' | ') : 'Sin ajuste de tiempo';
 
       // Verificar si existe registro para la fecha
-      const { data: existingRecords, error: queryError } = await supabase
+      const { data: existingRecords, error: queryError } = await attendanceDb
         .from("attendance_records")
         .select("*")
         .eq("worker_id", quickManualWorkerId)
@@ -2689,7 +2775,7 @@ const TimeControl = () => {
           updateData.adjustment_note = adjustmentNoteText;
         }
 
-        const { data: updatedData, error } = await supabase
+        const { data: updatedData, error } = await attendanceDb
           .from("attendance_records")
           .update(updateData)
           .eq("id", existingRecord.id)
@@ -2722,7 +2808,7 @@ const TimeControl = () => {
           newRecord.adjustment_note = adjustmentNoteText;
         }
 
-        const { data: insertedData, error } = await supabase
+        const { data: insertedData, error } = await attendanceDb
           .from("attendance_records")
           .insert(newRecord)
           .select();
@@ -2811,22 +2897,23 @@ const TimeControl = () => {
   };
 
   const uploadPhoto = async (file: File, type: "entry" | "exit"): Promise<string> => {
-    // Verificar sesión antes de intentar subir
-    const { data: { session: currentSession } } = await supabase.auth.getSession();
-    if (!currentSession) {
-      // Si no hay sesión, intentar refrescar
-      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError || !refreshedSession) {
-        console.error("Error de autenticación:", refreshError);
-        toast({
-          title: "Sesión expirada",
-          description: "Por favor, inicia sesión nuevamente.",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/auth";
-        }, 100);
-        throw new Error("Sesión expirada");
+    // La marcación sube la foto sin sesión. Renovar el token aquí dejaba el botón girando.
+    if (!isAttendanceUser) {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession) {
+        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !refreshedSession) {
+          console.error("Error de autenticación:", refreshError);
+          toast({
+            title: "Sesión expirada",
+            description: "Por favor, inicia sesión nuevamente.",
+            variant: "destructive",
+          });
+          setTimeout(() => {
+            window.location.href = "/auth";
+          }, 100);
+          throw new Error("Sesión expirada");
+        }
       }
     }
 
@@ -2839,13 +2926,20 @@ const TimeControl = () => {
     const storagePath = encodeStoragePath(fileName);
 
     try {
-      const { error: uploadError } = await supabase.storage
+      const uploadPromise = attendanceDb.storage
         .from(PHOTO_BUCKET)
         .upload(storagePath, fileToUpload, { upsert: true });
+      const { error: uploadError } = isAttendanceUser
+        ? await withTimeout(
+            uploadPromise,
+            45000,
+            "La foto tardó demasiado. Pulsa Refrescar e intenta otra vez.",
+          )
+        : await uploadPromise;
 
       if (uploadError) {
         // Si es un error de autenticación, redirigir al login
-        if (uploadError.message?.includes("JWT") || uploadError.message?.includes("token") || uploadError.message?.includes("session")) {
+        if (!isAttendanceUser && (uploadError.message?.includes("JWT") || uploadError.message?.includes("token") || uploadError.message?.includes("session"))) {
           console.error("Error de autenticación al subir foto:", uploadError);
           toast({
             title: "Sesión expirada",
@@ -2860,11 +2954,11 @@ const TimeControl = () => {
         throw uploadError;
       }
 
-      const { data } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath);
+      const { data } = attendanceDb.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath);
       return data.publicUrl;
     } catch (error: any) {
       // Manejar errores de autenticación
-      if (error?.message?.includes("JWT") || error?.message?.includes("token") || error?.message?.includes("session") || error?.message?.includes("Refresh Token")) {
+      if (!isAttendanceUser && (error?.message?.includes("JWT") || error?.message?.includes("token") || error?.message?.includes("session") || error?.message?.includes("Refresh Token"))) {
         console.error("Error de autenticación:", error);
         toast({
           title: "Sesión expirada",
@@ -3329,7 +3423,7 @@ const TimeControl = () => {
       const now = new Date().toISOString();
 
       // Verificar si existe registro para hoy
-      const { data: existingRecords, error: queryError } = await supabase
+      const { data: existingRecords, error: queryError } = await attendanceDb
         .from("attendance_records")
         .select("*")
         .eq("worker_id", selectedWorkerId)
@@ -3353,7 +3447,7 @@ const TimeControl = () => {
           exit_longitude: existingRecord.exit_longitude || null,
         };
 
-        const { data: updatedData, error } = await supabase
+        const { data: updatedData, error } = await attendanceDb
           .from("attendance_records")
           .update(updateData)
           .eq("id", existingRecord.id)
@@ -3378,7 +3472,7 @@ const TimeControl = () => {
           exit_longitude: null,
         };
 
-        const { data: insertedData, error } = await supabase
+        const { data: insertedData, error } = await attendanceDb
           .from("attendance_records")
           .insert(newRecord)
           .select();
@@ -3636,7 +3730,7 @@ const TimeControl = () => {
             }
 
             // Check if record exists for today
-            const { data: existingRecords, error: queryError } = await supabase
+            const { data: existingRecords, error: queryError } = await attendanceDb
               .from("attendance_records")
               .select("*")
               .eq("worker_id", selectedWorkerId)
@@ -3694,7 +3788,7 @@ const TimeControl = () => {
                 updateData.entry_longitude = existingRecord.entry_longitude || null;
               }
 
-              const { data: updatedData, error } = await supabase
+              const { data: updatedData, error } = await attendanceDb
                 .from("attendance_records")
                 .update(updateData)
                 .eq("id", existingRecord.id)
@@ -3746,7 +3840,7 @@ const TimeControl = () => {
                 exit_latitude: type === "exit" ? (location?.latitude ?? null) : null,
                 exit_longitude: type === "exit" ? (location?.longitude ?? null) : null,
               };
-              const { data: insertedData, error } = await supabase
+              const { data: insertedData, error } = await attendanceDb
                 .from("attendance_records")
                 .insert(newRecord)
                 .select();
@@ -3944,7 +4038,7 @@ const TimeControl = () => {
       const now = new Date().toISOString();
 
       // Verificar si existe registro para hoy
-      const { data: existingRecords, error: queryError } = await supabase
+      const { data: existingRecords, error: queryError } = await attendanceDb
         .from("attendance_records")
         .select("*")
         .eq("worker_id", selectedWorkerId)
@@ -3970,7 +4064,7 @@ const TimeControl = () => {
           exit_longitude: existingRecord.exit_longitude || null,
         };
 
-        const { data: updatedData, error } = await supabase
+        const { data: updatedData, error } = await attendanceDb
           .from("attendance_records")
           .update(updateData)
           .eq("id", existingRecord.id)
@@ -3997,7 +4091,7 @@ const TimeControl = () => {
           entry_conditions_notes: entryConditionsOk === false ? entryConditionsNotes.trim() : null,
         };
 
-        const { data: insertedData, error } = await supabase
+        const { data: insertedData, error } = await attendanceDb
           .from("attendance_records")
           .insert(newRecord)
           .select();
@@ -4052,20 +4146,21 @@ const TimeControl = () => {
         throw new Error("ID de trabajador inválido");
       }
 
-      // Verificar sesión
-      try {
-        const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError && !sessionError.message?.includes("Refresh Token")) {
-          toast({
-            title: "Sesión expirada",
-            description: "Por favor, inicia sesión nuevamente.",
-            variant: "destructive",
-          });
-          setTimeout(() => { window.location.href = "/auth"; }, 100);
-          return;
+      if (!isAttendanceUser) {
+        try {
+          const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+          if (!currentSession && sessionError && !sessionError.message?.includes("Refresh Token")) {
+            toast({
+              title: "Sesión expirada",
+              description: "Por favor, inicia sesión nuevamente.",
+              variant: "destructive",
+            });
+            setTimeout(() => { window.location.href = "/auth"; }, 100);
+            return;
+          }
+        } catch (sessionCheckError) {
+          console.warn("Error al verificar sesión, continuando:", sessionCheckError);
         }
-      } catch (sessionCheckError) {
-        console.warn("Error al verificar sesión, continuando:", sessionCheckError);
       }
 
       const photoUrl = await uploadPhoto(pendingExitFile, "exit");
@@ -4104,7 +4199,7 @@ const TimeControl = () => {
       const adjustmentNoteText = notes.length > 0 ? notes.join(' | ') : 'Sin ajuste de tiempo';
 
       // Check if record exists for today
-      const { data: existingRecords, error: queryError } = await supabase
+      const { data: existingRecords, error: queryError } = await attendanceDb
         .from("attendance_records")
         .select("*")
         .eq("worker_id", selectedWorkerId)
@@ -4131,7 +4226,7 @@ const TimeControl = () => {
           adjustment_note: adjustmentNoteText,
         };
 
-        const { data: updatedData, error } = await supabase
+        const { data: updatedData, error } = await attendanceDb
           .from("attendance_records")
           .update(updateData)
           .eq("id", existingRecord.id)
@@ -4160,7 +4255,7 @@ const TimeControl = () => {
           adjustment_note: adjustmentNoteText,
         };
 
-        const { data: insertedData, error } = await supabase
+        const { data: insertedData, error } = await attendanceDb
           .from("attendance_records")
           .insert(newRecord)
           .select();
@@ -4256,7 +4351,7 @@ const TimeControl = () => {
       const { minutes: adjustmentMins, note: adjustmentNoteText } = pendingExitAdjustment;
 
       // Verificar si existe registro para hoy
-      const { data: existingRecords, error: queryError } = await supabase
+      const { data: existingRecords, error: queryError } = await attendanceDb
         .from("attendance_records")
         .select("*")
         .eq("worker_id", selectedWorkerId)
@@ -4288,7 +4383,7 @@ const TimeControl = () => {
           exit_conditions_notes: exitConditionsOk === false ? exitConditionsNotes.trim() : null,
         };
 
-        const { data: updatedData, error } = await supabase
+        const { data: updatedData, error } = await attendanceDb
           .from("attendance_records")
           .update(updateData)
           .eq("id", existingRecord.id)
@@ -4322,7 +4417,7 @@ const TimeControl = () => {
           exit_conditions_notes: exitConditionsOk === false ? exitConditionsNotes.trim() : null,
         };
 
-        const { data: insertedData, error } = await supabase
+        const { data: insertedData, error } = await attendanceDb
           .from("attendance_records")
           .insert(newRecord)
           .select();
@@ -4598,15 +4693,27 @@ const TimeControl = () => {
               </p>
             </div>
           </div>
-          <Button
-            onClick={handleSignOut}
-            variant="outline"
-            size="lg"
-            className="w-full md:w-auto"
-          >
-            <LogOut className="mr-2 h-4 w-4" />
-            Cerrar Sesión
-          </Button>
+          {isAttendanceUser ? (
+            <Button
+              onClick={() => window.location.reload()}
+              variant="outline"
+              size="lg"
+              className="w-full md:w-auto"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refrescar
+            </Button>
+          ) : (
+            <Button
+              onClick={handleSignOut}
+              variant="outline"
+              size="lg"
+              className="w-full md:w-auto"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Cerrar Sesión
+            </Button>
+          )}
         </div>
 
         {/* Worker Management - Oculto para usuario de asistencia */}
@@ -5569,8 +5676,10 @@ const TimeControl = () => {
                 }}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
               >
-                <option value="">Selecciona un trabajador</option>
-                {workers.length === 0 ? (
+                <option value="">
+                  {workersLoading ? "Cargando trabajadores..." : "Selecciona un trabajador"}
+                </option>
+                {workersLoading ? null : workers.length === 0 ? (
                   <option value="no-workers" disabled>
                     No hay trabajadores disponibles
                   </option>

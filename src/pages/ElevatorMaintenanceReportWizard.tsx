@@ -1506,6 +1506,31 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
     fileList: FileList | null,
   ) => {
     if (!fileList || fileList.length === 0) return;
+
+    // Copiar antes de cualquier espera: el input se limpia al salir del onChange
+    // y el FileList queda vacío.
+    const selectedFiles = imageId ? [fileList[0]] : Array.from(fileList);
+    const imageFiles = selectedFiles.filter(
+      (file) =>
+        !file.type ||
+        file.type.startsWith("image/") ||
+        /\.(jpe?g|png|gif|webp|bmp|heic|heif|tiff?|avif)$/i.test(file.name),
+    );
+    if (imageFiles.length === 0) {
+      toast({
+        title: "Archivo no válido",
+        description: "Selecciona fotografías para agregarlas a la evidencia.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (imageFiles.length < selectedFiles.length) {
+      toast({
+        title: "Algunos archivos se omitieron",
+        description: "Solo se cargan imágenes.",
+      });
+    }
+
     if (!session) {
       toast({
         title: "Sesión requerida",
@@ -1529,11 +1554,12 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       setReportId(activeReportId);
     }
 
-    const originalFile = fileList[0];
-    const actualImageId = imageId ?? crypto.randomUUID();
+    const uploads = imageFiles.map((file) => ({
+      file,
+      imageId: imageId ?? crypto.randomUUID(),
+    }));
 
     if (!imageId) {
-      // New image: add to entry's images array
       setFormData((prev) => ({
         ...prev,
         photos: prev.photos.map((entry) =>
@@ -1542,20 +1568,20 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                 ...entry,
                 images: [
                   ...entry.images,
-                  {
-                    id: actualImageId,
+                  ...uploads.map(({ imageId: id }) => ({
+                    id,
                     storagePath: null,
                     optimizedPath: null,
                     thumbnailPath: null,
                     url: null,
-                  },
+                  })),
                 ],
               }
             : entry,
         ),
       }));
     } else {
-      // Replace existing image: clear its paths
+      const replacementId = uploads[0].imageId;
       setFormData((prev) => ({
         ...prev,
         photos: prev.photos.map((entry) =>
@@ -1563,7 +1589,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
             ? {
                 ...entry,
                 images: entry.images.map((img) =>
-                  img.id === imageId
+                  img.id === replacementId
                     ? { ...img, url: null, storagePath: null, optimizedPath: null, thumbnailPath: null }
                     : img,
                 ),
@@ -1573,39 +1599,50 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
       }));
     }
 
-    updatePhotoUploadState(actualImageId, {
-      status: "preparing",
-      progress: 0,
-      message: "Optimizando la imagen antes de subirla...",
-    });
+    for (const upload of uploads) {
+      updatePhotoUploadState(upload.imageId, {
+        status: "preparing",
+        progress: 0,
+        message: "Optimizando la imagen antes de subirla...",
+      });
+    }
+
+    if (!imageId && uploads.length > 1) {
+      toast({
+        title: "Cargando fotografías",
+        description: `Se están subiendo ${uploads.length} imágenes a esta evidencia.`,
+      });
+    }
 
     // Siempre convertimos a JPEG (incluyendo HEIC de iPhone) y redimensionamos,
     // porque el servidor no puede procesar formatos como HEIC/HEIF.
-    let preparedFile = originalFile;
-    try {
-      preparedFile = await compressImage(originalFile);
-    } catch (error) {
-      console.warn("No se pudo comprimir la imagen localmente", error);
-      preparedFile = originalFile;
-    }
+    for (const upload of uploads) {
+      let preparedFile = upload.file;
+      try {
+        preparedFile = await compressImage(upload.file);
+      } catch (error) {
+        console.warn("No se pudo comprimir la imagen localmente", error);
+        preparedFile = upload.file;
+      }
 
-    uploadQueueRef.current = [
-      ...uploadQueueRef.current,
-      {
-        photoId: actualImageId,
-        file: preparedFile,
-        reportId: activeReportId,
+      uploadQueueRef.current = [
+        ...uploadQueueRef.current,
+        {
+          photoId: upload.imageId,
+          file: preparedFile,
+          reportId: activeReportId,
+          attempts: 0,
+        },
+      ];
+
+      updatePhotoUploadState(upload.imageId, {
+        status: "queued",
+        progress: 0,
         attempts: 0,
-      },
-    ];
-
-    updatePhotoUploadState(actualImageId, {
-      status: "queued",
-      progress: 0,
-      attempts: 0,
-      message: undefined,
-    });
-    scheduleUploadProcessing();
+        message: undefined,
+      });
+      scheduleUploadProcessing();
+    }
   };
 
   /** Remove a single image from an entry */
@@ -2611,8 +2648,8 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
         return (
           <div className="space-y-6">
             <p className="text-muted-foreground">
-              Adjunte fotografías relevantes del mantenimiento realizado. Puede agregar varias
-              imágenes por cada evidencia y compartir una descripción entre ellas.
+              Adjunte fotografías relevantes del mantenimiento realizado. En cada evidencia puede
+              seleccionar varias imágenes a la vez y compartir una descripción entre ellas.
             </p>
 
             <div className="space-y-4">
@@ -2781,6 +2818,7 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                       type="button"
                       variant="outline"
                       size="sm"
+                      title="Puede seleccionar varias fotos a la vez"
                       onClick={() =>
                         (
                           document.getElementById(addInputId) as HTMLInputElement | null
@@ -2794,9 +2832,11 @@ const MaintenanceReportWizard = ({ equipmentType = "elevadores" }: MaintenanceRe
                       id={addInputId}
                       type="file"
                       accept="image/*"
+                      multiple
                       className="hidden"
                       onChange={(event) => {
-                        handlePhotoFileUpload(entry.id, null, event.target.files);
+                        const files = event.target.files;
+                        void handlePhotoFileUpload(entry.id, null, files);
                         event.target.value = "";
                       }}
                     />
