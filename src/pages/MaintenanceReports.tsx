@@ -151,7 +151,7 @@ const MaintenanceReports = () => {
           const contentType = response?.headers?.get?.("Content-Type") ?? "";
           if (contentType.includes("application/json")) {
             const body = await response.json();
-            description = body?.error ?? description;
+            description = body?.error ?? body?.message ?? body?.code ?? description;
           } else if (response?.text) {
             const text = await response.text();
             if (text) description = text;

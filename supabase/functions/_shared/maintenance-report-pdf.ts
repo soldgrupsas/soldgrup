@@ -592,10 +592,67 @@ const SOLDGRUP_LOGO_BASE64 =
   'viJkYRgAAAAASUVORK5CYII=';
 
 
+// Las fuentes estándar (Helvetica) solo soportan WinAnsi: cualquier otro carácter
+// (p. ej. "∅", "≥", emojis) hace que pdf-lib lance una excepción al dibujar.
+const WIN_ANSI_REPLACEMENTS: Record<string, string> = {
+  '∅': 'Ø',
+  '⌀': 'Ø',
+  '≈': '~',
+  '≤': '<=',
+  '≥': '>=',
+  '≠': '!=',
+  '−': '-',
+  '‐': '-',
+  '‑': '-',
+  '→': '->',
+  '←': '<-',
+  '✓': 'OK',
+  '✔': 'OK',
+  '✗': 'X',
+  '✘': 'X',
+  'Ω': 'Ohm',
+  'μ': 'µ',
+  '′': "'",
+  '″': '"',
+  '\t': ' ',
+};
+
+function toWinAnsi(text: string, supported: Set<number>): string {
+  let result = '';
+  for (const char of text.normalize('NFC')) {
+    const replacement = WIN_ANSI_REPLACEMENTS[char] ?? char;
+    for (const c of replacement) {
+      const code = c.codePointAt(0)!;
+      if (c === '\n' || c === '\r' || supported.has(code)) {
+        result += c;
+        continue;
+      }
+      const base = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (base && [...base].every((b) => supported.has(b.codePointAt(0)!))) {
+        result += base;
+      }
+    }
+  }
+  return result;
+}
+
+function sanitizeTextFields<T>(value: T, supported: Set<number>): T {
+  if (typeof value === 'string') return toWinAnsi(value, supported) as T;
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeTextFields(item, supported)) as T;
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) out[key] = sanitizeTextFields(item, supported);
+    return out as T;
+  }
+  return value;
+}
+
 export async function createMaintenanceReportPDF(payload: MaintenanceReportPdfPayload): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  payload = sanitizeTextFields(payload, new Set(fontRegular.getCharacterSet()));
 
   let logoImage: PDFImage | null = null;
   try {
